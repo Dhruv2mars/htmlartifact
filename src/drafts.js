@@ -2,14 +2,28 @@ import { pool } from "./db.js";
 import { config } from "./config.js";
 import { getDraftPublicUrl, getDraftRawUrl } from "./public-url.js";
 
-// The "my docs" feed: every draft owned by an account, newest first, with the
-// aggregates a dashboard needs (latest version, version count, repo). Shared
-// by GET /api/drafts and the server-rendered dashboard.
-export async function listAccountDrafts(accountId, { requestBaseUrl }) {
+// Draft feeds, newest first, with the aggregates a dashboard needs (latest
+// version, version count, repo, author). Shared by GET /api/drafts and the
+// server-rendered dashboards. Both are always scoped to one organization.
+
+// "Mine": what this member published in this organization.
+export function listAccountDrafts(accountId, organizationId, { requestBaseUrl }) {
+  return listDrafts("d.account_id = $1 AND d.organization_id = $2", [accountId, organizationId], {
+    requestBaseUrl
+  });
+}
+
+// "Workspace": everything any member published in this organization.
+export function listWorkspaceDrafts(organizationId, { requestBaseUrl, limit = 200 }) {
+  return listDrafts("d.organization_id = $1", [organizationId], { requestBaseUrl, limit });
+}
+
+async function listDrafts(where, params, { requestBaseUrl, limit = 500 }) {
   const result = await pool.query(
     `
       SELECT
         d.id,
+        a.name AS author_name,
         d.slug,
         d.title,
         d.description,
@@ -29,16 +43,19 @@ export async function listAccountDrafts(accountId, { requestBaseUrl }) {
         FROM draft_versions
         GROUP BY draft_id
       ) vc ON vc.draft_id = d.id
-      WHERE d.account_id = $1
+      JOIN accounts a ON a.id = d.account_id
+      WHERE ${where}
         AND d.deleted_at IS NULL
       ORDER BY d.updated_at DESC
+      LIMIT ${Number(limit)}
     `,
-    [accountId]
+    params
   );
 
   return result.rows.map((row) => ({
     draftId: row.id,
     slug: row.slug ?? null,
+    author: row.author_name,
     title: row.title,
     description: row.description,
     repoOrg: row.repo_org,
@@ -64,15 +81,15 @@ export async function listAccountDrafts(accountId, { requestBaseUrl }) {
   }));
 }
 
-export async function getAccountDraftWithVersions(accountId, draftId, { requestBaseUrl }) {
+export async function getAccountDraftWithVersions(accountId, organizationId, draftId, { requestBaseUrl }) {
   const draftResult = await pool.query(
     `
       SELECT *
       FROM drafts
-      WHERE id = $1 AND account_id = $2 AND deleted_at IS NULL
+      WHERE id = $1 AND account_id = $2 AND organization_id = $3 AND deleted_at IS NULL
       LIMIT 1
     `,
-    [draftId, accountId]
+    [draftId, accountId, organizationId]
   );
   const draft = draftResult.rows[0];
   if (!draft) return null;

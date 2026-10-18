@@ -1,26 +1,10 @@
-export function renderHome({ publicBaseUrl }) {
-  return htmlPage({
-    title: "Postplan",
-    body: `
-      <main class="home">
-        <h1>Postplan</h1>
-        <p>Authenticated static HTML draft publishing for agents.</p>
-        <pre>npx postplan upload ./plan.html</pre>
-        <p><a href="/dashboard">My drafts</a> · <a href="/cli/auth">CLI setup</a></p>
-        <p>Health: <a href="/healthz">/healthz</a></p>
-        <p>Public base URL: ${escapeHtml(publicBaseUrl || "not configured")}</p>
-      </main>
-    `
-  });
-}
-
 export function renderNotFound() {
   return htmlPage({
-    title: "Draft not found",
+    title: "Not found",
     body: `
       <main class="home">
-        <h1>Draft not found</h1>
-        <p>The requested draft is unavailable.</p>
+        <h1>Not found</h1>
+        <p>This artifact does not exist, or your current team cannot see it.</p>
       </main>
     `
   });

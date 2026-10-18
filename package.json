@@ -1,33 +1,43 @@
 {
-  "name": "postplan",
-  "version": "0.0.5",
-  "description": "Static HTML draft publishing for agents.",
+  "name": "htmlartifact",
+  "version": "0.1.0",
+  "description": "Publish HTML artifacts from coding agents to your team. Only members of your WorkOS organization can read them.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dhruv2mars/htmlartifact.git"
+  },
   "files": [
     "bin/",
     "src/",
     "skills/",
-    "README.md"
+    "README.md",
+    "NOTICE"
   ],
   "bin": {
-    "postplan": "./bin/postplan.js"
+    "htmlartifact": "./bin/htmlartifact.js"
   },
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test test/*.test.js"
+    "build:cli": "bun build bin/htmlartifact.js --target=node --format=esm --outfile=dist/htmlartifact.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.835.0",
+    "@workos-inc/node": "^11.0.0",
     "commander": "^14.0.0",
     "express": "^5.1.0",
     "jose": "^6.2.3",
     "nanoid": "^5.1.5",
     "parse5": "^7.3.0",
     "pg": "^8.16.2"
+  },
+  "devDependencies": {
+    "@workos/emulate": "^0.15.0"
   }
 }

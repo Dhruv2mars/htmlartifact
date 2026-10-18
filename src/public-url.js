@@ -4,7 +4,7 @@ const DRAFT_ID_PATTERN = /^[a-z0-9]{12}$/;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 const RESERVED_SLUGS = new Set([
   "admin", "api", "app", "assets", "auth", "blog", "cdn", "cli", "d", "dashboard",
-  "docs", "files", "help", "login", "mail", "postplan", "raw", "signin", "static",
+  "docs", "files", "help", "htmlartifact", "install", "login", "mail", "raw", "signin", "static",
   "status", "support", "www"
 ]);
 
@@ -25,6 +25,27 @@ export function slugProblem(slug) {
     return `"${slug}" is reserved.`;
   }
   return null;
+}
+
+// The registrable host the session cookie is scoped to in wildcard mode, so
+// one sign-in covers the apex and every artifact subdomain. Null otherwise.
+export function getCookieDomain(publicBaseUrl) {
+  const wildcard = parseWildcardBaseUrl(publicBaseUrl);
+  return wildcard ? wildcard.hostname.slice(2) : null;
+}
+
+// Whether an absolute URL points into this deployment (apex or, in wildcard
+// mode, an artifact subdomain), making it a safe post-sign-in destination.
+export function isOwnUrl(value, publicBaseUrl) {
+  const target = parseUrl(value);
+  const configured = parseUrl(publicBaseUrl);
+  if (!target || !configured) return false;
+  if (target.protocol !== configured.protocol) return false;
+  const host = target.host.toLowerCase();
+  const wildcard = parseWildcardBaseUrl(publicBaseUrl);
+  if (!wildcard) return host === configured.host.toLowerCase();
+  const root = wildcard.host.slice(2).toLowerCase();
+  return host === root || (host.endsWith(`.${root}`) && !host.slice(0, -(root.length + 1)).includes("."));
 }
 
 export function getRequestBaseUrl(req) {

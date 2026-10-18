@@ -1,16 +1,16 @@
 import { createApp } from "./api.js";
-import { config } from "./config.js";
-import { ensureBootstrapApiKey, initDb } from "./db.js";
+import { assertAuthConfigured, config } from "./config.js";
+import { initDb } from "./db.js";
 import { assertStorageConfigured } from "./storage.js";
 
 async function main() {
+  assertAuthConfigured();
   assertStorageConfigured();
   await initDb();
-  await ensureBootstrapApiKey();
 
   const app = createApp();
   app.listen(config.port, () => {
-    console.log(`Postplan listening on port ${config.port}`);
+    console.log(`htmlartifact listening on port ${config.port}`);
   });
 }
 

@@ -1,28 +1,25 @@
 import { readFileSync } from "node:fs";
 import express from "express";
-import { randomToken, sha256 } from "./crypto.js";
+import { sha256 } from "./crypto.js";
 import { config } from "./config.js";
-import {
-  FLAGS,
-  findApiKeyByToken,
-  newEventId,
-  pool,
-  publicUploadAuth,
-  withTransaction
-} from "./db.js";
+import { FLAGS, newEventId, pool, withTransaction } from "./db.js";
 import { newDraftId, newInternalId } from "./ids.js";
-import { renderHome, renderNotFound } from "./render.js";
+import { apiViewer, canPublish, canReadDraft, wantsHtml } from "./auth.js";
+import { registerWebhookRoutes } from "./webhooks.js";
+import { registerCliAuthRoutes } from "./cli-auth.js";
+import { audit, workos } from "./workos.js";
+import { renderNotFound } from "./render.js";
 import { createRateLimiter } from "./rate-limit.js";
 import { getHtmlObject, putHtmlObject } from "./storage.js";
 import { formatBytes, validateUpload } from "./html-policy.js";
 import { clientIp } from "./client-ip.js";
-import { listAccountDrafts } from "./drafts.js";
-import { registerWebRoutes } from "./web.js";
+import { listAccountDrafts, listWorkspaceDrafts } from "./drafts.js";
+import { registerDistributionRoutes } from "./distribution.js";
+import { registerWebRoutes, signInUrl } from "./web.js";
 import {
   getDraftPublicUrl,
   getDraftRawUrl,
   getDraftRefFromHost,
-  getHomeUrl,
   getRequestBaseUrl,
   slugProblem
 } from "./public-url.js";
@@ -42,7 +39,7 @@ const SANDBOX_LIMITS = [
 
 export function createApp() {
   const app = express();
-  app.set("trust proxy", true);
+  app.set("trust proxy", process.env.HTMLARTIFACT_TRUST_PROXY || "loopback, linklocal, uniquelocal");
   const uploadIpRateLimit = createRateLimiter({
     windowMs: Number(process.env.UPLOAD_IP_RATE_LIMIT_WINDOW_MS || 60_000),
     max: Number(process.env.UPLOAD_IP_RATE_LIMIT_MAX || 60),
@@ -57,27 +54,29 @@ export function createApp() {
   });
 
   app.use(noStoreHeaders);
+  registerWebhookRoutes(app);
+  registerCliAuthRoutes(app);
 
   // Registered before the shared /api JSON parser: upload bodies are parsed
-  // after auth, with a limit sized to the caller's HTML budget, so anonymous
-  // requests cannot send the largest bodies.
+  // only after auth, so unauthenticated requests cannot send large bodies.
   app.post(
     "/api/uploads",
     uploadIpRateLimit,
-    optionalUploadAuth,
+    requireAuth,
+    requirePublish,
     uploadKeyRateLimit,
     uploadJson,
     handleUpload
   );
-  app.post("/api/check", uploadIpRateLimit, optionalUploadAuth, uploadJson, handleCheck);
+  app.post("/api/check", uploadIpRateLimit, requireAuth, uploadJson, handleCheck);
 
   // Scoped to /api so that draft GETs carrying a stray JSON body (some HTTP
   // clients always send Content-Type: application/json) can never fail with a
   // body-parser error instead of the draft HTML.
   app.use("/api", express.json());
 
-  // Served on every host (apex and draft subdomains) so browsers that probe
-  // /favicon.ico get postplan's icon instead of a 404. Immutable-cached: the
+  // Served on every host (apex and artifact subdomains) so browsers that
+  // probe /favicon.ico get htmlartifact's icon instead of a 404. Immutable-cached: the
   // icon only changes with a deploy, and these override the global no-store.
   const favicons = [
     { path: "/favicon.svg", type: "image/svg+xml", body: readAsset("favicon.svg") },
@@ -91,12 +90,6 @@ export function createApp() {
     });
   }
 
-  app.get("/", (req, res, next) => {
-    // Draft hosts fall through to the draft route at the end.
-    if (getDraftRefFromRequest(req)) return next();
-    res.type("html").send(renderHome({ publicBaseUrl: getHomeUrlForRequest(req) }));
-  });
-
   app.get("/healthz", async (req, res) => {
     try {
       await pool.query("SELECT 1");
@@ -108,72 +101,52 @@ export function createApp() {
 
   app.get("/api/me", requireAuth, (req, res) => {
     res.json({
-      accountId: req.auth.account_id,
-      accountName: req.auth.account_name,
-      apiKeyId: req.auth.id,
-      apiKeyName: req.auth.name,
+      userId: req.auth.account_id,
+      name: req.auth.account_name,
+      email: req.auth.email,
+      organizationId: req.auth.organization_id,
+      organizationName: req.auth.organization_name,
       flags: req.auth.flags
     });
   });
 
-  // The "my docs" feed — shared with the dashboard (src/drafts.js).
+  // The caller's teams, for `htmlartifact org list` / `org switch`.
+  app.get("/api/orgs", requireAuth, async (req, res, next) => {
+    try {
+      if (req.auth.account_id.startsWith("api_key_")) {
+        return res.json({
+          ok: true,
+          organizations: [{ id: req.auth.organization_id, name: req.auth.organization_name, current: true }]
+        });
+      }
+      const page = await workos().userManagement.listOrganizationMemberships({
+        userId: req.auth.account_id,
+        statuses: ["active"],
+        limit: 100
+      });
+      res.json({
+        ok: true,
+        organizations: page.data.map((m) => ({
+          id: m.organizationId,
+          name: m.organizationName,
+          current: m.organizationId === req.auth.organization_id
+        }))
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // ?scope=workspace lists every member's artifacts in the caller's
+  // organization; the default lists the caller's own.
   app.get("/api/drafts", requireAuth, async (req, res, next) => {
     try {
-      const drafts = await listAccountDrafts(req.auth.account_id, {
-        requestBaseUrl: getRequestBaseUrl(req)
-      });
+      const options = { requestBaseUrl: getRequestBaseUrl(req) };
+      const drafts =
+        req.query.scope === "workspace"
+          ? await listWorkspaceDrafts(req.auth.organization_id, options)
+          : await listAccountDrafts(req.auth.account_id, req.auth.organization_id, options);
       res.json({ ok: true, drafts });
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post("/api/api-keys", requireAuth, async (req, res, next) => {
-    try {
-      const token = `pp_${randomToken(32)}`;
-      const apiKeyId = newInternalId();
-      const name = cleanText(req.body?.name) || "CLI API Key";
-
-      await pool.query(
-        `
-          INSERT INTO api_keys (id, account_id, name, key_hash)
-          VALUES ($1, $2, $3, $4)
-        `,
-        [apiKeyId, req.auth.account_id, name, sha256(token)]
-      );
-
-      res.status(201).json({
-        ok: true,
-        apiKey: {
-          id: apiKeyId,
-          name
-        },
-        token
-      });
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.post("/api/api-keys/:apiKeyId/revoke", requireAuth, async (req, res, next) => {
-    try {
-      const result = await pool.query(
-        `
-          UPDATE api_keys
-          SET revoked_at = now()
-          WHERE id = $1
-            AND account_id = $2
-            AND revoked_at IS NULL
-          RETURNING id
-        `,
-        [req.params.apiKeyId, req.auth.account_id]
-      );
-
-      if (!result.rowCount) {
-        return res.status(404).json({ ok: false, error: "API key not found." });
-      }
-
-      res.json({ ok: true });
     } catch (error) {
       next(error);
     }
@@ -188,16 +161,23 @@ export function createApp() {
           SET deleted_at = now(), slug = NULL, updated_at = now()
           WHERE id = $1
             AND account_id = $2
+            AND organization_id = $3
             AND deleted_at IS NULL
           RETURNING id
         `,
-        [req.params.draftId, req.auth.account_id]
+        [req.params.draftId, req.auth.account_id, req.auth.organization_id]
       );
 
       if (!result.rowCount) {
         return res.status(404).json({ ok: false, error: "Draft not found." });
       }
 
+      audit(req.auth.organization_id, {
+        action: "artifact.deleted",
+        actor: { type: "user", id: req.auth.account_id, name: req.auth.account_name },
+        targets: [{ type: "artifact", id: req.params.draftId }],
+        context: { location: clientIp(req) || "unknown", userAgent: req.get("user-agent") || undefined }
+      });
       res.json({ ok: true });
     } catch (error) {
       next(error);
@@ -213,10 +193,11 @@ export function createApp() {
           SET disabled_at = now(), disabled_reason = $3, updated_at = now()
           WHERE id = $1
             AND account_id = $2
+            AND organization_id = $4
             AND deleted_at IS NULL
           RETURNING id
         `,
-        [req.params.draftId, req.auth.account_id, reason]
+        [req.params.draftId, req.auth.account_id, reason, req.auth.organization_id]
       );
 
       if (!result.rowCount) {
@@ -229,6 +210,7 @@ export function createApp() {
     }
   });
 
+  registerDistributionRoutes(app);
   registerWebRoutes(app);
 
   // Every draft URL serves raw uploaded HTML. A draft subdomain maps its whole
@@ -279,7 +261,7 @@ async function handleUpload(req, res, next) {
     }
 
     const slug = normalizeSlug(req.body?.slug);
-    const slugError = slug === null ? null : slugRequestProblem(slug, capabilities);
+    const slugError = slug === null ? null : slugRequestProblem(slug);
     if (slugError) {
       return res.status(slugError.status).json({ ok: false, error: slugError.message });
     }
@@ -288,9 +270,11 @@ async function handleUpload(req, res, next) {
     const index = pages.find((page) => page.path === "index.html");
     const extraPages = pages.filter((page) => page !== index);
     const sourceIp = clientIp(req);
-    // Railway's edge sets X-Railway-Request-Id and documents it for correlating
-    // against network logs, so we store it verbatim rather than minting our own.
-    const requestId = cleanText(req.get("x-railway-request-id"));
+    // Most proxies (nginx, Railway, Render, Fly) stamp a request ID; storing it
+    // lets an upload be matched against the proxy's logs.
+    const requestId = cleanText(
+      req.get("x-request-id") || req.get("x-railway-request-id") || req.get("fly-request-id")
+    );
     const cleanDescription = cleanText(description, 1000);
 
     const result = await withTransaction(async (client) => {
@@ -299,7 +283,7 @@ async function handleUpload(req, res, next) {
       // same draft; with a free slug, draftId names the draft to rename.
       const slugDraft = slug ? await findDraftBySlug(client, slug) : null;
       if (slugDraft && slugDraft.account_id !== req.auth.account_id) {
-        throw httpError(409, `The custom URL "${slug}" belongs to another account.`);
+        throw httpError(409, `The custom URL "${slug}" belongs to someone else.`);
       }
       if (slugDraft && draftId && slugDraft.id !== draftId) {
         throw httpError(
@@ -308,8 +292,16 @@ async function handleUpload(req, res, next) {
         );
       }
 
+      // A member who switched organizations cannot push new versions into a
+      // draft that lives in the other one: same-account is not enough.
+      if (slugDraft && slugDraft.organization_id !== req.auth.organization_id) {
+        throw httpError(409, `The custom URL "${slug}" belongs to another organization.`);
+      }
       const existingDraft =
-        slugDraft || (draftId ? await findOwnedDraft(client, draftId, req.auth.account_id) : null);
+        slugDraft ||
+        (draftId
+          ? await findOwnedDraft(client, draftId, req.auth.account_id, req.auth.organization_id)
+          : null);
       if (draftId && !existingDraft) {
         throw httpError(404, "Draft not found.");
       }
@@ -408,15 +400,24 @@ async function handleUpload(req, res, next) {
     const publicUrl = getDraftPublicUrl(urlOptions);
     const multiPage = pages.length > 1;
 
+    if (!result.unchanged) {
+      audit(req.auth.organization_id, {
+        action: "artifact.published",
+        actor: { type: "user", id: req.auth.account_id, name: req.auth.account_name },
+        targets: [{ type: "artifact", id: result.draftId, name: result.title }],
+        context: { location: sourceIp || "unknown", userAgent: req.get("user-agent") || undefined },
+        metadata: { version: String(result.versionNumber) }
+      });
+    }
+
     res.status(result.created ? 201 : 200).json({
       ok: true,
       ...result,
       requestId,
       contentHash: validation.contentHash,
       totalBytes: validation.totalBytes,
-      account: capabilities.signedIn
-        ? { id: req.auth.account_id, name: req.auth.account_name }
-        : null,
+      account: { id: req.auth.account_id, name: req.auth.account_name },
+      organization: { id: req.auth.organization_id, name: req.auth.organization_name },
       publicUrl,
       rawUrl: getDraftRawUrl(urlOptions),
       // Built from the draft ID, which never moves: a slug can be renamed
@@ -471,12 +472,15 @@ async function insertVersion(client, {
   if (!existingDraft) {
     await client.query(
       `
-        INSERT INTO drafts (id, account_id, title, description, repo_org, repo_name, repo_host, slug)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO drafts (
+          id, account_id, organization_id, title, description, repo_org, repo_name, repo_host, slug
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
       [
         draft.id,
         req.auth.account_id,
+        req.auth.organization_id,
         title,
         cleanDescription,
         cleanText(metadata.repoOrg),
@@ -495,13 +499,13 @@ async function insertVersion(client, {
     `
       INSERT INTO draft_versions (
         id, draft_id, version_number, object_key, content_hash, file_size,
-        created_by_api_key_id, source_ip, user_agent, cli_version,
+        created_by, credential_id, source_ip, user_agent, cli_version,
         git_branch, git_commit_sha, original_filename,
         git_commit_subject, git_dirty, request_id, has_inline_script,
         external_image_hosts, ci_run_url, ci_actor, page_count
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-              $14, $15, $16, $17, $18, $19, $20, $21)
+              $14, $15, $16, $17, $18, $19, $20, $21, $22)
     `,
     [
       versionId,
@@ -510,7 +514,8 @@ async function insertVersion(client, {
       objectKey,
       validation.contentHash,
       validation.totalBytes,
-      req.auth.id,
+      req.auth.account_id,
+      req.auth.credential_id,
       sourceIp,
       req.get("user-agent") || null,
       cleanText(metadata.cliVersion),
@@ -543,16 +548,17 @@ async function insertVersion(client, {
   await client.query(
     `
       INSERT INTO upload_events (
-        id, draft_id, draft_version_id, api_key_id, event_type,
+        id, draft_id, draft_version_id, account_id, organization_id, event_type,
         source_ip, user_agent, metadata_json
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     `,
     [
       newEventId(),
       draft.id,
       versionId,
-      req.auth.id,
+      req.auth.account_id,
+      req.auth.organization_id,
       existingDraft ? "draft.updated" : "draft.created",
       sourceIp,
       req.get("user-agent") || null,
@@ -569,9 +575,8 @@ async function handleCheck(req, res, next) {
     const capabilities = uploadCapabilities(req);
     const report = {
       ok: true,
-      account: capabilities.signedIn
-        ? { id: req.auth.account_id, name: req.auth.account_name, apiKeyName: req.auth.name }
-        : null,
+      account: { id: req.auth.account_id, name: req.auth.account_name },
+      organization: { id: req.auth.organization_id, name: req.auth.organization_name },
       flags: capabilities.flags,
       limits: { maxBytes: capabilities.maxBytes, maxPages: capabilities.maxPages },
       capabilities: {
@@ -602,7 +607,7 @@ async function handleCheck(req, res, next) {
 
     const slug = normalizeSlug(body.slug);
     if (slug !== null) {
-      report.slug = await slugStatus(slug, req, capabilities);
+      report.slug = await slugStatus(slug, req);
       if (report.slug.status === "unavailable" || report.slug.status === "taken") {
         report.ok = false;
       }
@@ -617,20 +622,14 @@ async function handleCheck(req, res, next) {
 // What this request may publish. Shared by uploads and /api/check so a
 // passing check means the upload passes too.
 function uploadCapabilities(req) {
-  const signedIn = req.isAuthenticatedUpload;
-  const flags = signedIn ? req.auth.flags || [] : [];
+  const flags = req.auth.flags || [];
   const { limits } = config;
-  let maxBytes = limits.anonymousBytes;
-  if (signedIn) {
-    maxBytes = flags.includes(FLAGS.largeUploads) ? limits.largeBytes : limits.accountBytes;
-  }
   return {
-    signedIn,
     flags,
-    maxBytes,
-    maxPages: signedIn ? limits.maxPages : 1,
-    inlineScripts: signedIn,
-    customUrls: flags.includes(FLAGS.customUrls)
+    maxBytes: flags.includes(FLAGS.largeUploads) ? limits.largeBytes : limits.accountBytes,
+    maxPages: limits.maxPages,
+    inlineScripts: true,
+    customUrls: true
   };
 }
 
@@ -669,19 +668,13 @@ function normalizeSlug(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-function slugRequestProblem(slug, capabilities) {
-  if (!capabilities.customUrls) {
-    return {
-      status: 403,
-      message: "Custom URLs are not enabled for this account. Upload without --slug."
-    };
-  }
+function slugRequestProblem(slug) {
   const problem = slugProblem(slug);
   return problem ? { status: 422, message: problem } : null;
 }
 
-async function slugStatus(slug, req, capabilities) {
-  const problem = slugRequestProblem(slug, capabilities);
+async function slugStatus(slug, req) {
+  const problem = slugRequestProblem(slug);
   if (problem) return { slug, status: "unavailable", message: problem.message };
 
   const result = await pool.query(
@@ -691,7 +684,7 @@ async function slugStatus(slug, req, capabilities) {
   const owner = result.rows[0];
   if (!owner) return { slug, status: "available" };
   if (owner.account_id === req.auth.account_id) return { slug, status: "yours" };
-  return { slug, status: "taken", message: `The custom URL "${slug}" belongs to another account.` };
+  return { slug, status: "taken", message: `The custom URL "${slug}" is already taken.` };
 }
 
 // Splits a draft request into the draft reference and the path segments
@@ -738,8 +731,12 @@ async function serveDraft(req, res, { ref, segments }) {
     parts = [""];
   }
 
-  const { draft, version } = await findPublicDraftVersion(ref, versionNumber);
-  if (!draft || !version) return sendNotFound(res);
+  const { draft, version } = await findDraftVersion(ref, versionNumber);
+  // Not signed in, or signed in outside the draft's organization: both get
+  // the same answer as a draft that does not exist, so URLs leak nothing.
+  const access = await canReadDraft(req, res, draft);
+  if (access === "anonymous") return requireSignIn(req, res);
+  if (!draft || !version || access !== "member") return sendNotFound(res);
 
   const multiPage = Number(version.page_count || 1) > 1;
   const pagePath = parts.join("/");
@@ -774,16 +771,13 @@ async function serveDraft(req, res, { ref, segments }) {
 // `page` is the version row for index.html, or a draft_pages row.
 async function sendPage(res, { draft, version, page }) {
   const html = await getHtmlObject(page.object_key);
-  const allowInlineScripts =
-    page.has_inline_script === true &&
-    Boolean(version.created_by_api_key_id) &&
-    version.created_by_api_key_id !== publicUploadAuth.id;
+  const allowInlineScripts = page.has_inline_script === true;
   res.setHeader(
     "Content-Security-Policy",
     draftContentSecurityPolicy({ allowInlineScripts })
   );
-  res.setHeader("X-Postplan-Draft-Id", draft.id);
-  res.setHeader("X-Postplan-Draft-Version", String(Number(version.version_number)));
+  res.setHeader("X-Htmlartifact-Draft-Id", draft.id);
+  res.setHeader("X-Htmlartifact-Draft-Version", String(Number(version.version_number)));
   res.type("html").send(html);
 }
 
@@ -800,15 +794,25 @@ function redirectTo(req, res, path) {
   res.redirect(302, `${path}${query}`);
 }
 
+// Browsers go to sign-in and come back; agents and curl get a plain 401.
+function requireSignIn(req, res) {
+  const target = `${getRequestBaseUrl(req)}${req.originalUrl}`;
+  if (wantsHtml(req)) return res.redirect(302, signInUrl(target));
+  res.setHeader("WWW-Authenticate", 'Bearer realm="htmlartifact"');
+  return res
+    .status(401)
+    .type("text")
+    .send("Sign in required. Use `htmlartifact read <url>`, or send Authorization: Bearer <token>.\n");
+}
+
 function sendNotFound(res) {
   res.status(404).type("html").send(renderNotFound());
 }
 
-// A CSP is the only thing kept from the old serving path. It never alters the
-// bytes a curl/agent client reads, so it does not gate content in any way. For
-// scripted drafts, the response-level sandbox deliberately omits
+// The CSP never alters the bytes a curl/agent client reads. For scripted
+// drafts, the response-level sandbox deliberately omits
 // allow-same-origin: JavaScript (inline scripts and inline handlers) can update
-// its own DOM but gets an opaque origin, cannot read Postplan cookies/storage,
+// its own DOM but gets an opaque origin, cannot read htmlartifact cookies/storage,
 // and cannot act as the apex UI even when the HTML is fetched through a /d/...
 // alias. New tabs are allowed without inheriting the draft's sandbox
 // restrictions. Images, media, fonts, and stylesheets may load from any https
@@ -837,7 +841,7 @@ function draftContentSecurityPolicy({ allowInlineScripts = false } = {}) {
 }
 
 // `ref` is a draft ID or a custom URL slug; the formats never overlap.
-async function findPublicDraftVersion(ref, versionNumber) {
+async function findDraftVersion(ref, versionNumber) {
   const draftResult = await pool.query(
     `
       SELECT *
@@ -872,18 +876,19 @@ async function findPublicDraftVersion(ref, versionNumber) {
 
 // Both draft lookups lock the row, so concurrent uploads to one draft take
 // version numbers one at a time instead of colliding.
-async function findOwnedDraft(client, draftId, accountId) {
+async function findOwnedDraft(client, draftId, accountId, organizationId) {
   const result = await client.query(
     `
       SELECT *
       FROM drafts
       WHERE id = $1
         AND account_id = $2
+        AND organization_id = $3
         AND deleted_at IS NULL
       LIMIT 1
       FOR UPDATE
     `,
-    [draftId, accountId]
+    [draftId, accountId, organizationId]
   );
   return result.rows[0] || null;
 }
@@ -903,36 +908,31 @@ async function findDraftBySlug(client, slug) {
   return result.rows[0] || null;
 }
 
+// Every /api route acts as one member in one organization, identified by a
+// bearer credential (see src/auth.js).
 async function requireAuth(req, res, next) {
-  const auth = await optionalAuth(req);
-  if (!auth) {
-    return res.status(401).json({ ok: false, error: "Missing or invalid API key." });
+  try {
+    const auth = await apiViewer(req);
+    if (!auth) {
+      res.setHeader("WWW-Authenticate", 'Bearer realm="htmlartifact"');
+      return res.status(401).json({
+        ok: false,
+        error: "Not signed in, or no longer a member. Run `htmlartifact login`."
+      });
+    }
+    req.auth = auth;
+    next();
+  } catch (error) {
+    next(error);
   }
-  req.auth = auth;
-  next();
 }
 
-// Uploads work without a key, but a key that is presented and rejected fails
-// loudly: silently publishing anonymously would drop ownership and scripts.
-async function optionalUploadAuth(req, res, next) {
-  const presented = Boolean(req.get("authorization"));
-  const auth = await optionalAuth(req);
-  if (presented && !auth) {
-    return res.status(401).json({
-      ok: false,
-      error: "API key was rejected. Run `postplan auth login` for a new key."
-    });
-  }
-  req.isAuthenticatedUpload = Boolean(auth);
-  req.auth = auth || publicUploadAuth;
-  next();
-}
-
-async function optionalAuth(req) {
-  const header = req.get("authorization") || "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  if (!match) return null;
-  return findApiKeyByToken(match[1].trim());
+function requirePublish(req, res, next) {
+  if (canPublish(req.auth)) return next();
+  res.status(403).json({
+    ok: false,
+    error: `Publishing needs the "${config.publishPermission}" permission in this team. Ask a team admin.`
+  });
 }
 
 function httpError(statusCode, message) {
@@ -949,13 +949,6 @@ function noStoreHeaders(req, res, next) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cache-Control", "no-store");
   next();
-}
-
-function getHomeUrlForRequest(req) {
-  return getHomeUrl({
-    publicBaseUrl: config.publicBaseUrl,
-    requestBaseUrl: getRequestBaseUrl(req)
-  });
 }
 
 function getDraftRefFromRequest(req) {

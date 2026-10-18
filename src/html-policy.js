@@ -3,7 +3,7 @@ import * as parse5 from "parse5";
 
 const EMBED_FIX = "Link to the page instead of embedding it.";
 const BLOCKED_TAGS = new Map([
-  ["form", "Forms cannot submit on Postplan. Use inputs without a <form> wrapper."],
+  ["form", "Forms cannot submit on htmlartifact. Use inputs without a <form> wrapper."],
   ["iframe", EMBED_FIX],
   ["object", EMBED_FIX],
   ["embed", EMBED_FIX],
@@ -49,8 +49,8 @@ const ALLOWED_LINK_RELS = new Set([
 
 // Event handler content attributes browsers run (HTML, CSS, pointer, touch,
 // and SVG animation events). Other on* attributes, such as one="x", are inert.
-// A handler missing here still cannot run on an anonymous upload: the
-// script-free CSP sets script-src-attr 'none'.
+// A handler missing here still cannot run on a page without scripts: its
+// CSP sets script-src-attr 'none'.
 const EVENT_HANDLER_ATTRS = new Set(
   `abort afterprint animationcancel animationend animationiteration animationstart
   auxclick beforecopy beforecut beforeinput beforematch beforepaste beforeprint
@@ -79,7 +79,7 @@ const EVENT_HANDLER_ATTRS = new Set(
     .map((event) => `on${event}`)
 );
 
-// Tags whose src must already be hosted somewhere: Postplan only hosts HTML.
+// Tags whose src must already be hosted somewhere: htmlartifact only hosts HTML.
 const EMBED_SRC_TAGS = new Set(["img", "video", "audio", "source", "track"]);
 
 // Browser APIs that fail inside the scripted-draft sandbox (opaque origin,
@@ -89,31 +89,31 @@ const SANDBOX_APIS = [
   {
     code: "sandbox-storage",
     pattern: /\b(localStorage|sessionStorage|indexedDB)\b/,
-    message: "Scripts use browser storage, which throws in the Postplan sandbox.",
+    message: "Scripts use browser storage, which throws in the htmlartifact sandbox.",
     fix: "Keep state in memory or in location.hash."
   },
   {
     code: "sandbox-cookie",
     pattern: /\bdocument\.cookie\b/,
-    message: "Scripts use document.cookie, which throws in the Postplan sandbox.",
+    message: "Scripts use document.cookie, which throws in the htmlartifact sandbox.",
     fix: "Keep state in memory or in location.hash."
   },
   {
     code: "sandbox-network",
     pattern: /\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b/,
-    message: "Scripts make network requests, which the Postplan sandbox blocks.",
+    message: "Scripts make network requests, which the htmlartifact sandbox blocks.",
     fix: 'Inline the data in the page, for example in a <script type="application/json"> block.'
   },
   {
     code: "sandbox-dialog",
     pattern: /\b(alert|confirm|prompt)\s*\(/,
-    message: "Scripts use alert/confirm/prompt, which do nothing in the Postplan sandbox.",
+    message: "Scripts use alert/confirm/prompt, which do nothing in the htmlartifact sandbox.",
     fix: "Show messages in the page instead."
   },
   {
     code: "sandbox-worker",
     pattern: /\bnew\s+(Shared)?Worker\b/,
-    message: "Scripts start workers, which the Postplan sandbox blocks.",
+    message: "Scripts start workers, which the htmlartifact sandbox blocks.",
     fix: "Run the code on the main thread."
   }
 ];
@@ -232,7 +232,7 @@ export function validateHtml(html, options = {}) {
         ];
         for (const [name, value] of references) {
           if (value && isLocalReference(value)) {
-            issues.warning("relative-asset", `"${value}" will not load. Postplan only hosts HTML pages.`, {
+            issues.warning("relative-asset", `"${value}" will not load. htmlartifact only hosts HTML pages.`, {
               node,
               attr: name,
               fix: "Upload the file (for example with file-upload) and use its https URL, or inline it as a data: URL."
@@ -314,7 +314,7 @@ export function validateHtml(html, options = {}) {
   }
 
   if (!title) {
-    issues.warning("no-title", "No <title> found; Postplan will use a generic title.");
+    issues.warning("no-title", "No <title> found; htmlartifact will use a generic title.");
   }
 
   return result({
@@ -329,7 +329,7 @@ export function validateHtml(html, options = {}) {
 // Validates a whole upload: one page, or a folder of pages that link to each
 // other by relative path. Enforces the caller's limits and capabilities, so
 // /api/uploads and the /api/check preflight always agree.
-export function validateUpload(pages, { maxBytes = Infinity, maxPages = Infinity, inlineScripts = true } = {}) {
+export function validateUpload(pages, { maxBytes = Infinity, maxPages = Infinity } = {}) {
   const issues = [];
   const results = [];
   const multiPage = Array.isArray(pages) && pages.length > 1;
@@ -340,13 +340,7 @@ export function validateUpload(pages, { maxBytes = Infinity, maxPages = Infinity
   }
 
   if (pages.length > maxPages) {
-    issues.push(
-      maxPages === 1
-        ? uploadIssue("multi-page-needs-sign-in", "Multi-page uploads require an authenticated upload.", {
-            fix: "Run `postplan auth login`, then upload again."
-          })
-        : uploadIssue("too-many-pages", `Upload has ${pages.length} pages; the limit is ${maxPages}.`)
-    );
+    issues.push(uploadIssue("too-many-pages", `Upload has ${pages.length} pages; the limit is ${maxPages}.`));
   }
 
   const seen = new Set();
@@ -376,19 +370,12 @@ export function validateUpload(pages, { maxBytes = Infinity, maxPages = Infinity
   if (totalBytes > maxBytes) {
     issues.push(
       uploadIssue("too-large", sizeMessage(totalBytes, maxBytes), {
-        fix: "Sign in for a larger limit (`postplan auth login`), ask for the large-uploads flag, or split the report into linked pages. Do not drop requested content."
+        fix: "Split the report into linked pages, or ask an admin for the large-uploads flag. Do not drop requested content."
       })
     );
   }
 
   const hasScripts = results.some((page) => page.hasScripts);
-  if (hasScripts && !inlineScripts) {
-    issues.push(
-      uploadIssue("scripts-need-sign-in", "Inline JavaScript requires an authenticated upload.", {
-        fix: "Run `postplan auth login`, then upload again. Keep the requested interactivity."
-      })
-    );
-  }
 
   return uploadResult({ issues, pages: results, totalBytes, hasScripts });
 }
@@ -509,7 +496,7 @@ function result({ issues, title, hasScripts, bytes, externalImageHosts }) {
 }
 
 // True for paths that point at the author's machine or the draft's own host,
-// where Postplan serves nothing but HTML pages.
+// where htmlartifact serves nothing but HTML pages.
 function isLocalReference(value) {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw || raw.startsWith("#")) return false;

@@ -1,14 +1,16 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
+import { getCookieDomain } from "./public-url.js";
 
-export const SESSION_COOKIE = "postplan_session";
-export const AUTH_STATE_COOKIE = "postplan_auth_state";
-const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+export const SESSION_COOKIE = "htmlartifact_session";
+export const AUTH_STATE_COOKIE = "htmlartifact_auth_state";
+// The cookie only carries the WorkOS sealed session; WorkOS decides how long
+// the session really lives (dashboard: Authentication > Sessions).
+const SESSION_COOKIE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const AUTH_STATE_TTL_SECONDS = 10 * 60;
 
-// Compact HMAC-signed tokens (base64url(JSON payload) + "." + HMAC-SHA256),
-// the same shape shoo uses for its own sessions. Stateless: nothing to store
-// or clean up server-side, and a restart invalidates nothing.
+// Compact HMAC-signed tokens (base64url(JSON payload) + "." + HMAC-SHA256) for
+// the short-lived sign-in state (OAuth state + PKCE verifier).
 export function signToken(payload, secret, ttlSeconds) {
   const body = Buffer.from(
     JSON.stringify({ ...payload, exp: nowSeconds() + ttlSeconds })
@@ -33,13 +35,8 @@ export function verifyToken(token, secret) {
   }
 }
 
-export function createSessionCookie({ accountId, accountName, email, pictureUrl }) {
-  const token = signToken(
-    { accountId, accountName, email: email ?? null, pictureUrl: pictureUrl ?? null },
-    requireSecret(),
-    SESSION_TTL_SECONDS
-  );
-  return serializeCookie(SESSION_COOKIE, token, { maxAge: SESSION_TTL_SECONDS });
+export function createSessionCookie(sealedSession) {
+  return serializeCookie(SESSION_COOKIE, sealedSession, { maxAge: SESSION_COOKIE_TTL_SECONDS });
 }
 
 export function clearSessionCookie() {
@@ -47,7 +44,7 @@ export function clearSessionCookie() {
 }
 
 export function createAuthStateCookie(payload) {
-  const token = signToken(payload, requireSecret(), AUTH_STATE_TTL_SECONDS);
+  const token = signToken(payload, config.cookiePassword, AUTH_STATE_TTL_SECONDS);
   return serializeCookie(AUTH_STATE_COOKIE, token, { maxAge: AUTH_STATE_TTL_SECONDS });
 }
 
@@ -55,18 +52,13 @@ export function clearAuthStateCookie() {
   return serializeCookie(AUTH_STATE_COOKIE, "", { maxAge: 0 });
 }
 
-export function readSession(req) {
-  if (!config.sessionSecret) return null;
-  const token = readCookie(req, SESSION_COOKIE);
-  if (!token) return null;
-  const payload = verifyToken(token, config.sessionSecret);
-  return payload?.accountId ? payload : null;
+export function readSealedSession(req) {
+  return readCookie(req, SESSION_COOKIE) || null;
 }
 
 export function readAuthState(req) {
-  if (!config.sessionSecret) return null;
   const token = readCookie(req, AUTH_STATE_COOKIE);
-  return token ? verifyToken(token, config.sessionSecret) : null;
+  return token ? verifyToken(token, config.cookiePassword) : null;
 }
 
 export function readCookie(req, name) {
@@ -76,7 +68,7 @@ export function readCookie(req, name) {
     if (eq === -1) continue;
     if (part.slice(0, eq).trim() === name) {
       // A malformed value (bad percent-escape) must read as "no cookie", not
-      // throw — otherwise one bad cookie 500s every web page until cleared.
+      // throw: otherwise one bad cookie 500s every web page until cleared.
       try {
         return decodeURIComponent(part.slice(eq + 1).trim());
       } catch {
@@ -95,19 +87,17 @@ function serializeCookie(name, value, { maxAge }) {
     "SameSite=Lax",
     `Max-Age=${maxAge}`
   ];
-  if (process.env.NODE_ENV !== "development") attributes.push("Secure");
+  // With per-artifact subdomains the session must reach every subdomain, or
+  // members could never open an artifact URL. Artifact pages cannot read it:
+  // it is HttpOnly and scripted pages run in an opaque-origin sandbox.
+  const domain = getCookieDomain(config.publicBaseUrl);
+  if (domain) attributes.push(`Domain=${domain}`);
+  if (config.publicBaseUrl?.startsWith("https:")) attributes.push("Secure");
   return attributes.join("; ");
 }
 
 function hmac(value, secret) {
   return createHmac("sha256", secret).update(value).digest("base64url");
-}
-
-function requireSecret() {
-  if (!config.sessionSecret) {
-    throw new Error("POSTPLAN_SESSION_SECRET is not configured.");
-  }
-  return config.sessionSecret;
 }
 
 function nowSeconds() {

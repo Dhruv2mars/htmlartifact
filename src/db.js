@@ -1,23 +1,13 @@
 import pg from "pg";
 import { config, requireEnv } from "./config.js";
-import { sha256 } from "./crypto.js";
 import { newInternalId } from "./ids.js";
 
 const { Pool } = pg;
-export const publicUploadAuth = {
-  id: "key_public_upload",
-  account_id: "acct_public_upload",
-  name: "Public Uploads",
-  account_name: "Public Uploads",
-  flags: []
-};
 
 // Per-account feature flags, stored in accounts.flags. Set them with SQL:
-//   UPDATE accounts SET flags = ARRAY['large-uploads', 'custom-urls']
-//   WHERE id IN (SELECT account_id FROM identities WHERE email = '...');
+//   UPDATE accounts SET flags = ARRAY['large-uploads'] WHERE email = '...';
 export const FLAGS = {
-  largeUploads: "large-uploads",
-  customUrls: "custom-urls"
+  largeUploads: "large-uploads"
 };
 
 export const pool = new Pool({
@@ -26,32 +16,55 @@ export const pool = new Pool({
 
 export async function initDb() {
   await pool.query(`
+    -- People and machine credentials that publish. id is the WorkOS user id
+    -- (user_...) or, for CI, the WorkOS API key id (api_key_...). Profile
+    -- columns are a cache of WorkOS, refreshed by src/auth.js.
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      email TEXT,
+      picture_url TEXT,
+      flags TEXT[] NOT NULL DEFAULT '{}',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
-    CREATE TABLE IF NOT EXISTS api_keys (
+    -- Cache of WorkOS organization names; WorkOS stays the source of truth.
+    CREATE TABLE IF NOT EXISTS organizations (
       id TEXT PRIMARY KEY,
-      account_id TEXT NOT NULL REFERENCES accounts(id),
       name TEXT NOT NULL,
-      key_hash TEXT NOT NULL UNIQUE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    -- Access removed in WorkOS (webhooks), honoured before tokens expire.
+    -- organization_id '*' means every organization (user deleted).
+    CREATE TABLE IF NOT EXISTS revocations (
+      subject TEXT NOT NULL,
+      organization_id TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      last_used_at TIMESTAMPTZ,
-      revoked_at TIMESTAMPTZ
+      PRIMARY KEY (subject, organization_id)
+    );
+
+    -- Verified WorkOS memberships. A token's org claim is only trusted once
+    -- WorkOS confirms the membership; rows expire after a few minutes.
+    CREATE TABLE IF NOT EXISTS memberships (
+      user_id TEXT NOT NULL,
+      organization_id TEXT NOT NULL,
+      checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, organization_id)
     );
 
     CREATE TABLE IF NOT EXISTS drafts (
       id TEXT PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES accounts(id),
+      organization_id TEXT NOT NULL,
       title TEXT NOT NULL,
       description TEXT,
       current_version_id TEXT,
       repo_org TEXT,
       repo_name TEXT,
       repo_host TEXT,
+      slug TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       deleted_at TIMESTAMPTZ,
@@ -67,7 +80,8 @@ export async function initDb() {
       content_hash TEXT NOT NULL,
       file_size INTEGER NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      created_by_api_key_id TEXT NOT NULL REFERENCES api_keys(id),
+      created_by TEXT NOT NULL REFERENCES accounts(id),
+      credential_id TEXT,
       source_ip TEXT,
       user_agent TEXT,
       cli_version TEXT,
@@ -81,6 +95,7 @@ export async function initDb() {
       external_image_hosts JSONB,
       ci_run_url TEXT,
       ci_actor TEXT,
+      page_count INTEGER NOT NULL DEFAULT 1,
       UNIQUE (draft_id, version_number)
     );
 
@@ -88,27 +103,13 @@ export async function initDb() {
       id TEXT PRIMARY KEY,
       draft_id TEXT NOT NULL REFERENCES drafts(id),
       draft_version_id TEXT REFERENCES draft_versions(id),
-      api_key_id TEXT NOT NULL REFERENCES api_keys(id),
+      account_id TEXT NOT NULL REFERENCES accounts(id),
+      organization_id TEXT NOT NULL,
       event_type TEXT NOT NULL,
       source_ip TEXT,
       user_agent TEXT,
       metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS identities (
-      id TEXT PRIMARY KEY,
-      account_id TEXT NOT NULL REFERENCES accounts(id),
-      provider TEXT NOT NULL,
-      subject TEXT NOT NULL,
-      email TEXT,
-      email_verified BOOLEAN,
-      display_name TEXT,
-      picture_url TEXT,
-      pii_subject TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      last_login_at TIMESTAMPTZ,
-      UNIQUE (provider, subject)
     );
 
     -- Pages of a multi-page version other than index.html, which stays on
@@ -126,113 +127,107 @@ export async function initDb() {
 
     CREATE INDEX IF NOT EXISTS draft_versions_draft_id_idx ON draft_versions(draft_id);
     CREATE INDEX IF NOT EXISTS upload_events_draft_id_idx ON upload_events(draft_id);
-    CREATE INDEX IF NOT EXISTS drafts_account_id_idx ON drafts(account_id);
-
-    -- Backfill columns for databases created before they were introduced.
-    ALTER TABLE identities ADD COLUMN IF NOT EXISTS email TEXT;
-    ALTER TABLE identities ADD COLUMN IF NOT EXISTS email_verified BOOLEAN;
-    ALTER TABLE identities ADD COLUMN IF NOT EXISTS display_name TEXT;
-    ALTER TABLE identities ADD COLUMN IF NOT EXISTS picture_url TEXT;
-    ALTER TABLE identities ADD COLUMN IF NOT EXISTS pii_subject TEXT;
-    ALTER TABLE drafts ADD COLUMN IF NOT EXISTS description TEXT;
-    ALTER TABLE drafts ADD COLUMN IF NOT EXISTS repo_host TEXT;
-    ALTER TABLE draft_versions ADD COLUMN IF NOT EXISTS git_commit_subject TEXT;
-    ALTER TABLE draft_versions ADD COLUMN IF NOT EXISTS git_dirty BOOLEAN;
-    ALTER TABLE draft_versions ADD COLUMN IF NOT EXISTS request_id TEXT;
-    ALTER TABLE draft_versions ADD COLUMN IF NOT EXISTS has_inline_script BOOLEAN;
-    ALTER TABLE draft_versions ADD COLUMN IF NOT EXISTS external_image_hosts JSONB;
-    ALTER TABLE draft_versions ADD COLUMN IF NOT EXISTS ci_run_url TEXT;
-    ALTER TABLE draft_versions ADD COLUMN IF NOT EXISTS ci_actor TEXT;
-    ALTER TABLE draft_versions ADD COLUMN IF NOT EXISTS page_count INTEGER NOT NULL DEFAULT 1;
-    ALTER TABLE drafts ADD COLUMN IF NOT EXISTS slug TEXT;
-    ALTER TABLE accounts ADD COLUMN IF NOT EXISTS flags TEXT[] NOT NULL DEFAULT '{}';
+    CREATE INDEX IF NOT EXISTS drafts_account_org_idx ON drafts(account_id, organization_id);
+    CREATE INDEX IF NOT EXISTS drafts_org_updated_idx ON drafts(organization_id, updated_at DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS drafts_slug_idx ON drafts(slug);
   `);
-
-  await ensurePublicUploadApiKey();
 }
 
-export async function ensureBootstrapApiKey() {
-  if (!config.bootstrapApiKey) return;
-
-  const accountId = "acct_bootstrap";
-  const apiKeyId = "key_bootstrap";
-  const keyHash = sha256(config.bootstrapApiKey);
-
+// Upserts the cached profile for an account. Called with fresh WorkOS data.
+export async function saveAccount({ id, name, email = null, pictureUrl = null }) {
   await pool.query(
     `
-      INSERT INTO accounts (id, name)
-      VALUES ($1, $2)
-      ON CONFLICT (id) DO UPDATE SET updated_at = now()
-    `,
-    [accountId, "Bootstrap Account"]
-  );
-
-  await pool.query(
-    `
-      INSERT INTO api_keys (id, account_id, name, key_hash)
+      INSERT INTO accounts (id, name, email, picture_url)
       VALUES ($1, $2, $3, $4)
       ON CONFLICT (id) DO UPDATE
-        SET key_hash = EXCLUDED.key_hash,
-            name = EXCLUDED.name,
-            revoked_at = NULL
+        SET name = EXCLUDED.name, email = EXCLUDED.email,
+            picture_url = EXCLUDED.picture_url, updated_at = now()
     `,
-    [apiKeyId, accountId, "Bootstrap API Key", keyHash]
+    [id, name, email, pictureUrl]
   );
 }
 
-export async function findApiKeyByToken(token) {
-  const keyHash = sha256(token);
+export async function saveOrganization({ id, name }) {
+  await pool.query(
+    `
+      INSERT INTO organizations (id, name) VALUES ($1, $2)
+      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+    `,
+    [id, name]
+  );
+}
+
+export async function findAccount(id) {
+  const result = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [id]);
+  return result.rows[0] || null;
+}
+
+// Cached rows younger than maxAgeSeconds, or null (missing or stale).
+export async function findFreshAccount(id, maxAgeSeconds) {
   const result = await pool.query(
-    `
-      SELECT api_keys.id, api_keys.account_id, api_keys.name, accounts.name AS account_name,
-             accounts.flags
-      FROM api_keys
-      JOIN accounts ON accounts.id = api_keys.account_id
-      WHERE api_keys.key_hash = $1
-        AND api_keys.id <> $2
-        AND api_keys.revoked_at IS NULL
-      LIMIT 1
-    `,
-    [keyHash, publicUploadAuth.id]
+    `SELECT * FROM accounts WHERE id = $1 AND updated_at > now() - make_interval(secs => $2)`,
+    [id, maxAgeSeconds]
   );
-
-  const apiKey = result.rows[0] || null;
-  if (apiKey) {
-    apiKey.flags ||= [];
-    await pool.query("UPDATE api_keys SET last_used_at = now() WHERE id = $1", [apiKey.id]);
-  }
-  return apiKey;
+  return result.rows[0] || null;
 }
 
-async function ensurePublicUploadApiKey() {
-  await pool.query(
-    `
-      INSERT INTO accounts (id, name)
-      VALUES ($1, $2)
-      ON CONFLICT (id) DO UPDATE
-        SET name = EXCLUDED.name,
-            updated_at = now()
-    `,
-    [publicUploadAuth.account_id, publicUploadAuth.account_name]
+export async function findFreshOrganization(id, maxAgeSeconds) {
+  const result = await pool.query(
+    `SELECT * FROM organizations WHERE id = $1 AND updated_at > now() - make_interval(secs => $2)`,
+    [id, maxAgeSeconds]
   );
+  return result.rows[0] || null;
+}
 
-  await pool.query(
-    `
-      INSERT INTO api_keys (id, account_id, name, key_hash)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (id) DO UPDATE
-        SET key_hash = EXCLUDED.key_hash,
-            name = EXCLUDED.name,
-            revoked_at = NULL
-    `,
-    [
-      publicUploadAuth.id,
-      publicUploadAuth.account_id,
-      publicUploadAuth.name,
-      sha256("postplan-public-upload-sentinel")
-    ]
+export async function hasFreshMembership(userId, organizationId, maxAgeSeconds) {
+  const result = await pool.query(
+    `SELECT 1 FROM memberships
+     WHERE user_id = $1 AND organization_id = $2 AND checked_at > now() - make_interval(secs => $3)`,
+    [userId, organizationId, maxAgeSeconds]
   );
+  return result.rowCount > 0;
+}
+
+export async function saveMembership(userId, organizationId, active) {
+  if (active) {
+    await pool.query(
+      `INSERT INTO memberships (user_id, organization_id) VALUES ($1, $2)
+       ON CONFLICT (user_id, organization_id) DO UPDATE SET checked_at = now()`,
+      [userId, organizationId]
+    );
+  } else {
+    await pool.query(`DELETE FROM memberships WHERE user_id = $1 AND organization_id = $2`, [
+      userId,
+      organizationId
+    ]);
+  }
+}
+
+// subjects: user, API key, or session ids; any revoked one denies.
+export async function isRevoked(subjects, organizationId) {
+  const result = await pool.query(
+    `SELECT 1 FROM revocations WHERE subject = ANY($1) AND organization_id IN ($2, '*') LIMIT 1`,
+    [subjects.filter(Boolean), organizationId]
+  );
+  return result.rowCount > 0;
+}
+
+export async function setRevoked(subject, organizationId, revoked) {
+  if (revoked) {
+    await pool.query(
+      `DELETE FROM memberships WHERE user_id = $1 AND ($2 = '*' OR organization_id = $2)`,
+      [subject, organizationId]
+    );
+    await pool.query(
+      `INSERT INTO revocations (subject, organization_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [subject, organizationId]
+    );
+  } else {
+    await pool.query(`DELETE FROM revocations WHERE subject = $1 AND organization_id IN ($2, '*')`, [
+      subject,
+      organizationId
+    ]);
+  }
 }
 
 export async function withTransaction(work) {
@@ -252,100 +247,4 @@ export async function withTransaction(work) {
 
 export function newEventId() {
   return newInternalId();
-}
-
-// Maps a verified external identity (e.g. shoo's pairwise_sub) to a postplan
-// account, creating both on first sign-in. Profile claims (from shoo's pii
-// consent) are refreshed on every login — they can change at Google any time.
-// Returns { accountId, accountName, email, pictureUrl }.
-export async function findOrCreateAccountForIdentity({ provider, subject, profile = {} }) {
-  try {
-    return await upsertIdentity({ provider, subject, profile });
-  } catch (error) {
-    // Two concurrent first sign-ins (e.g. two devices) can both miss the
-    // SELECT and collide on UNIQUE(provider, subject). The loser's transaction
-    // rolled back entirely (including its orphan account), so one retry hits
-    // the existing-identity path and succeeds.
-    if (error.code === "23505") {
-      return upsertIdentity({ provider, subject, profile });
-    }
-    throw error;
-  }
-}
-
-async function upsertIdentity({ provider, subject, profile }) {
-  const profileParams = [
-    profile.email ?? null,
-    profile.emailVerified ?? null,
-    profile.displayName ?? null,
-    profile.pictureUrl ?? null,
-    profile.piiSubject ?? null
-  ];
-
-  return withTransaction(async (client) => {
-    const existing = await client.query(
-      `
-        SELECT identities.account_id, accounts.name AS account_name
-        FROM identities
-        JOIN accounts ON accounts.id = identities.account_id
-        WHERE identities.provider = $1 AND identities.subject = $2
-        LIMIT 1
-      `,
-      [provider, subject]
-    );
-
-    if (existing.rows[0]) {
-      const accountId = existing.rows[0].account_id;
-      // The verified token is authoritative for profile fields: a claim absent
-      // from this login (e.g. the user removed their Google picture) clears the
-      // stored value, so DB, session, and header always agree. pii_subject is
-      // the one exception — it is a stable identifier, not editable profile,
-      // and a transient absence must not unlink the account.
-      await client.query(
-        `
-          UPDATE identities
-          SET last_login_at = now(),
-              email = $3,
-              email_verified = $4,
-              display_name = $5,
-              picture_url = $6,
-              pii_subject = COALESCE($7, pii_subject)
-          WHERE provider = $1 AND subject = $2
-        `,
-        [provider, subject, ...profileParams]
-      );
-
-      // Same authoritative-token rule for the derived account name: if the
-      // user clears their Google name/email, the account label degrades to the
-      // neutral fallback instead of retaining old PII.
-      const accountName =
-        profile.displayName || profile.email || `Postplan ${subject.slice(-6)}`;
-      if (accountName !== existing.rows[0].account_name) {
-        await client.query("UPDATE accounts SET name = $2, updated_at = now() WHERE id = $1", [
-          accountId,
-          accountName
-        ]);
-      }
-      return { accountId, accountName, email: profile.email ?? null, pictureUrl: profile.pictureUrl ?? null };
-    }
-
-    const accountId = `acct_${newInternalId()}`;
-    const accountName = profile.displayName || profile.email || `Postplan ${subject.slice(-6)}`;
-    await client.query("INSERT INTO accounts (id, name) VALUES ($1, $2)", [
-      accountId,
-      accountName
-    ]);
-    await client.query(
-      `
-        INSERT INTO identities (
-          id, account_id, provider, subject,
-          email, email_verified, display_name, picture_url, pii_subject,
-          last_login_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
-      `,
-      [newInternalId(), accountId, provider, subject, ...profileParams]
-    );
-    return { accountId, accountName, email: profile.email ?? null, pictureUrl: profile.pictureUrl ?? null };
-  });
 }

@@ -11,109 +11,183 @@ import { formatBytes, formatIssue, validateUpload } from "../src/html-policy.js"
 // Single source of truth for the version: package.json. CI bumps it on every
 // merge to main, so a hardcoded copy here would immediately drift.
 const { version: VERSION } = createRequire(import.meta.url)("../package.json");
-const DEFAULT_API_URL = "https://postplan.dev";
-const POSTPLAN_DIR = path.join(os.homedir(), ".postplan");
-const CONFIG_PATH = path.join(POSTPLAN_DIR, "config.json");
-const CREDENTIALS_PATH = path.join(POSTPLAN_DIR, "credentials.json");
-// Draft mappings from older CLIs. Read only; new mappings go to DRAFT_BINDINGS_DIR.
-const DRAFTS_PATH = path.join(POSTPLAN_DIR, "drafts.json");
-const DRAFT_BINDINGS_DIR = path.join(POSTPLAN_DIR, "drafts");
+// A server's /install.sh replaces this placeholder with its own URL, so an
+// installed CLI already knows where its workspace lives.
+const BAKED_API_URL = "__HTMLARTIFACT_API_URL__";
+const DEFAULT_API_URL = BAKED_API_URL.startsWith("__") ? null : BAKED_API_URL;
+const HTMLARTIFACT_DIR = process.env.HTMLARTIFACT_HOME || path.join(os.homedir(), ".htmlartifact");
+const CONFIG_PATH = path.join(HTMLARTIFACT_DIR, "config.json");
+const CREDENTIALS_PATH = path.join(HTMLARTIFACT_DIR, "credentials.json");
+const DRAFT_BINDINGS_DIR = path.join(HTMLARTIFACT_DIR, "drafts");
 
 class CliError extends Error {}
-// Postplan could not be reached at all: DNS, TLS, timeouts, refused sockets.
+// htmlartifact could not be reached at all: DNS, TLS, timeouts, refused sockets.
 class NetworkError extends CliError {}
 
 const program = new Command();
 
 program
-  .name("postplan")
-  .description("Upload static HTML drafts to Postplan.")
+  .name("htmlartifact")
+  .description("Publish HTML artifacts that only your team can read.")
   .version(VERSION);
 
-const authCommand = program.command("auth").description("Manage CLI authentication.");
+program
+  .command("login")
+  .description("Sign in through your browser (works over SSH: open the link on any device).")
+  .option("--api-url <url>", "The htmlartifact server, e.g. https://artifacts.acme.com")
+  .option("--team <name>", "If you are in several teams, sign in to this one")
+  .action(async (options) => {
+    const apiUrl = resolveApiUrl(options.apiUrl);
+    const start = await postJson(`${apiUrl}/api/cli/device`, {});
+    if (!start.ok || !start.body.device_code) {
+      throw new CliError(`Could not start sign-in at ${apiUrl}: ${start.body.error || `HTTP ${start.status}`}`);
+    }
+    const device = start.body;
 
-authCommand
-  .command("set")
-  .argument("<api-key>", "Postplan API key")
-  .option("--api-url <url>", "Override the default Postplan API base URL")
-  .action((apiKey, options) => {
-    saveCredentials(apiKey, options.apiUrl);
-    console.log("Postplan credentials saved.");
+    console.log("Open this link and confirm the code:\n");
+    console.log(`  ${device.verification_uri_complete || device.verification_uri}\n`);
+    console.log(`  Code: ${device.user_code}\n`);
+    console.log("Waiting for you to finish in the browser...");
+
+    let interval = Number(device.interval || 5) * 1000;
+    const deadline = Date.now() + Number(device.expires_in || 300) * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, interval));
+      let poll = await postJson(`${apiUrl}/api/cli/token`, { device_code: device.device_code });
+      if (poll.body.code === "organization_selection_required") {
+        poll = await selectTeam(apiUrl, poll.body, options.team);
+      }
+      if (poll.ok) {
+        const session = saveSession({ apiUrl, tokens: poll.body });
+        if (!session.organizationId) {
+          throw new CliError(`Signed in, but you are not in a team yet. Create or join one at ${apiUrl}/onboarding, then run htmlartifact login again.`);
+        }
+        const me = await requestJson(`${apiUrl}/api/me`, { apiKey: session.accessToken });
+        if (!me.ok) throw new CliError(serverErrorMessage(me.body));
+        console.log(`\nSigned in as ${me.body.email || me.body.name} in team "${me.body.organizationName}".`);
+        return;
+      }
+      const error = poll.body.error || poll.body.code;
+      if (error === "authorization_pending") continue;
+      if (error === "slow_down") {
+        interval += 5000;
+        continue;
+      }
+      throw new CliError(`Sign-in ${error === "access_denied" ? "was denied" : `failed: ${error || poll.status}`}.`);
+    }
+    throw new CliError("Sign-in timed out. Run htmlartifact login again.");
   });
 
-authCommand
-  .command("login")
-  .description("Log in by pasting an API key from the browser. Works over SSH.")
-  .option("--api-url <url>", "Override the default Postplan API base URL")
-  .action(async (options) => {
-    const { apiUrl } = readAuth(options.apiUrl, { requireApiKey: false });
-
-    console.log("Open this in your browser (any device):\n");
-    console.log(`  ${apiUrl}/cli/auth\n`);
-    console.log("Sign in, generate a key, then paste it below.\n");
-
-    const readline = await import("node:readline/promises");
-    const { once } = await import("node:events");
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    let apiKey;
-    try {
-      // rl.question never resolves if stdin closes (EOF/ctrl-d) — race the
-      // close event so that path hits the "No key entered" error below
-      // instead of exiting 0 silently.
-      apiKey = (
-        await Promise.race([
-          rl.question("Paste your API key: "),
-          once(rl, "close").then(() => "")
-        ])
-      ).trim();
-    } finally {
-      rl.close();
-    }
-
-    if (!apiKey) {
-      throw new CliError("No key entered. Nothing saved.");
-    }
-
-    const { ok, body } = await requestJson(`${apiUrl}/api/me`, { apiKey });
-    if (!ok) {
-      throw new CliError(body.error || "That key was rejected. Nothing saved.");
-    }
-
-    saveCredentials(apiKey, options.apiUrl);
-    console.log(`\nLogged in as ${body.accountName} (key: ${body.apiKeyName}).`);
+program
+  .command("logout")
+  .description("Forget the saved sign-in on this machine.")
+  .action(() => {
+    fs.rmSync(CREDENTIALS_PATH, { force: true });
+    console.log("Signed out.");
   });
 
 program
   .command("whoami")
-  .description("Check the configured Postplan credentials.")
-  .action(async () => {
-    const { apiUrl, apiKey } = readAuth();
+  .description("Show who you are signed in as, and in which team.")
+  .option("--api-url <url>", "The htmlartifact server")
+  .action(async (options) => {
+    const { apiUrl, apiKey } = await getAuth(options.apiUrl);
     const { ok, body } = await requestJson(`${apiUrl}/api/me`, { apiKey });
-    if (!ok) {
-      throw new CliError(body.error || "Authentication failed.");
+    if (!ok) throw new CliError(serverErrorMessage(body));
+    console.log(`User: ${body.name}${body.email ? ` <${body.email}>` : ""}`);
+    console.log(`Team: ${body.organizationName} (${body.organizationId})`);
+    console.log(`Server: ${apiUrl}`);
+  });
+
+const orgCommand = program.command("org").description("List or switch teams.");
+
+orgCommand
+  .command("list")
+  .description("List the teams you belong to.")
+  .action(async () => {
+    const { apiUrl, apiKey } = await getAuth();
+    const { ok, body } = await requestJson(`${apiUrl}/api/orgs`, { apiKey });
+    if (!ok) throw new CliError(serverErrorMessage(body));
+    for (const org of body.organizations) {
+      console.log(`${org.current ? "*" : " "} ${org.name}  (${org.id})`);
     }
-    console.log(`Account: ${body.accountName} (${body.accountId})`);
-    console.log(`API key: ${body.apiKeyName} (${body.apiKeyId})`);
-    console.log(`Flags: ${body.flags?.length ? body.flags.join(", ") : "none"}`);
+  });
+
+orgCommand
+  .command("switch")
+  .argument("<team>", "Team name or ID")
+  .description("Publish to and read from another of your teams.")
+  .action(async (team) => {
+    const { apiUrl, apiKey } = await getAuth();
+    const { ok, body } = await requestJson(`${apiUrl}/api/orgs`, { apiKey });
+    if (!ok) throw new CliError(serverErrorMessage(body));
+    const wanted = team.toLowerCase();
+    const org = body.organizations.find((o) => o.id === team || o.name.toLowerCase() === wanted);
+    if (!org) throw new CliError(`You are not in a team named "${team}". See: htmlartifact org list`);
+    await refreshSession(readJson(CREDENTIALS_PATH, {}), { organizationId: org.id });
+    console.log(`Switched to team "${org.name}".`);
+  });
+
+program
+  .command("read")
+  .argument("<url>", "An artifact URL from this server")
+  .option("--out <file>", "Write the HTML here instead of a new temp file")
+  .description("Download an artifact's HTML (for agents; uses your sign-in).")
+  .action(async (url, options) => {
+    const { apiUrl, apiKey } = await getAuth();
+    let target;
+    try {
+      target = new URL(url);
+    } catch {
+      throw new CliError(`Not a URL: ${url}`);
+    }
+    target.hash = "";
+    // Never send the token anywhere but this server (or its artifact subdomains).
+    const api = new URL(apiUrl);
+    if (target.protocol !== api.protocol || !(target.host === api.host || target.host.endsWith(`.${api.host}`))) {
+      throw new CliError(`${target.origin} is not your htmlartifact server (${api.origin}).`);
+    }
+
+    let response;
+    try {
+      response = await fetch(target, {
+        headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": `htmlartifact/${VERSION}`, Accept: "*/*" },
+        signal: AbortSignal.timeout(60_000)
+      });
+    } catch (error) {
+      throw new NetworkError(`Could not reach ${target.origin}: ${error.cause?.message || error.message}`);
+    }
+    const html = await response.text();
+    if (!response.ok) {
+      const hint = response.status === 404 ? " Not found in your current team (see: htmlartifact org list)." : "";
+      throw new CliError(`HTTP ${response.status} for ${target}.${hint}`);
+    }
+    const out = options.out
+      ? path.resolve(options.out)
+      : path.join(fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-")), "artifact.html");
+    fs.writeFileSync(out, html);
+    console.log(`URL: ${response.url}`);
+    console.log(`Version: ${response.headers.get("x-htmlartifact-draft-version") || "unknown"}`);
+    console.log(`File: ${out}`);
   });
 
 program
   .command("upload")
   .argument("<path>", "HTML file, or a folder of .html pages with an index.html")
-  .option("--slug <name>", "Publish at a custom URL (<name>.postplan.dev); the same slug always updates the same draft. With --draft, renames that draft")
+  .option("--slug <name>", "Publish at a custom URL; the same slug always updates the same draft. With --draft, renames that draft")
   .option("--draft <draft-id>", "Update a specific draft")
   .option("--new", "Always create a new draft")
   .option("--description <text>", "Set a short description for the draft")
   .option("--json", "Print the publication receipt as JSON")
-  .option("--api-url <url>", "Override the default Postplan API base URL")
-  .description("Upload or update an HTML draft.")
+  .option("--api-url <url>", "The htmlartifact server")
+  .description("Publish an artifact, or a new version of one.")
   .action(async (target, options) => {
     if (options.new && (options.draft || options.slug !== undefined)) {
       throw new CliError(
         "--new cannot be combined with --draft or --slug: those name an existing draft. Use an unused slug to create a new draft at a custom URL."
       );
     }
-    const { apiUrl, apiKey } = readAuth(options.apiUrl, { requireApiKey: false });
+    const { apiUrl, apiKey } = await getAuth(options.apiUrl);
     const source = readUploadSource(target);
     // A slug names the draft by itself, so the saved mapping for this path is
     // only used without one. `--draft <id> --slug <name>` renames a draft.
@@ -146,7 +220,7 @@ program
     if (!ok) {
       const staleMapping = status === 404 && mappedDraftId;
       const hint = staleMapping
-        ? "\nThe saved draft for this path belongs to another account or was deleted. Re-run with --new to publish a new draft."
+        ? "\nThe saved artifact for this path is in another team or was deleted. Re-run with --new to publish a new one."
         : "";
       if (options.json) {
         printJson({ ok: false, status, error: body.error || null, errors: body.errors || [], issues: body.issues || [] });
@@ -169,14 +243,14 @@ program
       contentHash: body.contentHash,
       totalBytes: body.totalBytes,
       account: body.account?.name || null,
+      team: body.organization?.name || null,
       pages: body.pages || null,
       // The draft ID never moves; a slug can be renamed and reused by
       // another draft, so it would not reliably name this one.
       updateCommand: [
-        "postplan upload",
+        "htmlartifact upload",
         shellQuote(source.resolved),
         `--draft ${body.draftId}`,
-        apiUrl === DEFAULT_API_URL ? null : `--api-url ${shellQuote(apiUrl)}`
       ]
         .filter(Boolean)
         .join(" "),
@@ -209,10 +283,10 @@ program
   .argument("[path]", "HTML file or folder to validate; omit for a readiness check only")
   .option("--slug <name>", "Also check whether a custom URL is available to you")
   .option("--json", "Print the report as JSON")
-  .option("--api-url <url>", "Override the default Postplan API base URL")
+  .option("--api-url <url>", "The htmlartifact server")
   .description("Check account, limits, and capabilities, and validate a page. Never publishes.")
   .action(async (target, options) => {
-    const { apiUrl, apiKey } = readAuth(options.apiUrl, { requireApiKey: false });
+    const { apiUrl, apiKey } = await getAuth(options.apiUrl);
     const source = target ? readUploadSource(target) : null;
 
     let report;
@@ -241,12 +315,14 @@ program
 
 program
   .command("list")
-  .description("List the drafts published to your account.")
-  .option("--api-url <url>", "Override the default Postplan API base URL")
+  .description("List your artifacts in the current team (--all: everyone's).")
+  .option("--all", "List every artifact published in your team")
+  .option("--api-url <url>", "The htmlartifact server")
   .option("--json", "Print the raw JSON response")
   .action(async (options) => {
-    const { apiUrl, apiKey } = readAuth(options.apiUrl);
-    const { ok, body } = await requestJson(`${apiUrl}/api/drafts`, { apiKey });
+    const { apiUrl, apiKey } = await getAuth(options.apiUrl);
+    const scope = options.all ? "?scope=workspace" : "";
+    const { ok, body } = await requestJson(`${apiUrl}/api/drafts${scope}`, { apiKey });
     if (!ok) {
       throw new CliError(body.error || "Failed to list drafts.");
     }
@@ -259,7 +335,7 @@ program
     }
 
     if (!drafts.length) {
-      console.log("No drafts yet. Publish one with: postplan upload <file>");
+      console.log(options.all ? "Nothing published in this team yet." : "Nothing yet. Publish with: htmlartifact upload <file>");
       return;
     }
 
@@ -270,7 +346,7 @@ program
       const count = `${draft.versionCount} version${draft.versionCount === 1 ? "" : "s"}`;
       const disabled = draft.disabled ? " · disabled" : "";
 
-      console.log(draft.title || "Untitled Draft");
+      console.log(`${draft.title || "Untitled"}${options.all && draft.author ? `  · ${draft.author}` : ""}`);
       console.log(`  ${repo} · ${version} · ${count} · updated ${timeAgo(draft.updatedAt)}${disabled}`);
       console.log(`  ${draft.publicUrl}`);
       if (draft.description) {
@@ -296,46 +372,103 @@ program.parseAsync(process.argv).catch((error) => {
   process.exit(1);
 });
 
-function readAuth(apiUrlOverride, { requireApiKey = true } = {}) {
+function resolveApiUrl(override) {
   const config = readJson(CONFIG_PATH, {});
   const credentials = readJson(CREDENTIALS_PATH, {});
-  const apiUrl = (
-    apiUrlOverride ||
-    process.env.POSTPLAN_API_URL ||
-    config.apiUrl ||
-    DEFAULT_API_URL
-  ).replace(/\/+$/, "");
-  const apiKey = process.env.POSTPLAN_API_KEY || credentials.apiKey;
-
-  if (requireApiKey && !apiKey) {
-    throw new CliError("Missing API key. Run: postplan auth set <api-key>");
+  const apiUrl = override || process.env.HTMLARTIFACT_API_URL || credentials.apiUrl || config.apiUrl || DEFAULT_API_URL;
+  if (!apiUrl) {
+    throw new CliError("No htmlartifact server configured. Run: htmlartifact login --api-url https://<your-server>");
   }
+  return apiUrl.replace(/\/+$/, "");
+}
 
-  return { apiUrl, apiKey };
+// The bearer credential for every request: HTMLARTIFACT_TOKEN (CI: a WorkOS
+// organization API key) or the saved sign-in, refreshed when it expires.
+async function getAuth(apiUrlOverride) {
+  const apiUrl = resolveApiUrl(apiUrlOverride);
+  if (process.env.HTMLARTIFACT_TOKEN) return { apiUrl, apiKey: process.env.HTMLARTIFACT_TOKEN };
+
+  const session = readJson(CREDENTIALS_PATH, null);
+  if (!session?.refreshToken) throw new CliError("Not signed in. Run: htmlartifact login");
+  if (session.apiUrl !== apiUrl) {
+    throw new CliError(`Signed in to ${session.apiUrl}, not ${apiUrl}. Run: htmlartifact login --api-url ${apiUrl}`);
+  }
+  const fresh = tokenExpiresAt(session.accessToken) > Date.now() + 30_000
+    ? session
+    : await refreshSession(session);
+  return { apiUrl, apiKey: fresh.accessToken };
+}
+
+// WorkOS rotates refresh tokens on every use: persist the new pair at once.
+async function refreshSession(session, { organizationId } = {}) {
+  const result = await postJson(`${session.apiUrl}/api/cli/token`, {
+    refresh_token: session.refreshToken,
+    ...(organizationId ? { organization_id: organizationId } : {})
+  });
+  if (!result.ok) {
+    const reason = result.body.error_description || result.body.message || result.body.error || result.status;
+    if (organizationId) throw new CliError(`Could not switch team: ${reason}`);
+    throw new CliError(`Your sign-in expired (${reason}). Run: htmlartifact login`);
+  }
+  return saveSession({ apiUrl: session.apiUrl, tokens: result.body });
+}
+
+// Several teams and no --team: list them and stop, rather than guess.
+async function selectTeam(apiUrl, pending, team) {
+  const teams = pending.organizations || [];
+  const wanted = team?.toLowerCase();
+  const org = wanted && teams.find((o) => o.id === team || o.name.toLowerCase() === wanted);
+  if (!org) {
+    const names = teams.map((o) => `  ${o.name}`).join("\n");
+    throw new CliError(`You are in several teams. Run again with --team <name>:\n${names}`);
+  }
+  return postJson(`${apiUrl}/api/cli/token`, {
+    pending_authentication_token: pending.pending_authentication_token,
+    organization_id: org.id
+  });
+}
+
+function saveSession({ apiUrl, tokens }) {
+  const session = {
+    apiUrl,
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    organizationId: tokens.organization_id || null,
+    email: tokens.user?.email || null,
+    updatedAt: new Date().toISOString()
+  };
+  ensureStateDir();
+  writeJson(CREDENTIALS_PATH, session, 0o600);
+  return session;
+}
+
+async function postJson(url, body) {
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": `htmlartifact/${VERSION}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000)
+    });
+  } catch (error) {
+    throw new NetworkError(`Could not reach ${new URL(url).origin}: ${error.cause?.message || error.message}`);
+  }
+  const json = await response.json().catch(() => ({}));
+  return { ok: response.ok, status: response.status, body: json };
+}
+
+function tokenExpiresAt(token) {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    return Number(payload.exp) * 1000 || 0;
+  } catch {
+    return 0;
+  }
 }
 
 function ensureStateDir() {
-  fs.mkdirSync(POSTPLAN_DIR, { recursive: true, mode: 0o700 });
-}
-
-function saveCredentials(apiKey, apiUrlOverride) {
-  ensureStateDir();
-
-  if (apiUrlOverride) {
-    writeJson(CONFIG_PATH, {
-      ...readJson(CONFIG_PATH, {}),
-      apiUrl: apiUrlOverride.replace(/\/+$/, "")
-    });
-  }
-
-  writeJson(
-    CREDENTIALS_PATH,
-    {
-      apiKey,
-      updatedAt: new Date().toISOString()
-    },
-    0o600
-  );
+  fs.mkdirSync(HTMLARTIFACT_DIR, { recursive: true, mode: 0o700 });
 }
 
 // Each (API URL, path) binding is its own file, so concurrent uploads and
@@ -344,15 +477,9 @@ function draftBindingPath(apiUrl, file) {
   return path.join(DRAFT_BINDINGS_DIR, `${sha256(`${apiUrl}\n${file}`)}.json`);
 }
 
-// Finds the draft a path was last published to on this API. Older CLIs kept
-// one mapping per path in drafts.json with no API URL, and used it for
-// whichever API they called; this CLI does the same until the path gets a
-// binding of its own.
+// Finds the draft a path was last published to on this API.
 function findDraftMapping(apiUrl, file) {
-  const binding = readStateJson(draftBindingPath(apiUrl, file));
-  if (binding) return binding;
-  const legacy = readStateJson(DRAFTS_PATH)?.files?.[file];
-  return legacy && (!legacy.apiUrl || legacy.apiUrl === apiUrl) ? legacy : null;
+  return readStateJson(draftBindingPath(apiUrl, file));
 }
 
 function saveDraftMapping(apiUrl, file, entry) {
@@ -427,9 +554,9 @@ function readUploadSource(target) {
 
 // POSTs `body` as JSON (GET when absent) and returns { ok, status, body }.
 // Unreachable servers throw NetworkError, so callers can tell "could not
-// reach Postplan" apart from "Postplan rejected this".
+// reach the server" apart from "the server rejected this".
 async function requestJson(url, { apiKey, body, timeoutMs = 30_000 } = {}) {
-  const headers = { "User-Agent": `postplan/${VERSION}` };
+  const headers = { "User-Agent": `htmlartifact/${VERSION}` };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
@@ -462,14 +589,14 @@ async function requestJson(url, { apiKey, body, timeoutMs = 30_000 } = {}) {
     return {
       ok: false,
       status: response.status,
-      body: { error: `Postplan returned HTTP ${response.status}: ${text.slice(0, 200)}` }
+      body: { error: `htmlartifact returned HTTP ${response.status}: ${text.slice(0, 200)}` }
     };
   }
 }
 
 function serverErrorMessage(body) {
   const details = body.errors?.length ? `\n- ${body.errors.join("\n- ")}` : "";
-  return `${body.error || "HTML failed Postplan validation."}${details}`;
+  return `${body.error || "HTML failed htmlartifact validation."}${details}`;
 }
 
 // Offline fallback for `check`: the bundled validator knows the markup rules,
@@ -506,7 +633,7 @@ function printReceipt(receipt) {
   console.log(`Draft ID: ${receipt.draftId}`);
   console.log(`Version: ${receipt.versionNumber}`);
   if (receipt.pages) console.log(`Pages: ${receipt.pages.map((page) => page.path).join(", ")}`);
-  console.log(`Account: ${receipt.account || "anonymous"}`);
+  console.log(`Team: ${receipt.team} (visible to its members only)`);
   console.log(`Update: ${receipt.updateCommand}`);
   for (const warning of receipt.warnings) {
     console.warn(`Warning: ${warning}`);
@@ -514,19 +641,14 @@ function printReceipt(receipt) {
 }
 
 function printCheckReport(report) {
-  console.log(`postplan ${report.cliVersion} -> ${report.apiUrl}`);
+  console.log(`htmlartifact ${report.cliVersion} -> ${report.apiUrl}`);
   if (report.offline) {
     console.log(`Offline: ${report.networkError}`);
-    console.log("Checked markup locally. Account, limits, and script permission were not checked.");
+    console.log("Checked markup locally. Account and limits were not checked.");
   } else if (report.limits) {
-    const account = report.account
-      ? `${report.account.name} (key: ${report.account.apiKeyName})`
-      : "none (anonymous upload)";
-    console.log(`Account: ${account}`);
-    console.log(`Flags: ${report.flags.length ? report.flags.join(", ") : "none"}`);
+    console.log(`Account: ${report.account?.name}`);
+    console.log(`Team: ${report.organization?.name}`);
     console.log(`Limit: ${formatBytes(report.limits.maxBytes)} per upload, ${report.limits.maxPages} page(s)`);
-    console.log(`Inline JavaScript: ${report.capabilities.inlineScripts ? "allowed (sandboxed)" : "needs `postplan auth login`"}`);
-    console.log(`Custom URLs: ${report.capabilities.customUrls ? "enabled" : "not enabled"}`);
   }
   if (report.slug) {
     console.log(`Custom URL "${report.slug.slug}": ${report.slug.status}${report.slug.message ? `. ${report.slug.message}` : ""}`);

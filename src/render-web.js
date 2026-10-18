@@ -1,30 +1,48 @@
-// Server-rendered dashboard pages. These are postplan's own UI (apex domain
-// only) — unlike draft serving they may use inline styles/JS freely; the
-// draft-serving CSP never applies here.
+// Server-rendered dashboard pages. These are htmlartifact's own UI (apex domain
+// only): unlike artifact serving they may use inline styles/JS freely; the
+// artifact CSP never applies here.
 
 export function renderSignIn({ next }) {
   const target = `/auth/sign-in?next=${encodeURIComponent(next || "/dashboard")}`;
   return webPage({
-    title: "Sign in — Postplan",
+    title: "Sign in · htmlartifact",
     body: `
       <main class="narrow center">
-        <h1>Postplan</h1>
-        <p class="muted">Sign in to see the drafts you've published.</p>
-        <p><a class="button" href="${escapeHtml(target)}">Continue with shoo</a></p>
-        <p class="muted small">Publishing from the CLI stays anonymous unless you attach a key.</p>
+        <h1>htmlartifact</h1>
+        <p class="muted">Artifacts here are visible only to members of their organization.</p>
+        <p><a class="button" href="${escapeHtml(target)}">Sign in</a></p>
       </main>
     `
   });
 }
 
-export function renderAuthError({ message }) {
+export function renderAuthError({ title = "Sign-in problem", message, retry = true }) {
   return webPage({
-    title: "Sign-in problem — Postplan",
+    title: `${title} · htmlartifact`,
     body: `
       <main class="narrow center">
-        <h1>Sign-in problem</h1>
+        <h1>${escapeHtml(title)}</h1>
         <p class="muted">${escapeHtml(message)}</p>
-        <p><a class="button" href="/auth/sign-in">Try again</a></p>
+        ${retry ? `<p><a class="button" href="/auth/sign-in">Try again</a></p>` : ""}
+      </main>
+    `
+  });
+}
+
+// Every artifact any member of the current organization has published.
+export function renderWorkspace({ session, drafts }) {
+  return webPage({
+    title: `${session.organization_name || "Workspace"} · htmlartifact`,
+    header: pageHeader({ session, active: "workspace" }),
+    body: `
+      <main>
+        <h1>${escapeHtml(session.organization_name || "Workspace")}</h1>
+        <p class="muted">Everything your team has published, newest first. Only members can open these.</p>
+        ${
+          drafts.length
+            ? drafts.map((draft) => renderDraftRow(draft, { showAuthor: true })).join("\n")
+            : `<p class="muted">Nothing published yet.</p>`
+        }
       </main>
     `
   });
@@ -48,15 +66,15 @@ export function renderDashboard({ session, drafts }) {
     .join("\n");
 
   return webPage({
-    title: "My drafts — Postplan",
+    title: "My artifacts · htmlartifact",
     header: pageHeader({ session, active: "dashboard" }),
     body: `
       <main>
-        <h1>My drafts</h1>
+        <h1>My artifacts</h1>
         ${
           drafts.length
             ? sections
-            : `<p class="muted">No drafts yet. Publish one with <code>postplan upload plan.html</code> using a key from <a href="/cli/auth">CLI setup</a>.</p>`
+            : `<p class="muted">Nothing yet. Set up the CLI from <a href="/cli/auth">CLI setup</a>, then run <code>htmlartifact upload plan.html</code>.</p>`
         }
       </main>
     `
@@ -78,11 +96,11 @@ export function renderDraftDetail({ session, draft, versions }) {
     .join("\n");
 
   return webPage({
-    title: `${draft.title} — Postplan`,
+    title: `${draft.title} · htmlartifact`,
     header: pageHeader({ session, active: "dashboard" }),
     body: `
       <main>
-        <p class="small"><a href="/dashboard">← My drafts</a></p>
+        <p class="small"><a href="/dashboard">← My artifacts</a></p>
         <h1>${escapeHtml(draft.title)}</h1>
         ${draft.description ? `<p class="muted">${escapeHtml(draft.description)}</p>` : ""}
         <p><a href="${escapeHtml(draft.publicUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(draft.publicUrl)}</a></p>
@@ -95,42 +113,40 @@ export function renderDraftDetail({ session, draft, versions }) {
   });
 }
 
-export function renderCliAuth({ session, keys = [] }) {
-  const keyRows = keys
-    .map(
-      (key) => `
-        <tr>
-          <td>${escapeHtml(key.name)}</td>
-          <td class="muted">${escapeHtml(formatDate(key.created_at))}</td>
-          <td class="muted">${key.last_used_at ? escapeHtml(formatDate(key.last_used_at)) : "never used"}</td>
-          <td>
-            <form method="post" action="/cli/auth/keys/${escapeHtml(key.id)}/revoke">
-              <button class="linklike" type="submit">Revoke</button>
-            </form>
-          </td>
-        </tr>
-      `
-    )
-    .join("\n");
-
+export function renderCliSetup({ session, homeUrl }) {
+  const install = `curl -fsSL ${homeUrl}/install.sh | sh`;
   return webPage({
-    title: "CLI setup — Postplan",
+    title: "CLI setup · htmlartifact",
     header: pageHeader({ session, active: "cli" }),
     body: `
       <main class="narrow">
-        <h1>Connect your CLI</h1>
-        <p class="muted">Generate a key, then paste it into the waiting <code>postplan auth login</code> prompt in your terminal.</p>
-        <form method="post" action="/cli/auth/keys">
-          <button class="button" type="submit">Generate a new API key</button>
-        </form>
-        <p class="muted small">Each visit can mint a fresh key. Keys are shown once.</p>
+        <h1>Set up the CLI</h1>
+        <p class="muted">Installs the <code>htmlartifact</code> CLI and the default agent skills (Claude Code, Codex, and any agent that reads <code>~/.agents/skills</code>).</p>
+        ${codeBox(install)}
+        <p class="muted">Then sign in. It opens this site in a browser, works over SSH too:</p>
+        ${codeBox("htmlartifact login")}
+        <p class="muted small">Needs Node.js 20+. Re-run the install line any time to update. CI should use an organization API key from <a href="/team">Team</a> as <code>HTMLARTIFACT_TOKEN</code>.</p>
+      </main>
+    `
+  });
+}
+
+export function renderOnboarding({ session, memberships, allowTeamCreation }) {
+  return webPage({
+    title: "Choose a team · htmlartifact",
+    header: pageHeader({ session, active: "" }),
+    body: `
+      <main class="narrow">
+        <h1>Choose a team</h1>
+        <p class="muted">Artifacts belong to a team, and only its members can read them.</p>
+        ${memberships.length ? orgSwitcher(memberships, session.organization_id) : `<p class="muted">You are not in a team yet. Ask a teammate to invite ${escapeHtml(session.email || "you")} from their Team page${allowTeamCreation ? ", or create one" : ""}.</p>`}
         ${
-          keys.length
-            ? `<h2>Active keys</h2>
-        <table>
-          <tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr>
-          ${keyRows}
-        </table>`
+          allowTeamCreation
+            ? `<h2>Create a team</h2>
+        <form method="post" action="/teams" class="inline">
+          <input name="name" required maxlength="100" placeholder="Team name">
+          <button class="button" type="submit">Create</button>
+        </form>`
             : ""
         }
       </main>
@@ -138,31 +154,89 @@ export function renderCliAuth({ session, keys = [] }) {
   });
 }
 
-export function renderCliAuthKey({ session, token, keyName }) {
+export function renderTeam({ session, isAdmin, memberships, apiKeys = [], newKey = null, notice = null }) {
+  const keyRows = apiKeys
+    .map(
+      (key) => `
+        <tr>
+          <td>${escapeHtml(key.name)}</td>
+          <td class="muted"><code>${escapeHtml(key.obfuscatedValue || "")}</code></td>
+          <td class="muted">${key.lastUsedAt ? escapeHtml(formatDate(key.lastUsedAt)) : "never used"}</td>
+          <td>
+            <form method="post" action="/team/api-keys/${escapeHtml(key.id)}/delete">
+              <button class="linklike" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+      `
+    )
+    .join("\n");
+
+  const admin = `
+        <h2>Invite a teammate</h2>
+        <form method="post" action="/team/invitations" class="inline">
+          <input name="email" type="email" required placeholder="name@company.com">
+          <select name="role"><option value="member">Member</option><option value="admin">Admin</option></select>
+          <button class="button" type="submit">Send invite</button>
+        </form>
+
+        <h2>CI API keys</h2>
+        <p class="muted small">For publishing from CI: set the value as <code>HTMLARTIFACT_TOKEN</code>. It publishes as this team.</p>
+        ${newKey ? `<p>New key <strong>${escapeHtml(newKey.name)}</strong>. Shown once, copy it now:</p>${codeBox(newKey.value)}` : ""}
+        <form method="post" action="/team/api-keys" class="inline">
+          <input name="name" maxlength="80" placeholder="Key name, e.g. GitHub Actions">
+          <button class="button" type="submit">Create key</button>
+        </form>
+        ${apiKeys.length ? `<table><tr><th>Name</th><th>Key</th><th>Last used</th><th></th></tr>${keyRows}</table>` : ""}
+
+        <h2>Single sign-on and provisioning</h2>
+        <p class="muted small">Opens the WorkOS Admin Portal for this team.</p>
+        <div class="actions">
+          ${[
+            ["sso", "Set up SSO"],
+            ["dsync", "Directory sync (SCIM)"],
+            ["domain_verification", "Verify a domain"],
+            ["audit_logs", "Audit log streaming"]
+          ]
+            .map(
+              ([intent, label]) =>
+                `<form method="post" action="/team/admin-portal/${intent}"><button class="button secondary" type="submit">${label}</button></form>`
+            )
+            .join("")}
+        </div>`;
+
   return webPage({
-    title: "Your new API key — Postplan",
-    header: pageHeader({ session, active: "cli" }),
+    title: `Team · ${session.organization_name || "htmlartifact"}`,
+    header: pageHeader({ session, active: "team" }),
     body: `
       <main class="narrow">
-        <h1>Your new API key</h1>
-        <p class="muted">Named <strong>${escapeHtml(keyName)}</strong>. Shown once — copy it now and paste it into your terminal.</p>
-        <div class="keybox">
-          <code id="key">${escapeHtml(token)}</code>
-          <button class="button" id="copy" type="button">Copy</button>
-        </div>
-        <p class="muted small">Terminal: <code>postplan auth login</code> (or <code>postplan auth set &lt;key&gt;</code>).</p>
-        <script>
-          document.getElementById("copy").addEventListener("click", async () => {
-            await navigator.clipboard.writeText(document.getElementById("key").textContent);
-            document.getElementById("copy").textContent = "Copied";
-          });
-        </script>
+        <h1>${escapeHtml(session.organization_name || "Team")}</h1>
+        ${notice ? `<p class="notice">${escapeHtml(notice)}</p>` : ""}
+        <p class="muted">You are ${isAdmin ? "an admin" : "a member"} of this team.</p>
+        ${isAdmin ? admin : `<p class="muted small">Admins can invite people, create CI keys, and set up SSO.</p>`}
+        <h2>Your teams</h2>
+        ${orgSwitcher(memberships, session.organization_id)}
+        <p class="small"><a href="/onboarding">Create another team</a></p>
       </main>
     `
   });
 }
 
-function renderDraftRow(draft) {
+function orgSwitcher(memberships, currentId) {
+  return `<ul class="orgs">${memberships
+    .map((m) =>
+      m.organizationId === currentId
+        ? `<li><strong>${escapeHtml(m.organizationName)}</strong> <span class="muted small">current</span></li>`
+        : `<li><form method="post" action="/orgs/switch"><input type="hidden" name="organizationId" value="${escapeHtml(m.organizationId)}"><button class="linklike" type="submit">${escapeHtml(m.organizationName)}</button></form></li>`
+    )
+    .join("")}</ul>`;
+}
+
+function codeBox(text) {
+  return `<div class="keybox"><code>${escapeHtml(text)}</code><button class="button copy" type="button">Copy</button></div>`;
+}
+
+function renderDraftRow(draft, { showAuthor = false } = {}) {
   // The title is the one-click "open the plan" action (new tab); the internal
   // detail/version-history screen hangs off the separate Details link.
   return `
@@ -173,7 +247,7 @@ function renderDraftRow(draft) {
         ${draft.description ? `<div class="muted small">${escapeHtml(draft.description)}</div>` : ""}
       </div>
       <div class="row-meta muted small">
-        <a href="/dashboard/drafts/${escapeHtml(draft.draftId)}">Details</a> ·
+        ${showAuthor ? `${escapeHtml(draft.author || "")} ·` : `<a href="/dashboard/drafts/${escapeHtml(draft.draftId)}">Details</a> ·`}
         v${draft.latestVersionNumber ?? "—"} · ${draft.versionCount} version${draft.versionCount === 1 ? "" : "s"} · ${escapeHtml(formatDate(draft.updatedAt))}
       </div>
     </div>
@@ -208,33 +282,29 @@ function groupByRepo(drafts) {
 }
 
 function pageHeader({ session = {}, active }) {
-  // Claims arrive via shoo's verified id_token, but only render an avatar for
-  // plain https URLs anyway.
+  // Profile data comes from WorkOS; only render an avatar for https URLs.
   const avatar =
-    typeof session.pictureUrl === "string" && session.pictureUrl.startsWith("https://")
-      ? `<img class="avatar" src="${escapeHtml(session.pictureUrl)}" alt="" referrerpolicy="no-referrer">`
+    typeof session.picture_url === "string" && session.picture_url.startsWith("https://")
+      ? `<img class="avatar" src="${escapeHtml(session.picture_url)}" alt="" referrerpolicy="no-referrer">`
       : "";
-  // The email is PII: render it blurred until hover/focus (shoo's own /me
-  // pattern) so it never leaks on screenshares or streams. A user with no
-  // Google display name gets their email as the account name — in that case
-  // skip the plain name and show only the blurred email.
-  const name =
-    session.accountName && session.accountName !== session.email
-      ? `<span class="muted small">${escapeHtml(session.accountName)}</span>`
-      : "";
+  // The email is PII: blurred until hover/focus so it never leaks on
+  // screenshares.
   const email = session.email
     ? `<span class="muted small pii" tabindex="0" title="Hover to reveal">${escapeHtml(session.email)}</span>`
     : "";
+  const link = (href, key, label) =>
+    `<a href="${href}" class="${active === key ? "active" : ""}">${escapeHtml(label)}</a>`;
 
   return `
     <header class="top">
       <nav>
-        <a href="/dashboard" class="${active === "dashboard" ? "active" : ""}">My drafts</a>
-        <a href="/cli/auth" class="${active === "cli" ? "active" : ""}">CLI setup</a>
+        ${session.organization_id ? link("/workspace", "workspace", session.organization_name || "Workspace") : ""}
+        ${session.organization_id ? link("/dashboard", "dashboard", "Mine") : ""}
+        ${session.organization_id ? link("/team", "team", "Team") : ""}
+        ${link("/cli/auth", "cli", "CLI setup")}
       </nav>
       <form method="post" action="/auth/sign-out">
         ${avatar}
-        ${name}
         ${email}
         <button class="linklike" type="submit">Sign out</button>
       </form>
@@ -289,9 +359,26 @@ function webPage({ title, body, header = "" }) {
     th { color: #6b7280; font-weight: 600; font-size: 12px; text-transform: uppercase; }
     .keybox { display: flex; gap: 10px; align-items: center; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; padding: 14px; margin: 14px 0; }
     .keybox code { flex: 1; word-break: break-all; background: none; border: 0; font-size: 15px; }
+    .button.secondary { background: #fff; color: #111827; border: 1px solid #d1d5db; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    form.inline { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+    input, select { font: inherit; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 8px; }
+    input { flex: 1; min-width: 200px; }
+    .orgs { padding-left: 18px; line-height: 2; }
+    .orgs .linklike { margin-left: 0; font-size: 15px; }
+    .notice { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 10px 14px; }
   </style>
 </head>
-<body>${header}${body}</body>
+<body>${header}${body}
+<script>
+  for (const button of document.querySelectorAll(".copy")) {
+    button.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(button.previousElementSibling.textContent);
+      button.textContent = "Copied";
+    });
+  }
+</script>
+</body>
 </html>`;
 }
 
