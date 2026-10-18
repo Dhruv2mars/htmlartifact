@@ -1,13 +1,73 @@
-import { sha256 } from "./crypto.js";
-import { FLAGS, bumpMembershipEpoch, findWorkspace, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.js";
-import { listMyDrafts, listWorkspaceDrafts } from "./drafts.js";
-import { formatBytes, validateUpload } from "./html-policy.ts";
-import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.js";
-import { draftUrl, slugProblem } from "./public-url.js";
-import { clientIp, rateLimit } from "./rate-limit.js";
-import { activeMembership, bearerViewer } from "./auth.js";
-import { putHtmlObject } from "./storage.js";
-import { displayName, workos } from "./workos.js";
+import type { Context, Hono, Next } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { sha256 } from "./crypto.ts";
+import { FLAGS, bumpMembershipEpoch, findWorkspace, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
+import { formatBytes, validateUpload, type Issue, type PageInput } from "./html-policy.ts";
+import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
+import { draftUrl, slugProblem } from "./public-url.ts";
+import { clientIp, rateLimit } from "./rate-limit.ts";
+import { activeMembership, bearerViewer } from "./auth.ts";
+import { putHtmlObject } from "./storage.ts";
+import {
+  isMember,
+  type AppEnv,
+  type Config,
+  type DraftRow,
+  type MemberEnv,
+  type UserEnv,
+  type VersionRow,
+  type Viewer,
+  type WorkspaceRow
+} from "./types.ts";
+import { displayName, workos } from "./workos.ts";
+
+// A request body, before validation: any field may hold anything.
+type JsonBody = Record<string, unknown>;
+
+// What /api/uploads reads from its body. Only `metadata` is assumed to be an
+// object; everything else is checked where it is used.
+interface UploadBody extends JsonBody {
+  metadata?: Record<string, unknown>;
+}
+
+// The result of joinWithCode, for both the API and the browser page.
+type JoinResult =
+  | { status: ContentfulStatusCode; body: { ok: false; error: string } }
+  | {
+      status: ContentfulStatusCode;
+      body: {
+        ok: true;
+        alreadyMember: boolean;
+        workspace: { id: string; name: string | undefined; handle: string | undefined };
+      };
+    };
+
+// An Error carrying the HTTP status app.onError should answer with.
+export interface HttpError extends Error {
+  status: ContentfulStatusCode;
+}
+
+// The /api/check report.
+interface CheckReport {
+  ok: boolean;
+  account: { id: string; name: string };
+  workspace: ReturnType<typeof workspaceJson>;
+  limits: { maxBytes: number; maxPages: number };
+  capabilities: {
+    inlineScripts: boolean;
+    multiPage: boolean;
+    customUrls: boolean;
+    externalAssets: string;
+    blockedInSandbox: string[];
+  };
+  totalBytes?: number;
+  pages?: { path: string; bytes: number; title: string | null; hasScripts: boolean }[];
+  issues?: Issue[];
+  errors?: string[];
+  warnings?: string[];
+  slug?: { slug: string; status: "available" | "yours" | "taken" | "unavailable"; message?: string };
+}
 
 // What scripted artifacts cannot do, reported by /api/check so agents can
 // plan around the sandbox before they build a page.
@@ -24,10 +84,10 @@ const SANDBOX_LIMITS = [
 
 // JSON API used by the CLI (and so by agents). Every route takes a bearer
 // credential; nothing here reads cookies.
-export function registerApi(app) {
-  const perUser = (keyPrefix, max) =>
+export function registerApi(app: Hono<AppEnv>): void {
+  const perUser = (keyPrefix: string, max: number) =>
     rateLimit({ windowMs: 60_000, max, keyPrefix, key: (c) => c.get("viewer")?.account_id || clientIp(c) });
-  const perIp = (keyPrefix, max) => rateLimit({ windowMs: 60_000, max, keyPrefix, key: clientIp });
+  const perIp = (keyPrefix: string, max: number) => rateLimit({ windowMs: 60_000, max, keyPrefix, key: clientIp });
 
   // ---- CLI sign-in: the WorkOS device flow, relayed so the CLI holds no
   // WorkOS credentials. A new user signs up on the same WorkOS page.
@@ -39,7 +99,7 @@ export function registerApi(app) {
   app.post("/api/cli/token", perIp("cli-auth", 60), async (c) => {
     const config = c.get("config");
     const body = await readJson(c, 16 * 1024);
-    let grant;
+    let grant: Record<string, string>;
     if (typeof body.device_code === "string") {
       grant = { grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: body.device_code };
     } else if (typeof body.refresh_token === "string") {
@@ -83,7 +143,7 @@ export function registerApi(app) {
       statuses: ["active"],
       limit: 100
     });
-    const workspaces = [];
+    const workspaces: { id: string; name: string; handle: string | null; role: string | null; current: boolean }[] = [];
     for (const m of page.data) {
       const workspace = await findWorkspace(c.env.DB, m.organizationId);
       workspaces.push({
@@ -178,6 +238,8 @@ export function registerApi(app) {
   app.delete("/api/workspaces/members/:userId", requireMember, requireAdmin, async (c) => {
     const viewer = c.get("viewer");
     const userId = c.req.param("userId");
+    // The route always captures :userId; the check satisfies the types.
+    if (!userId) return c.json({ ok: false, error: "Not a member." }, 404);
     if (userId === viewer.account_id) {
       return c.json({ ok: false, error: "You cannot remove yourself." }, 422);
     }
@@ -187,9 +249,10 @@ export function registerApi(app) {
       organizationId: viewer.organization_id,
       limit: 1
     });
-    if (!page.data.length) return c.json({ ok: false, error: "Not a member." }, 404);
+    const [membership] = page.data;
+    if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
     const epoch = await bumpMembershipEpoch(c.env.DB, userId, viewer.organization_id);
-    await client.userManagement.deleteOrganizationMembership(page.data[0].id);
+    await client.userManagement.deleteOrganizationMembership(membership.id);
     await setRevokedAtEpoch(c.env.DB, userId, viewer.organization_id, true, epoch);
     return c.json({ ok: true });
   });
@@ -225,7 +288,7 @@ export function registerApi(app) {
 // Shared by POST /api/workspaces/join and the browser /join/<code> page.
 // A use is reserved atomically before WorkOS is touched, so concurrent joins
 // can never exceed max_uses; it is released if nobody new was admitted.
-export async function joinWithCode(c, viewer, rawCode) {
+export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: Viewer, rawCode: unknown): Promise<JoinResult> {
   const db = c.env.DB;
   const code = normalizeInviteCode(rawCode);
   const reserved = code
@@ -236,7 +299,7 @@ export async function joinWithCode(c, viewer, rawCode) {
            RETURNING organization_id`
         )
         .bind(code)
-        .first()
+        .first<{ organization_id: string }>()
     : null;
   if (!reserved) {
     return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
@@ -244,7 +307,7 @@ export async function joinWithCode(c, viewer, rawCode) {
   const organizationId = reserved.organization_id;
   const release = () => db.prepare("UPDATE invites SET uses = uses - 1 WHERE code = ? AND uses > 0").bind(code).run();
 
-  let alreadyMember;
+  let alreadyMember: boolean;
   try {
     alreadyMember = Boolean(await activeMembership(c, viewer.account_id, organizationId));
     if (alreadyMember) {
@@ -273,44 +336,49 @@ export async function joinWithCode(c, viewer, rawCode) {
   };
 }
 
-async function requireUser(c, next) {
+// requireUser and requireMember set `viewer`; their context types tell the
+// handlers after them that it is there (UserEnv, MemberEnv).
+async function requireUser(c: Context<UserEnv>, next: Next): Promise<Response | void> {
   const viewer = await bearerViewer(c);
-  if (!viewer) {
-    c.header("WWW-Authenticate", 'Bearer realm="htmlartifact"');
-    return c.json({ ok: false, error: "Not signed in. Run: htmlartifact login" }, 401);
+  if (!viewer) return notSignedIn(c);
+  c.set("viewer", viewer);
+  return next();
+}
+
+async function requireMember(c: Context<MemberEnv>, next: Next): Promise<Response | void> {
+  const viewer = await bearerViewer(c);
+  if (!viewer) return notSignedIn(c);
+  if (!isMember(viewer)) {
+    return c.json(
+      {
+        ok: false,
+        error:
+          "You are not in a workspace yet. Create one (htmlartifact workspace create <name>) or join one (htmlartifact workspace join <code>)."
+      },
+      403
+    );
   }
   c.set("viewer", viewer);
   return next();
 }
 
-async function requireMember(c, next) {
-  return requireUser(c, async () => {
-    if (!c.get("viewer").organization_id) {
-      return c.json(
-        {
-          ok: false,
-          error:
-            "You are not in a workspace yet. Create one (htmlartifact workspace create <name>) or join one (htmlartifact workspace join <code>)."
-        },
-        403
-      );
-    }
-    return next();
-  });
+function notSignedIn<E extends AppEnv>(c: Context<E>): Response {
+  c.header("WWW-Authenticate", 'Bearer realm="htmlartifact"');
+  return c.json({ ok: false, error: "Not signed in. Run: htmlartifact login" }, 401);
 }
 
-async function requireAdmin(c, next) {
+async function requireAdmin(c: Context<MemberEnv>, next: Next): Promise<Response | void> {
   if (c.get("viewer").role !== "admin") {
     return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
   }
   return next();
 }
 
-async function handleUpload(c) {
+async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const viewer = c.get("viewer");
   const db = c.env.DB;
   const capabilities = uploadCapabilities(viewer, c.get("config"));
-  const body = await readJson(c, capabilities.maxBytes * 6 + 1024 * 1024);
+  const body = await readJson<UploadBody, MemberEnv>(c, capabilities.maxBytes * 6 + 1024 * 1024);
   const { filename, metadata = {}, draftId, description } = body;
   const validation = validateUpload(requestPages(body), capabilities);
   if (!validation.ok) {
@@ -330,7 +398,7 @@ async function handleUpload(c) {
     ? await db
         .prepare("SELECT * FROM drafts WHERE organization_id = ? AND slug = ? AND deleted_at IS NULL")
         .bind(viewer.organization_id, slug)
-        .first()
+        .first<DraftRow>()
     : null;
   if (slugDraft && slugDraft.account_id !== viewer.account_id) {
     return c.json({ ok: false, error: `The custom URL "${slug}" belongs to a teammate's artifact.` }, 409);
@@ -349,7 +417,7 @@ async function handleUpload(c) {
             "SELECT * FROM drafts WHERE id = ? AND account_id = ? AND organization_id = ? AND deleted_at IS NULL"
           )
           .bind(draftId, viewer.account_id, viewer.organization_id)
-          .first()
+          .first<DraftRow>()
       : null);
   if (draftId && !existing) return c.json({ ok: false, error: "Artifact not found." }, 404);
 
@@ -357,7 +425,7 @@ async function handleUpload(c) {
     ? await db
         .prepare("SELECT id, version_number, content_hash FROM draft_versions WHERE id = ?")
         .bind(existing.current_version_id)
-        .first()
+        .first<Pick<VersionRow, "id" | "version_number" | "content_hash">>()
     : null;
   // Re-sending identical content (a blind retry) keeps the current version.
   const unchanged = current?.content_hash === validation.contentHash;
@@ -367,14 +435,16 @@ async function handleUpload(c) {
   const cleanDescription = cleanText(description, 1000);
   let versionId = current?.id;
 
-  const statements = [];
+  const statements: D1PreparedStatement[] = [];
   if (!unchanged) {
     versionId = newInternalId();
     const { pages } = validation;
     const index = pages.find((page) => page.path === "index.html");
+    // Validation guarantees an index.html page.
+    if (!index) throw new Error("Upload has no index.html page.");
     const extraPages = pages.filter((page) => page !== index);
     const objectKey = `drafts/${id}/versions/${versionId}.html`;
-    const pageKey = (page) => `drafts/${id}/versions/${versionId}/${page.path}`;
+    const pageKey = (page: { path: string }) => `drafts/${id}/versions/${versionId}/${page.path}`;
     await Promise.all([
       putHtmlObject(c.env.ARTIFACTS, objectKey, index.html),
       ...extraPages.map((page) => putHtmlObject(c.env.ARTIFACTS, pageKey(page), page.html))
@@ -477,21 +547,26 @@ async function handleUpload(c) {
     const results = await db.batch(statements);
     // Another upload to this artifact landed after we read it: nothing of
     // ours became current. Safe to retry.
-    if (!results.at(-1).meta.changes) {
+    if (!results.at(-1)?.meta.changes) {
       return c.json({ ok: false, error: "Another upload to this artifact landed at the same moment. Retry." }, 409);
     }
   } catch (error) {
-    if (/UNIQUE constraint failed: drafts\.organization_id, drafts\.slug/.test(error.message)) {
+    const message = error instanceof Error ? error.message : "";
+    if (/UNIQUE constraint failed: drafts\.organization_id, drafts\.slug/.test(message)) {
       return c.json({ ok: false, error: "That custom URL was just taken. Pick another." }, 409);
     }
-    if (/UNIQUE constraint failed: draft_versions/.test(error.message)) {
+    if (/UNIQUE constraint failed: draft_versions/.test(message)) {
       return c.json({ ok: false, error: "Another upload to this artifact landed at the same moment. Retry." }, 409);
     }
     throw error;
   }
 
-  const draft = await db.prepare("SELECT * FROM drafts WHERE id = ?").bind(id).first();
-  const version = await db.prepare("SELECT version_number FROM draft_versions WHERE id = ?").bind(versionId).first();
+  const draft = await db.prepare("SELECT * FROM drafts WHERE id = ?").bind(id).first<DraftRow>();
+  const version = await db
+    .prepare("SELECT version_number FROM draft_versions WHERE id = ?")
+    .bind(versionId)
+    .first<Pick<VersionRow, "version_number">>();
+  if (!draft || !version) throw new Error(`Artifact ${id} vanished after upload.`);
   const origin = c.get("origin");
   const publicUrl = draftUrl(origin, draft, viewer.workspace.handle);
   const multiPage = validation.pages.length > 1;
@@ -522,11 +597,11 @@ async function handleUpload(c) {
 
 // A read-only preflight: what the caller can publish, and whether a given
 // upload body would pass. Never creates anything.
-async function handleCheck(c) {
+async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
   const viewer = c.get("viewer");
   const capabilities = uploadCapabilities(viewer, c.get("config"));
   const body = await readJson(c, capabilities.maxBytes * 6 + 1024 * 1024);
-  const report = {
+  const report: CheckReport = {
     ok: true,
     account: { id: viewer.account_id, name: viewer.account_name },
     workspace: workspaceJson(viewer.workspace),
@@ -560,7 +635,7 @@ async function handleCheck(c) {
         "SELECT account_id FROM drafts WHERE organization_id = ? AND slug = ? AND deleted_at IS NULL"
       )
         .bind(viewer.organization_id, slug)
-        .first();
+        .first<{ account_id: string }>();
       report.slug = !owner
         ? { slug, status: "available" }
         : owner.account_id === viewer.account_id
@@ -572,7 +647,7 @@ async function handleCheck(c) {
   return c.json(report);
 }
 
-function uploadCapabilities(viewer, config) {
+function uploadCapabilities(viewer: Viewer, config: Config): { maxBytes: number; maxPages: number } {
   const { limits } = config;
   return {
     maxBytes: viewer.flags.includes(FLAGS.largeUploads) ? limits.largeBytes : limits.accountBytes,
@@ -581,34 +656,39 @@ function uploadCapabilities(viewer, config) {
 }
 
 // An upload is one document (`html`) or a folder of pages (`files`).
-function requestPages(body) {
+function requestPages(body: JsonBody): PageInput[] {
   if (Array.isArray(body?.files)) {
-    return body.files.map((file) => ({ path: file?.path, html: file?.html }));
+    return body.files.map((file: PageInput | null | undefined) => ({ path: file?.path, html: file?.html }));
   }
   return [{ path: "index.html", html: body?.html }];
 }
 
 // Returns null when no slug was sent; anything else goes through slugProblem.
-function normalizeSlug(value) {
+function normalizeSlug(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-async function readJson(c, maxBytes) {
+// The parsed body is typed as T: callers still check each field they use.
+async function readJson<T extends JsonBody = JsonBody, E extends AppEnv = AppEnv>(
+  c: Context<E>,
+  maxBytes: number
+): Promise<T> {
   const length = Number(c.req.header("content-length") || 0);
   if (length > maxBytes) throw httpError(413, `Request is over the ${formatBytes(maxBytes)} limit.`);
   const text = await c.req.text();
   if (text.length > maxBytes) throw httpError(413, `Request is over the ${formatBytes(maxBytes)} limit.`);
-  if (!text) return {};
   try {
-    const value = JSON.parse(text);
-    return value && typeof value === "object" ? value : {};
+    // An empty body, or anything but a JSON object, reads as {}.
+    const value = JSON.parse(text || "{}");
+    const body: T = value && typeof value === "object" ? value : {};
+    return body;
   } catch {
     throw httpError(400, "Request body is not valid JSON.");
   }
 }
 
-async function relayWorkos(c, pathname, body) {
+async function relayWorkos<E extends AppEnv>(c: Context<E>, pathname: string, body: Record<string, string>): Promise<Response> {
   const config = c.get("config");
   const response = await fetch(`${config.workos.apiUrl}${pathname}`, {
     method: "POST",
@@ -619,11 +699,14 @@ async function relayWorkos(c, pathname, body) {
     },
     body: JSON.stringify(body)
   });
-  const json = await response.json().catch(() => ({ error: "bad_gateway" }));
-  return c.json(json, response.status);
+  const json: unknown = await response.json().catch(() => ({ error: "bad_gateway" }));
+  return c.json(json, isContentfulStatus(response.status) ? response.status : 502);
 }
 
-export function workspaceJson(workspace, role) {
+export function workspaceJson(
+  workspace: WorkspaceRow | null,
+  role?: string | null
+): { id: string; name: string; handle: string; role?: string | null } | null {
   if (!workspace) return null;
   return {
     id: workspace.organization_id,
@@ -633,19 +716,26 @@ export function workspaceJson(workspace, role) {
   };
 }
 
-export function httpError(status, message) {
-  const error = new Error(message);
-  error.status = status;
-  return error;
+export function httpError(status: ContentfulStatusCode, message: string): HttpError {
+  return Object.assign(new Error(message), { status });
 }
 
-function clampInt(value, min, max, fallback) {
+export function isHttpError(error: unknown): error is HttpError {
+  return error instanceof Error && "status" in error && typeof error.status === "number";
+}
+
+// Hono types response statuses as literals; WorkOS can answer with any.
+function isContentfulStatus(status: number): status is ContentfulStatusCode {
+  return status >= 200 && status <= 599 && status !== 204 && status !== 205 && status !== 304;
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   const number = Number(value);
   if (!Number.isInteger(number)) return fallback;
   return Math.min(max, Math.max(min, number));
 }
 
-function cleanText(value, maxLength = 255) {
+function cleanText(value: unknown, maxLength = 255): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed.slice(0, maxLength) : null;

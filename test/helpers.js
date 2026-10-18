@@ -49,7 +49,7 @@ export const SEED = {
 export async function startStack() {
   const emulator = await createEmulator({ port: 0, requestsPerMinute: 100_000, seed: SEED });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-test-"));
-  const worker = await unstable_dev(new URL("../src/index.js", import.meta.url).pathname, {
+  const worker = await unstable_dev(new URL("../src/index.ts", import.meta.url).pathname, {
     config: new URL("../wrangler.toml", import.meta.url).pathname,
     ip: "127.0.0.1",
     persistTo: path.join(tmp, "state"),

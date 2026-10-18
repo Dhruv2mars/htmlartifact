@@ -1,11 +1,35 @@
 import { WorkOS } from "@workos-inc/node";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import type { Config } from "./types.ts";
+
+// A validated organization API key, as the server uses it.
+export interface ApiKeyInfo {
+  id: string;
+  name: string;
+  organizationId: string | null;
+  userId: string | null;
+}
+
+// The access-token claims the server reads.
+export interface AccessTokenClaims extends JWTPayload {
+  sub: string;
+  sid: string;
+  org_id?: string;
+  role?: string;
+  client_id?: string;
+}
+
+interface ClientEntry {
+  client: WorkOS;
+  jwks: ReturnType<typeof createRemoteJWKSet>;
+  keyCache: Map<string, { key: ApiKeyInfo | null; expiresAt: number }>;
+}
 
 // One WorkOS client (and JWKS cache) per configuration, reused across
 // requests within an isolate.
-const clients = new Map();
+const clients = new Map<string, ClientEntry>();
 
-export function workos(config) {
+export function workos(config: Config): ClientEntry {
   const key = `${config.workos.apiUrl}|${config.workos.clientId}`;
   let entry = clients.get(key);
   if (!entry) {
@@ -28,9 +52,9 @@ export function workos(config) {
 // Verifies a WorkOS access token (the CLI's bearer token) and returns its
 // claims (sub, sid, org_id, role). It must have been issued to THIS app:
 // a WorkOS environment can hold several apps sharing users and keys.
-export async function verifyAccessToken(config, token) {
+export async function verifyAccessToken(config: Config, token: string): Promise<AccessTokenClaims> {
   const { jwks } = workos(config);
-  const { payload } = await jwtVerify(token, jwks, {
+  const { payload } = await jwtVerify<Partial<AccessTokenClaims>>(token, jwks, {
     algorithms: ["RS256"],
     ...(config.workos.issuer ? { issuer: config.workos.issuer } : {})
   });
@@ -39,17 +63,18 @@ export async function verifyAccessToken(config, token) {
     payload.client_id === config.workos.clientId ||
     (payload.client_id === undefined && audiences.includes(config.workos.clientId));
   if (!forUs) throw new Error("Access token was issued to another application.");
-  if (typeof payload.sub !== "string" || !payload.sub || typeof payload.sid !== "string") {
+  const { sub, sid } = payload;
+  if (typeof sub !== "string" || !sub || typeof sid !== "string") {
     throw new Error("Access token has no sub or sid.");
   }
-  return payload;
+  return { ...payload, sub, sid };
 }
 
 // A WorkOS organization API key (CI) → { id, name, organizationId, userId },
 // or null. Validation is an API call, so results are cached for a minute.
 const KEY_CACHE_MS = 60_000;
 
-export async function validateApiKey(config, value) {
+export async function validateApiKey(config: Config, value: string): Promise<ApiKeyInfo | null> {
   const { client, keyCache } = workos(config);
   const cached = keyCache.get(value);
   if (cached && cached.expiresAt > Date.now()) return cached.key;
@@ -68,7 +93,12 @@ export async function validateApiKey(config, value) {
   return key;
 }
 
-export function displayName(user) {
+export function displayName(user: {
+  id: string;
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}): string {
   const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
   return name || user.email || user.id;
 }

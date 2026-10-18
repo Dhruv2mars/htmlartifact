@@ -7,7 +7,7 @@ provably removes its R2 objects (every version).
 
 ## Phase 1 — TypeScript
 - [x] `src/html-policy.ts` (shared by server + CLI), `tsconfig.json`
-- [ ] Server → strict TypeScript (Hono), `bun run typecheck` clean, 37 tests green
+- [x] Server → strict TypeScript (Hono), `bun run typecheck` clean, 37 tests green
 - [x] CLI → TypeScript + Effect, built with `bun build --target=node` → `dist/htmlartifact.js`
 - [x] CLI commands for Phase 2/3 endpoints (server side pending): `delete`, `workspace delete --confirm`, `workspace sso`, `workspace directory`
 

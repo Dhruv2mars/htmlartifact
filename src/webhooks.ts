@@ -1,16 +1,19 @@
-import { bumpMembershipEpoch, setRevoked, setRevokedAtEpoch } from "./db.js";
-import { workos } from "./workos.js";
+import type { Event } from "@workos-inc/node";
+import type { Context, Hono } from "hono";
+import { bumpMembershipEpoch, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import type { AppEnv } from "./types.ts";
+import { workos } from "./workos.ts";
 
 // WorkOS webhooks close the gap between "removed in WorkOS" and "token
 // expired": a removed member, deleted user, revoked session or deleted API
 // key is denied on the next request. Point a WorkOS webhook endpoint at
 // /webhooks/workos and set WORKOS_WEBHOOK_SECRET.
-export function registerWebhooks(app) {
+export function registerWebhooks(app: Hono<AppEnv>): void {
   app.post("/webhooks/workos", async (c) => {
     const config = c.get("config");
     if (!config.workos.webhookSecret) return c.body(null, 404);
 
-    let event;
+    let event: Event;
     try {
       event = await workos(config).client.webhooks.constructEvent({
         payload: await c.req.text(),
@@ -33,12 +36,12 @@ export function registerWebhooks(app) {
 
 // WorkOS does not guarantee delivery order, so membership events are never
 // applied from the payload: they trigger a re-check of the current state,
-// and only the newest re-check may write (membership epochs, src/db.js).
+// and only the newest re-check may write (membership epochs, src/db.ts).
 // Revocations of sessions, keys and users are one-way and order-safe.
-async function applyEvent(c, { event, data = {} }) {
+async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: string; data?: object }): Promise<void> {
   const db = c.env.DB;
-  const userId = data.userId ?? data.user_id;
-  const organizationId = data.organizationId ?? data.organization_id;
+  const userId = field(data, "userId") ?? field(data, "user_id");
+  const organizationId = field(data, "organizationId") ?? field(data, "organization_id");
 
   switch (event) {
     case "organization_membership.created":
@@ -62,9 +65,18 @@ async function applyEvent(c, { event, data = {} }) {
     case "user.deleted":
     case "session.revoked":
     case "api_key.revoked":
-    case "api_key.deleted":
-      await setRevoked(db, data.id, "*", true);
+    case "api_key.deleted": {
+      const id = field(data, "id");
+      if (!id) throw new Error(`${event} has no id.`);
+      await setRevoked(db, id, "*", true);
       return;
+    }
     default:
   }
+}
+
+// A string field of an event payload; payload shapes vary by event.
+function field(data: object, key: string): string | undefined {
+  const value: unknown = Reflect.get(data, key);
+  return typeof value === "string" ? value : undefined;
 }

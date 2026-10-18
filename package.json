@@ -24,6 +24,7 @@
     "build:binaries": "bun build cli/main.ts --compile --outfile release/htmlartifact",
     "typecheck:cli": "tsc -p cli/tsconfig.json",
     "pretest": "bun run build",
+    "typecheck": "tsc -p tsconfig.json",
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "prepublishOnly": "bun run build",
     "dev:local": "node scripts/dev-local.mjs"
