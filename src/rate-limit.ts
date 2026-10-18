@@ -73,4 +73,22 @@ export class RateLimitedError extends Error {
   }
 }
 
-export const clientIp = <E extends AppEnv>(c: Context<E>): string => c.req.header("cf-connecting-ip") || "local";
+// The caller's network for per-IP limits. IPv6 users get a whole /64 (often
+// far more), so an IPv6 address counts as its /64: rotating addresses within
+// it does not buy fresh buckets.
+export const clientIp = <E extends AppEnv>(c: Context<E>): string => {
+  const ip = c.req.header("cf-connecting-ip") || "local";
+  return ip.includes(":") ? ipv6Prefix64(ip) : ip;
+};
+
+export function ipv6Prefix64(ip: string): string {
+  const [head = "", tail] = ip.split("%")[0]!.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail !== undefined && tail ? tail.split(":") : [];
+  const missing = tail === undefined ? 0 : 8 - left.length - right.length;
+  const groups = [...left, ...Array(Math.max(0, missing)).fill("0"), ...right];
+  return `${groups
+    .slice(0, 4)
+    .map((g) => (Number.parseInt(g || "0", 16) || 0).toString(16))
+    .join(":")}::/64`;
+}

@@ -50,7 +50,18 @@ export const writeJson = (file: string, value: unknown, mode = 0o600): Effect.Ef
     const temp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode });
     fs.chmodSync(temp, mode);
-    fs.renameSync(temp, file);
+    // Windows refuses to replace a file another process has open for a moment
+    // (EPERM/EBUSY/EACCES): retry briefly rather than lose a rotated token.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        fs.renameSync(temp, file);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt >= 20 || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+      }
+    }
   });
 
 // Reads a JSON state file, or null when it does not exist. A corrupt file is
@@ -100,7 +111,9 @@ export const removeCredentials = attempt(() => fs.rmSync(CREDENTIALS_PATH, { for
 // the run goes ahead without it rather than hang.
 const LOCK_PATH = `${CREDENTIALS_PATH}.lock`;
 const LOCK_WAIT_MS = 15_000;
-const LOCK_STALE_MS = 30_000;
+// Longer than the longest a live refresh can hold it (a 30 s request, or
+// three retries of up to 20 s), so a slow holder is never taken over.
+const LOCK_STALE_MS = 120_000;
 
 function tryLock(): boolean {
   try {

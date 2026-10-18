@@ -25,6 +25,7 @@ interface ClientEntry {
   jwks: ReturnType<typeof createRemoteJWKSet>;
   keyCache: Map<string, { key: ApiKeyInfo; expiresAt: number }>; // by keyId()
   rejectedKeys: Map<string, number>; // keyId() → expiresAt
+  knownValidKeys: Map<string, number>; // keyId() → expiresAt: valid recently
 }
 
 // One WorkOS client (and JWKS cache) per configuration, reused across
@@ -45,7 +46,8 @@ export function workos(config: Config): ClientEntry {
       }),
       jwks: createRemoteJWKSet(new URL(`${config.workos.apiUrl}/sso/jwks/${config.workos.clientId}`)),
       keyCache: new Map(),
-      rejectedKeys: new Map()
+      rejectedKeys: new Map(),
+      knownValidKeys: new Map()
     };
     clients.set(key, entry);
   }
@@ -109,7 +111,7 @@ export async function validateApiKey(config: Config, value: string): Promise<Api
   const cached = cachedApiKey(config, value);
   if (cached !== undefined) return cached;
 
-  const { client, keyCache, rejectedKeys } = workos(config);
+  const { client, keyCache, rejectedKeys, knownValidKeys } = workos(config);
   const { apiKey } = await client.apiKeys.createValidation({ value });
   const id = keyId(value);
   if (!apiKey) {
@@ -124,7 +126,17 @@ export async function validateApiKey(config: Config, value: string): Promise<Api
   };
   rejectedKeys.delete(id);
   remember(keyCache, KEY_CACHE_MAX, id, { key, expiresAt: Date.now() + KEY_CACHE_MS });
+  remember(knownValidKeys, KEY_CACHE_MAX, id, Date.now() + KNOWN_VALID_MS);
   return key;
+}
+
+// A key that validated within the last day: re-validating it (its 60 s cache
+// entry lapsed) is not charged to the caller's IP, so junk keys from a shared
+// NAT or CI egress cannot get a real CI key answered with 429.
+const KNOWN_VALID_MS = 24 * 60 * 60 * 1000;
+export function recentlyValidApiKey(config: Config, value: string): boolean {
+  const expiresAt = workos(config).knownValidKeys.get(keyId(value));
+  return expiresAt !== undefined && expiresAt > Date.now();
 }
 
 // Bounded: at the cap the oldest entry goes (a Map keeps insertion order).

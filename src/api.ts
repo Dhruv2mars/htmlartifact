@@ -916,10 +916,31 @@ async function readJson<T extends JsonBody = JsonBody, E extends AppEnv = AppEnv
   c: Context<E>,
   maxBytes: number
 ): Promise<T> {
+  const tooLarge = () => httpError(413, `Request is over the ${formatBytes(maxBytes)} limit.`);
   const length = Number(c.req.header("content-length") || 0);
-  if (length > maxBytes) throw httpError(413, `Request is over the ${formatBytes(maxBytes)} limit.`);
-  const text = await c.req.text();
-  if (text.length > maxBytes) throw httpError(413, `Request is over the ${formatBytes(maxBytes)} limit.`);
+  if (length > maxBytes) throw tooLarge();
+  // Count bytes as they arrive: a chunked body has no Content-Length, and
+  // must never be buffered whole before its size is known.
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  const reader = c.req.raw.body?.getReader();
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const text = new TextDecoder().decode(bytes);
   try {
     // An empty body, or anything but a JSON object, reads as {}.
     const value = JSON.parse(text || "{}");

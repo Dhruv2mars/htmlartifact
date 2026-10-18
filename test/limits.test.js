@@ -138,7 +138,7 @@ test("uncached API key validations are limited per IP before WorkOS is called", 
   const statuses = [];
   let retryAfter = null;
   const hits = await countWith(async () => {
-    for (let i = 0; i < 35; i++) {
+    for (let i = 0; i < 65; i++) {
       const response = await fetch(`${stack.baseUrl}/api/me`, { headers: { Authorization: `Bearer sk_test_flood_${random()}` } });
       statuses.push(response.status);
       if (response.status === 429) retryAfter = response.headers.get("retry-after");
@@ -149,13 +149,44 @@ test("uncached API key validations are limited per IP before WorkOS is called", 
     assert.equal(artifact.status, 429);
     await artifact.text();
   });
-  // Earlier tests already spent a few of this minute's 30 validations.
+  // Earlier tests already spent a few of this minute's 60 validations.
   const allowed = statuses.indexOf(429);
-  assert.ok(allowed > 20 && allowed <= 30, statuses.join(","));
+  assert.ok(allowed > 50 && allowed <= 60, statuses.join(","));
   assert.equal(hits, allowed, "every limited request was turned away before WorkOS");
-  assert.deepEqual(statuses, [...Array(allowed).fill(401), ...Array(35 - allowed).fill(429)]);
+  assert.deepEqual(statuses, [...Array(allowed).fill(401), ...Array(65 - allowed).fill(429)]);
   assert.match(retryAfter, /^\d+$/);
   // Cached keys and access tokens from the same address are unaffected.
   assert.equal((await me(CI_KEY)).status, 200);
   assert.equal((await me(bob.accessToken)).status, 200);
+});
+
+test("IPv6 callers are limited per /64, so rotating addresses buys no fresh buckets", async () => {
+  const { ipv6Prefix64 } = await import("../src/rate-limit.ts");
+  assert.equal(ipv6Prefix64("2001:db8:1:2:3:4:5:6"), "2001:db8:1:2::/64");
+  assert.equal(ipv6Prefix64("2001:db8:1:2:ffff::9"), "2001:db8:1:2::/64");
+  assert.equal(ipv6Prefix64("2001:0db8:0001:0002::"), "2001:db8:1:2::/64");
+  assert.equal(ipv6Prefix64("2001:db8::1"), "2001:db8:0:0::/64");
+  assert.equal(ipv6Prefix64("fe80::1%eth0"), "fe80:0:0:0::/64");
+});
+
+test("a chunked body with no Content-Length is cut off at the limit, not buffered whole", async () => {
+  const bob = await signInTokens(stack, "bob@acme.test", "Acme");
+  const chunk = new TextEncoder().encode("x".repeat(1024 * 1024));
+  let sent = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      // Far past any upload limit (40 MiB), streamed without a length.
+      if (sent >= 40) return controller.close();
+      sent += 1;
+      controller.enqueue(chunk);
+    }
+  });
+  const response = await fetch(`${stack.baseUrl}/api/check`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${bob.accessToken}`, "Content-Type": "application/json" },
+    body,
+    duplex: "half"
+  });
+  assert.equal(response.status, 413);
+  assert.match((await response.json()).error, /Request is over the .* limit\./);
 });

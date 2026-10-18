@@ -19,6 +19,7 @@ import {
   cachedApiKey,
   displayName,
   looksLikeApiKey,
+  recentlyValidApiKey,
   validateApiKey,
   verifyAccessToken,
   workos,
@@ -206,19 +207,21 @@ async function viewerFromAccessToken<E extends AppEnv>(c: Context<E>, token: str
 // Validating an uncached key is a WorkOS call, counted per IP before it is
 // made: random bearer values must not spend the WorkOS rate limit that every
 // tenant's sign-ins and membership checks share.
-const API_KEY_VALIDATIONS = { windowMs: 60_000, max: 30, keyPrefix: "api-key-validation", kind: "api-key" } as const;
+const API_KEY_VALIDATIONS = { windowMs: 60_000, max: 60, keyPrefix: "api-key-validation", kind: "api-key" } as const;
 
 async function viewerFromApiKey<E extends AppEnv>(c: Context<E>, value: string): Promise<Viewer | null> {
   const config = c.get("config");
   if (!looksLikeApiKey(value)) return null;
   let key = cachedApiKey(config, value);
   try {
-    if (key === undefined) {
+    if (key === undefined && !recentlyValidApiKey(config, value)) {
       const verdict = await checkLimit(c, API_KEY_VALIDATIONS, clientIp(c));
       if (!verdict.ok) {
         c.header("Retry-After", String(verdict.retryAfter));
         throw new RateLimitedError();
       }
+    }
+    if (key === undefined) {
       key = await validateApiKey(config, value);
     }
   } catch (error) {
