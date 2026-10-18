@@ -17,7 +17,7 @@ provably removes its R2 objects (every version).
 - [ ] Member offboarding: removal, `user.deleted` PII scrub, admins can delete any artifact
 - [ ] Retention: `source_ip`/`user_agent` erased after 30 days
 - [ ] Tenant-isolation sweep test over every route
-- [ ] SECURITY.md (data handling, incident response, D1 Time Travel backups/restore)
+- [x] SECURITY.md (data handling, incident response, D1 Time Travel backups/restore) — revisit once Phase 2 lands
 
 ## Phase 3 — WorkOS (scoped)
 - [ ] SSO (SAML/OIDC) via Admin Portal link: `workspace sso`
@@ -26,12 +26,14 @@ provably removes its R2 objects (every version).
 - Dropped by Dhruv: Vault/encryption, Audit Logs, Events API, Radar, extra roles, FGA, domain auto-join, export
 
 ## Phase 4 — Production
-- [ ] Cloudflare Pages project `htmlartifact` (advanced mode `_worker.js`, D1 + R2 bindings)
-- [ ] Sandbox Pages project `htmlartifact-usercontent`
-- [ ] Cron Worker for scheduled jobs (Pages has no cron triggers)
+- [x] Pages configs `deploy/app`, `deploy/usercontent`, `deploy/ops`; `scripts/build-pages.ts` (verified with `wrangler pages dev`)
+- [ ] Cloudflare Pages project `htmlartifact` created + deployed (needs wrangler login)
+- [ ] Sandbox Pages project `htmlartifact-usercontent` created + deployed
+- [ ] Ops Worker `src/ops.ts`: cron (R2 delete retries, retention) + rate-limit RPC entrypoint `Ops`
 - [ ] Staging (Pages preview env + staging D1/R2/WorkOS)
 - [ ] Rate limits (Workers rate-limit binding), logs/observability, health checks
-- [ ] GitHub Actions: tests, deploy, npm publish with provenance
+- [x] GitHub Actions written: ci.yml, deploy.yml (needs CLOUDFLARE_API_TOKEN secret), release.yml (npm trusted publishing)
+- [ ] package.json scripts: typecheck, typecheck:cli, build:pages, build:cli, deploy:all, smoke
 - [ ] Real WorkOS env: redirect URI, webhooks, MFA, SSO/DSync enabled
 - [ ] `DEFAULT_API_URL` = https://htmlartifact.pages.dev; publish CLI to npm
 - [ ] Production walkthrough with two real accounts (item 4)
