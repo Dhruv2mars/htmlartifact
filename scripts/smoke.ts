@@ -14,7 +14,7 @@ async function expect(url: string, status: number, check?: (res: Response, body:
 await expect(`${base}/healthz`, 200, (_, body) => (JSON.parse(body).ok === true ? null : `body ${body}`));
 await expect(`${base}/healthz`, 200, (res) => (res.headers.get("x-content-type-options") === "nosniff" ? null : "missing nosniff"));
 await expect(`${base}/api/me`, 401);
-await expect(`${base}/d/smoke-test-missing`, 302);
+await expect(`${base}/d/smoke-test-missing`, 404);
 await expect(`${sandbox}/healthz`, 200);
 await expect(`${sandbox}/d/smoke-test-missing`, 404);
 if (failures.length) process.exit(1);
