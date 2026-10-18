@@ -50,6 +50,7 @@ provably removes its R2 objects (every version).
 - [x] Ops Worker `src/ops.ts`: cron (R2 delete retries, retention) + rate-limit RPC entrypoint `Ops`
 - [x] Staging config (Pages preview env + staging D1 created; staging R2 blocked on R2)
 - [x] Rate limits (Workers rate-limit binding), logs/observability, deep `/healthz` (D1 + R2)
+- [x] Limits that survive offices and agents: API key format check + negative cache + per-IP validation limit; sign-in limited per device code / refresh token (loose per-IP ceiling); CLI backs off on 429, coordinates refreshes (lock + re-read); `logout` revokes the WorkOS session
 - [x] GitHub Actions written: ci.yml, deploy.yml (needs CLOUDFLARE_API_TOKEN secret), release.yml (npm trusted publishing)
 - [x] package.json scripts: typecheck, build:pages, deploy:all, smoke
 - [ ] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts` ready; blocked on `~/.config/htmlartifact/workos.env`), MFA (dashboard)

@@ -6,7 +6,7 @@ import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 import { formatBytes, validateUpload, type Issue, type PageInput } from "./html-policy.ts";
 import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { draftUrl, slugProblem } from "./public-url.ts";
-import { clientIp, rateLimit } from "./rate-limit.ts";
+import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
 import { activeMembership, bearerViewer } from "./auth.ts";
 import { deleteWorkspaceStatements, draftPrefix, membershipBeingUndone, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
 import { putHtmlObject } from "./storage.ts";
@@ -15,6 +15,7 @@ import {
   type AppEnv,
   type Config,
   type DraftRow,
+  type LimitKind,
   type MemberEnv,
   type UserEnv,
   type VersionRow,
@@ -88,40 +89,74 @@ const SANDBOX_LIMITS = [
 // JSON API used by the CLI (and so by agents). Every route takes a bearer
 // credential; nothing here reads cookies.
 export function registerApi(app: Hono<AppEnv>): void {
-  const perUser = (keyPrefix: string, max: number, kind: "upload" | "auth" = "upload") =>
+  const perUser = (keyPrefix: string, max: number, kind: LimitKind = "upload") =>
     rateLimit({ windowMs: 60_000, max, keyPrefix, kind, key: (c) => c.get("viewer")?.account_id || clientIp(c) });
-  const perIp = (keyPrefix: string, max: number) =>
-    rateLimit({ windowMs: 60_000, max, keyPrefix, kind: "auth", key: clientIp });
+  const perIp = (keyPrefix: string, max: number, kind: LimitKind = "auth") =>
+    rateLimit({ windowMs: 60_000, max, keyPrefix, kind, key: clientIp });
 
   // ---- CLI sign-in: the WorkOS device flow, relayed so the CLI holds no
   // WorkOS credentials. A new user signs up on the same WorkOS page.
-  app.post("/api/cli/device", perIp("cli-auth", 60), async (c) => {
+  //
+  // Limits: a loose per-IP ceiling over every step ("auth-ip", so an office
+  // behind one NAT can sign in together), and a tight one per credential
+  // ("auth": per device code, refresh token or pending token, by hash).
+  // Device polling alone is ~12 calls a minute per sign-in.
+  app.post("/api/cli/device", perIp("cli-device", 30), async (c) => {
     const config = c.get("config");
     return relayWorkos(c, "/user_management/authorize/device", { client_id: config.workos.clientId });
   });
 
-  app.post("/api/cli/token", perIp("cli-auth", 60), async (c) => {
+  app.post("/api/cli/token", perIp("cli-auth-ip", 120, "auth-ip"), async (c) => {
     const config = c.get("config");
     const body = await readJson(c, 16 * 1024);
     let grant: Record<string, string>;
+    let credential: string;
     if (typeof body.device_code === "string") {
       grant = { grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: body.device_code };
+      credential = `device:${body.device_code}`;
     } else if (typeof body.refresh_token === "string") {
       grant = { grant_type: "refresh_token", refresh_token: body.refresh_token };
+      credential = `refresh:${body.refresh_token}`;
     } else if (typeof body.pending_authentication_token === "string") {
       grant = {
         grant_type: "urn:workos:oauth:grant-type:organization-selection",
         pending_authentication_token: body.pending_authentication_token
       };
+      credential = `pending:${body.pending_authentication_token}`;
     } else {
       return c.json({ error: "invalid_request" }, 400);
     }
+    const verdict = await checkLimit(c, { windowMs: 60_000, max: 30, keyPrefix: "cli-token", kind: "auth" }, sha256(credential));
+    if (!verdict.ok) return tooMany(c, verdict.retryAfter);
     if (typeof body.organization_id === "string") grant.organization_id = body.organization_id;
     return relayWorkos(c, "/user_management/authenticate", {
       ...grant,
       client_id: config.workos.clientId,
       client_secret: config.workos.apiKey
     });
+  });
+
+  // `htmlartifact logout`: ends the caller's own WorkOS session (the access
+  // token's sid), so the saved refresh token stops working too. Revoked here
+  // first, so this app refuses the session at once even if WorkOS is down.
+  // Nothing in the body is read: only the caller's session can be ended.
+  app.post("/api/cli/logout", requireUser, perUser("cli-logout", 20, "auth"), async (c) => {
+    const viewer = c.get("viewer");
+    const sessionId = viewer.credential_id;
+    if (viewer.is_api_key || !sessionId) {
+      return c.json({ ok: false, error: "Only a CLI sign-in can be signed out. Revoke API keys in the WorkOS dashboard." }, 400);
+    }
+    await setRevoked(c.env.DB, sessionId, "*", true);
+    try {
+      await workos(c.get("config")).client.userManagement.revokeSession({ sessionId });
+    } catch (error) {
+      // 404: WorkOS has already ended it.
+      if ((error as { status?: unknown })?.status !== 404) {
+        console.error("WorkOS session revocation failed:", error instanceof Error ? error.message : error);
+        return c.json({ ok: false, error: "Signed out here, but WorkOS could not end the session. It expires on its own." }, 502);
+      }
+    }
+    return c.json({ ok: true });
   });
 
   // ---- Who am I. Works before joining any workspace.
@@ -891,6 +926,9 @@ async function relayWorkos<E extends AppEnv>(c: Context<E>, pathname: string, bo
     body: JSON.stringify(body)
   });
   const json: unknown = await response.json().catch(() => ({ error: "bad_gateway" }));
+  // WorkOS's own rate limit: tell the CLI when to come back.
+  const retryAfter = response.headers.get("retry-after");
+  if (response.status === 429 && retryAfter && /^\d{1,4}$/.test(retryAfter)) c.header("Retry-After", retryAfter);
   return c.json(json, isContentfulStatus(response.status) ? response.status : 502);
 }
 

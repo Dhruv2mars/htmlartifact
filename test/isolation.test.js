@@ -339,6 +339,30 @@ const ROUTES = {
       }
     }
   },
+  "POST /api/cli/logout": {
+    kind: "self",
+    why: "ends only the caller's own CLI session; session IDs in the body are ignored",
+    async run(key) {
+      const aliceSid = JSON.parse(Buffer.from(A.aliceToken.split(".")[1], "base64url").toString("utf8")).sid;
+      assert.ok(aliceSid);
+      const body = { session_id: aliceSid, sid: aliceSid, organization_id: A.org.id };
+      // API keys and session cookies have no CLI session to end.
+      for (const actor of apiActors().filter((a) => a.token !== B.olivia && a.token !== B.nora)) {
+        assertDenied(`${key} as ${actor.name}`, await call(actor, "POST", "/api/cli/logout", body));
+      }
+      assertDenied(`${key} signed out`, await call(null, "POST", "/api/cli/logout", body), { status: 401 });
+      // A throwaway olivia session signs itself out, and nothing else.
+      const own = await signInTokens(stack, "olivia@other.test");
+      const res = await call({ token: own.accessToken }, "POST", "/api/cli/logout", body);
+      assert.equal(res.status, 200, res.text);
+      assertClean(key, res.text);
+      assert.equal((await call({ token: own.accessToken }, "GET", "/api/me")).status, 401);
+      const alice = await call({ token: A.aliceToken }, "GET", "/api/me");
+      assert.equal(alice.status, 200, alice.text);
+      assert.equal(alice.json.workspace.id, A.org.id);
+      assert.equal((await call({ token: B.olivia }, "GET", "/api/me")).status, 200);
+    }
+  },
   "GET /api/me": {
     kind: "self",
     why: "caller-scoped, no identifiers",

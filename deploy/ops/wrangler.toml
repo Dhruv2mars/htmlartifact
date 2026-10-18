@@ -35,6 +35,18 @@ name = "AUTH_LIMITER"
 namespace_id = "1002"
 simple = { limit = 30, period = 60 }
 
+# Per IP, over every sign-in step: loose, so an office behind one NAT can sign in.
+[[ratelimits]]
+name = "AUTH_IP_LIMITER"
+namespace_id = "1003"
+simple = { limit = 120, period = 60 }
+
+# Per IP: bearer values that are not JWTs and not cached, i.e. WorkOS API key validations.
+[[ratelimits]]
+name = "API_KEY_LIMITER"
+namespace_id = "1004"
+simple = { limit = 60, period = 60 }
+
 [env.staging]
 name = "htmlartifact-ops-staging"
 
@@ -59,3 +71,13 @@ simple = { limit = 60, period = 60 }
 name = "AUTH_LIMITER"
 namespace_id = "2002"
 simple = { limit = 30, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "AUTH_IP_LIMITER"
+namespace_id = "2003"
+simple = { limit = 120, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "API_KEY_LIMITER"
+namespace_id = "2004"
+simple = { limit = 60, period = 60 }

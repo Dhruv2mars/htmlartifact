@@ -32,8 +32,15 @@ export interface Env {
 }
 
 // What the Pages app calls on the ops Worker over RPC.
+// Which ops limiter counts a call (bindings in deploy/ops/wrangler.toml):
+//   "upload"  most authenticated API calls, per user
+//   "auth"    sign-in steps, keyed per device code / refresh token / join
+//   "auth-ip" the looser per-IP ceiling over every sign-in step
+//   "api-key" non-JWT bearer values sent to WorkOS for validation, per IP
+export type LimitKind = "upload" | "auth" | "auth-ip" | "api-key";
+
 export interface OpsService {
-  limit(kind: "upload" | "auth", key: string): Promise<boolean>;
+  limit(kind: LimitKind, key: string): Promise<boolean>;
 }
 
 export interface Config {

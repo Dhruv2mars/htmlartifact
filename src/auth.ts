@@ -14,7 +14,16 @@ import { workspaceHandle } from "./ids.ts";
 import { isWorkspaceDeleted, membershipBeingUndone } from "./purge.ts";
 import type { AppEnv, DraftRow, Viewer, WorkspaceRow } from "./types.ts";
 import { clearSessionCookie, readCookie, SESSION_COOKIE, sessionCookie } from "./web-auth.ts";
-import { displayName, validateApiKey, verifyAccessToken, workos, type AccessTokenClaims, type ApiKeyInfo } from "./workos.ts";
+import { checkLimit, clientIp, RateLimitedError } from "./rate-limit.ts";
+import {
+  cachedApiKey,
+  displayName,
+  looksLikeApiKey,
+  validateApiKey,
+  verifyAccessToken,
+  workos,
+  type AccessTokenClaims
+} from "./workos.ts";
 
 // Who is calling. Three credentials resolve to the same viewer shape:
 //   browser → WorkOS sealed-session cookie (AuthKit sign-in)
@@ -194,11 +203,26 @@ async function viewerFromAccessToken<E extends AppEnv>(c: Context<E>, token: str
   });
 }
 
+// Validating an uncached key is a WorkOS call, counted per IP before it is
+// made: random bearer values must not spend the WorkOS rate limit that every
+// tenant's sign-ins and membership checks share.
+const API_KEY_VALIDATIONS = { windowMs: 60_000, max: 30, keyPrefix: "api-key-validation", kind: "api-key" } as const;
+
 async function viewerFromApiKey<E extends AppEnv>(c: Context<E>, value: string): Promise<Viewer | null> {
-  let key: ApiKeyInfo | null;
+  const config = c.get("config");
+  if (!looksLikeApiKey(value)) return null;
+  let key = cachedApiKey(config, value);
   try {
-    key = await validateApiKey(c.get("config"), value);
+    if (key === undefined) {
+      const verdict = await checkLimit(c, API_KEY_VALIDATIONS, clientIp(c));
+      if (!verdict.ok) {
+        c.header("Retry-After", String(verdict.retryAfter));
+        throw new RateLimitedError();
+      }
+      key = await validateApiKey(config, value);
+    }
   } catch (error) {
+    if (error instanceof RateLimitedError) throw error;
     console.error("WorkOS API key validation failed:", error instanceof Error ? error.message : error);
     return null;
   }

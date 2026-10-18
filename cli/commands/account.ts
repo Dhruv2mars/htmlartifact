@@ -1,12 +1,15 @@
 import { Console, Duration, Effect, Option } from "effect";
 import { Command } from "effect/cli";
 
-import { getAuth, resolveApiUrl, selectWorkspace } from "../auth.ts";
-import { CliError } from "../errors.ts";
+import { getAuth, refreshSession, resolveApiUrl, selectWorkspace, tokenExpiresAt } from "../auth.ts";
+import { CREDENTIALS_PATH } from "../env.ts";
+import { CliError, reason } from "../errors.ts";
 import { apiUrlFlag, jsonFlag, stringFlag } from "../flags.ts";
 import { printJson } from "../format.ts";
-import { api, postJson } from "../http.ts";
-import { removeCredentials, saveSession } from "../state.ts";
+import { api, postJson, requestJson } from "../http.ts";
+import { readJson, removeCredentials, saveSession, type Session } from "../state.ts";
+
+const MAX_POLL_INTERVAL_MS = 60_000;
 
 export const login = Command.make(
   "login",
@@ -34,6 +37,14 @@ export const login = Command.make(
     while (Date.now() < deadline) {
       yield* Effect.sleep(Duration.millis(interval));
       let poll = yield* postJson(`${apiUrl}/api/cli/token`, { device_code: device.device_code });
+      // Rate-limited (by htmlartifact or WorkOS): back off like slow_down and
+      // keep polling; the device code stays valid until the deadline.
+      if (poll.status === 429) {
+        interval = Math.min(MAX_POLL_INTERVAL_MS, interval + 5000);
+        const extra = (poll.retryAfter ?? 0) * 1000 - interval;
+        if (extra > 0) yield* Effect.sleep(Duration.millis(Math.min(extra, MAX_POLL_INTERVAL_MS)));
+        continue;
+      }
       if (poll.body.code === "organization_selection_required") {
         poll = yield* selectWorkspace(apiUrl, poll.body, Option.getOrUndefined(options.workspace));
       }
@@ -66,9 +77,41 @@ export const login = Command.make(
   Command.withDescription("Sign in, or create an account, in your browser (works over SSH: open the link on any device).")
 );
 
-export const logout = Command.make("logout", {}, () =>
-  removeCredentials.pipe(Effect.andThen(Console.log("Signed out.")))
-).pipe(Command.withDescription("Forget the saved sign-in on this machine."));
+// Ends the saved sign-in's WorkOS session (so its refresh token stops working
+// everywhere), then forgets it. Best-effort: the local file goes regardless.
+export const logout = Command.make(
+  "logout",
+  {},
+  Effect.fn(function* () {
+    const session = readJson<Session | null>(CREDENTIALS_PATH, null);
+    if (session?.refreshToken && session.apiUrl) {
+      const problem = yield* endSession(session).pipe(
+        Effect.catch((error) => Effect.succeed<string | null>(error.message || reason(error)))
+      );
+      if (problem) {
+        yield* Console.error(`Note: could not end the session on ${session.apiUrl} (${problem}). It ends when it expires.`);
+      }
+    }
+    yield* removeCredentials;
+    yield* Console.log("Signed out.");
+  })
+).pipe(Command.withDescription("Sign out: end the saved sign-in's session and forget it on this machine."));
+
+// null once the server has ended the session, else why not.
+const endSession = (session: Session) =>
+  Effect.gen(function* () {
+    const accessToken =
+      tokenExpiresAt(session.accessToken) > Date.now() + 30_000
+        ? session.accessToken
+        : (yield* refreshSession(session)).accessToken;
+    const result = yield* requestJson(`${session.apiUrl}/api/cli/logout`, {
+      apiKey: accessToken,
+      method: "POST",
+      body: {},
+      timeoutMs: 10_000
+    });
+    return result.ok ? null : String(result.body.error || `HTTP ${result.status}`);
+  });
 
 export const whoami = Command.make(
   "whoami",
