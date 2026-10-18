@@ -6,9 +6,7 @@ else gets a sign-in page or a 404.
 
 - **Teams are WorkOS organizations.** Sign-in is [WorkOS AuthKit](https://workos.com/authkit),
   so SSO, SCIM provisioning, MFA and domain capture come from WorkOS.
-- **Agents publish with a CLI** and a bundled set of default skills, so Claude
-  Code, Codex, or any agent that reads `~/.agents/skills` knows how to write,
-  publish and read artifacts.
+- **Agents publish with a CLI.**
 - **Self-hosted.** It needs Node, Postgres, and a disk or any S3-compatible bucket.
 
 ```sh
@@ -20,7 +18,7 @@ htmlartifact upload plan.html
 ## For teammates
 
 ```sh
-curl -fsSL https://<your-server>/install.sh | sh   # CLI + default skills
+curl -fsSL https://<your-server>/install.sh | sh   # installs the CLI
 htmlartifact login                                  # browser sign-in, works over SSH
 ```
 
@@ -35,19 +33,6 @@ htmlartifact login                                  # browser sign-in, works ove
 
 In CI, set `HTMLARTIFACT_API_URL` and `HTMLARTIFACT_TOKEN` (a team API key that
 an admin creates on the **Team** page) instead of logging in.
-
-## Default skills
-
-`skills/` ships with the server, and `install.sh` installs all of them:
-
-| Skill | Purpose |
-|---|---|
-| `htmlartifact` | Publish, update and list artifacts; handle failures |
-| `htmlartifact-read` | Open an artifact link someone shared |
-| `htmlartifact-design` | How to write an artifact a teammate can actually use |
-
-Add a folder named `htmlartifact-<name>/SKILL.md` to ship another skill to
-everyone on the next install.
 
 ## How access works
 
@@ -144,8 +129,7 @@ revocation, team admin, CI keys and the CLI end to end.
 
 htmlartifact started from the MIT-licensed npm release of
 [Postplan](https://www.npmjs.com/package/postplan) 0.0.5 by t3dotgg: its
-HTML validator, artifact serving and CLI. The auth, team model, and skills are
-new. See `NOTICE`.
+HTML validator, artifact serving and CLI. The auth and team model are new. See `NOTICE`.
 
 ## License
 

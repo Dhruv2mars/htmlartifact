@@ -121,7 +121,7 @@ export function renderCliSetup({ session, homeUrl }) {
     body: `
       <main class="narrow">
         <h1>Set up the CLI</h1>
-        <p class="muted">Installs the <code>htmlartifact</code> CLI and the default agent skills (Claude Code, Codex, and any agent that reads <code>~/.agents/skills</code>).</p>
+        <p class="muted">Installs the <code>htmlartifact</code> CLI.</p>
         ${codeBox(install)}
         <p class="muted">Then sign in. It opens this site in a browser, works over SSH too:</p>
         ${codeBox("htmlartifact login")}

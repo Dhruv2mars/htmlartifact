@@ -329,7 +329,7 @@ describe("web app", () => {
 
   test("the installer only touches htmlartifact paths", async () => {
     const script = await (await fetch(`${stack.baseUrl}/install.sh`)).text();
-    assert.match(script, /htmlartifact-design/);
+    assert.match(script, /htmlartifact\.mjs/);
     assert.doesNotMatch(script, /postplan/i);
   });
 });
