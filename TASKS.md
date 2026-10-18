@@ -17,8 +17,9 @@ provably removes its R2 objects (every version).
 - [x] Workspace deletion (admin): R2 + D1 + WorkOS org
 - [x] Member offboarding: removal, `user.deleted` PII scrub, admins can delete any artifact
 - [x] Retention: `source_ip`/`user_agent` erased after 30 days
-- [ ] Tenant-isolation sweep test over every route (agent running)
-- [ ] Codex (gpt-6.1-sol, high) security review round 4 of everything since 03c397b (running)
+- [x] Tenant-isolation sweep test over every route (37 routes, route table enforced; no leak found)
+- [x] Codex (gpt-6.1-sol, high) security review round 4: 3 fixed (dsync deprovisioning, durable upload rollback, PII restore race); legacy-key finding N/A (no pre-branch prod data)
+- [ ] Codex review round 5 of the round-4 fixes (running)
 - [x] SECURITY.md (data handling, incident response, D1 Time Travel backups/restore) — revisit once Phase 2 lands
 
 ## Phase 3 — WorkOS (scoped)
