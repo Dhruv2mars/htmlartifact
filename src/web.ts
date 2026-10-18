@@ -37,6 +37,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
     windowMs: 3_600_000,
     max: 30,
     keyPrefix: "web-write",
+    kind: "auth",
     key: (c) => c.get("viewer")?.account_id || clientIp(c)
   });
 

@@ -23,6 +23,14 @@ export interface Env {
   WORKOS_API_URL?: string;
   WORKOS_ISSUER?: string;
   WORKOS_WEBHOOK_SECRET?: string;
+  // Service binding to the ops Worker's `Ops` entrypoint (src/ops.ts). When
+  // absent (local dev, tests), rate limits fall back to an in-memory window.
+  OPS?: OpsService;
+}
+
+// What the Pages app calls on the ops Worker over RPC.
+export interface OpsService {
+  limit(kind: "upload" | "auth", key: string): Promise<boolean>;
 }
 
 export interface Config {

@@ -4,6 +4,7 @@
 //   - Ops.limit(): the Workers rate-limit binding, called by Pages over RPC.
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { drainPendingDeletions, eraseExpiredRequestMetadata, PENDING_DELETIONS_SCHEMA, type PurgeEnv } from "./purge.ts";
+import type { OpsService } from "./types.ts";
 
 export interface OpsEnv extends PurgeEnv {
   UPLOAD_LIMITER: RateLimit;
@@ -12,7 +13,8 @@ export interface OpsEnv extends PurgeEnv {
 
 export type LimitKind = "upload" | "auth";
 
-export class Ops extends WorkerEntrypoint<OpsEnv> {
+// Pages calls this as env.OPS (src/rate-limit.ts); OpsService is that contract.
+export class Ops extends WorkerEntrypoint<OpsEnv> implements OpsService {
   /** True when the request identified by `key` is within its limit. */
   async limit(kind: LimitKind, key: string): Promise<boolean> {
     const limiter = kind === "upload" ? this.env.UPLOAD_LIMITER : this.env.AUTH_LIMITER;

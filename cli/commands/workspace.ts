@@ -154,7 +154,7 @@ const deleteWorkspace = Command.make(
   })
 ).pipe(Command.withDescription("Delete your current workspace and every artifact in it (admins). Needs --confirm <name>."));
 
-const portal = (name: string, intent: "sso" | "dsync", explanation: string, description: string) =>
+const portal = (name: string, intent: "sso" | "dsync" | "domain_verification", explanation: string, description: string) =>
   Command.make(
     name,
     { json: jsonFlag() },
@@ -181,7 +181,14 @@ const directory = portal(
   "Get a WorkOS Admin Portal link to connect a SCIM directory to your workspace (admins)."
 );
 
+const domains = portal(
+  "domains",
+  "domain_verification",
+  "Your IT admin opens this link to verify your company's email domain (needed before SSO or a directory can claim it).",
+  "Get a WorkOS Admin Portal link to verify your workspace's domain (admins)."
+);
+
 export const workspace = Command.make("workspace").pipe(
   Command.withDescription("Create, join, and manage workspaces."),
-  Command.withSubcommands([create, invite, join, list, switchCommand, members, remove, deleteWorkspace, sso, directory])
+  Command.withSubcommands([create, invite, join, list, switchCommand, members, remove, deleteWorkspace, sso, directory, domains])
 );
