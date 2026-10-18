@@ -3,7 +3,7 @@
 **Done =** in production at https://htmlartifact.pages.dev, two real accounts
 walk the CLI flow end to end (sign up → create workspace → invite → join →
 publish → member opens artifact → outsider blocked), and deleting an artifact
-provably removes its R2 objects (every version).
+provably removes its stored HTML (every version; D1 blobs until R2 is on).
 
 ## Phase 1 — TypeScript
 - [x] `src/html-policy.ts` (shared by server + CLI), `tsconfig.json`
@@ -31,6 +31,8 @@ provably removes its R2 objects (every version).
 - [x] Round 12 agent: HTML validated in bounded memory (custom parse5 tree adapter, no child lists: 4 MB dense page 258 MB → 9 MB peak heap; 0 diffs vs old validator on ~300k generated pages); size checked before parsing; upload body cap 3× + 64 KiB
 - [ ] Once real WorkOS keys land, verify: /portal/revoke_link responses (unknown user → ?), org API key values start with `sk_`, revokeSession 404 for unknown session
 - [x] Review round 13 (Claude Opus): validator stops at depth limit, caps attributes (linear duplicate check; parse5 pinned 7.3.0), checks declarative shadow roots; IPv6 /64 limits; recently-valid keys skip IP bucket; streamed body size limit; CLI lock/rename hardening — 155/155
+- [x] D1 blob storage (R2 needs a card): `blobs` chunked ≤1 MB, written in the version's atomic batch; R2 when ARTIFACTS bound (reads fall back to D1); deletion clears both; suite runs on both backends; `bun run migrate:r2` (copy → SHA-256 verify → delete from D1; refuses to delete until /healthz says r2); README Storage section
+- [ ] Tomorrow (Dhruv's card): enable R2 + Workers Paid ($5/mo: Free caps CPU at 10 ms/request ≈ uploads > ~150 KB fail with 1102), then README → Storage → Switching to R2
 - [ ] Codex review (final) after 23:28 IST
 - [x] SECURITY.md (data handling, incident response, D1 Time Travel backups/restore) — revisit once Phase 2 lands
 
@@ -41,16 +43,15 @@ provably removes its R2 objects (every version).
 - Dropped by Dhruv: Vault/encryption, Audit Logs, Events API, Radar, extra roles, FGA, domain auto-join, export
 
 ## Blocked on Dhruv
-- [ ] Enable R2 in the Cloudflare dashboard
 - [ ] Write WorkOS keys to `~/.config/htmlartifact/workos.env`
 - [ ] Ask WorkOS support to enable AuthKit Directory Provisioning; then set `HTMLARTIFACT_DIRECTORY_PROVISIONING=on` (deploy/app vars) and redeploy
 
 ## Phase 4 — Production
 - [x] Pages configs `deploy/app`, `deploy/usercontent`, `deploy/ops`; `scripts/build-pages.ts` (verified with `wrangler pages dev`)
-- [x] Cloudflare Pages project `htmlartifact` created (exact subdomain) — deploy blocked on R2
-- [x] Sandbox Pages project `htmlartifact-usercontent` created (exact subdomain) — deploy blocked on R2
+- [x] Cloudflare Pages project `htmlartifact` created (exact subdomain) — deploys on D1 storage, blocked only on workos.env
+- [x] Sandbox Pages project `htmlartifact-usercontent` created (exact subdomain) — deploys on D1 storage, blocked only on workos.env
 - [x] Ops Worker `src/ops.ts`: cron (R2 delete retries, retention) + rate-limit RPC entrypoint `Ops`
-- [x] Staging config (Pages preview env + staging D1 created; staging R2 blocked on R2)
+- [x] Staging config (Pages preview env + staging D1 created; staging R2 comes with the switch)
 - [x] Rate limits (Workers rate-limit binding), logs/observability, deep `/healthz` (D1 + R2)
 - [x] Limits that survive offices and agents: API key format check + negative cache + per-IP validation limit; sign-in limited per device code / refresh token (loose per-IP ceiling); CLI backs off on 429, coordinates refreshes (lock + re-read); `logout` revokes the WorkOS session
 - [x] GitHub Actions written: ci.yml, deploy.yml (needs CLOUDFLARE_API_TOKEN secret), release.yml (npm trusted publishing)
@@ -58,5 +59,5 @@ provably removes its R2 objects (every version).
 - [ ] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts` ready; blocked on `~/.config/htmlartifact/workos.env`), MFA (dashboard)
 - [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
 - [ ] First npm publish locally (claims the unclaimed `htmlartifact` name), then enable npm trusted publishing so release.yml publishes with provenance (no long-lived tokens)
-- [ ] Create R2 buckets (prod + staging), run workos-setup, deploy:all, smoke
+- [ ] Run workos-setup, deploy:all (D1 storage), smoke
 - [ ] Production walkthrough with two real accounts (item 4)

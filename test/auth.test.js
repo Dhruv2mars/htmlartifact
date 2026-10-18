@@ -4,6 +4,7 @@ import {
   Browser,
   CI_KEY,
   OTHER_CI_KEY,
+  STORAGE,
   accessToken,
   breakWorkos,
   callApi,
@@ -385,10 +386,10 @@ describe("revocation", () => {
 });
 
 describe("web app", () => {
-  test("/healthz checks D1 and R2", async () => {
+  test("/healthz checks D1 and artifact storage", async () => {
     const response = await fetch(`${stack.baseUrl}/healthz`);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { ok: true, checks: { d1: true, r2: true } });
+    assert.deepEqual(await response.json(), { ok: true, checks: { d1: true, storage: true }, storage: STORAGE });
   });
 
   test("open redirects through sign-in are refused", async () => {

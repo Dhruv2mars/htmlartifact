@@ -65,13 +65,37 @@ function freePort() {
 
 // With `sandbox`, the app is http://127.0.0.1:<port> and the sandbox origin
 // is http://localhost:<port>: the same Worker, routed by request host.
+// Which artifact storage the suite runs against: "r2" (the ARTIFACTS bucket
+// bound) or "d1" (no bucket: HTML chunked into D1). `bun run test` runs both.
+export const STORAGE = process.env.HTMLARTIFACT_TEST_STORAGE === "d1" ? "d1" : "r2";
+
+// The Worker config for this run: the repo's wrangler.toml, minus the R2
+// bucket when testing D1 storage. Same D1 database id either way.
+let generatedConfig;
+export function testConfigPath() {
+  const root = new URL("../wrangler.toml", import.meta.url).pathname;
+  if (STORAGE === "r2") return root;
+  if (!generatedConfig) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-config-"));
+    generatedConfig = path.join(dir, "wrangler.toml");
+    fs.writeFileSync(
+      generatedConfig,
+      fs
+        .readFileSync(root, "utf8")
+        .replace(/^main = .*$/m, `main = ${JSON.stringify(new URL("../src/index.ts", import.meta.url).pathname)}`)
+        .replace(/^\[\[r2_buckets\]\][^[]*/m, "")
+    );
+  }
+  return generatedConfig;
+}
+
 export async function startStack({ sandbox = false, directoryProvisioning = false } = {}) {
   const emulator = await createEmulator({ port: 0, requestsPerMinute: 100_000, seed: SEED });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-test-"));
   const port = sandbox ? await freePort() : undefined;
   const sandboxUrl = sandbox ? `http://localhost:${port}` : null;
   const worker = await unstable_dev(new URL("../src/index.ts", import.meta.url).pathname, {
-    config: new URL("../wrangler.toml", import.meta.url).pathname,
+    config: testConfigPath(),
     ip: "127.0.0.1",
     ...(port ? { port } : {}),
     persistTo: path.join(tmp, "state"),

@@ -145,7 +145,7 @@ export async function sendPage(
   page: VersionRow | PageRow,
   frameAncestors?: string
 ): Promise<Response> {
-  const html = await getHtmlObject(c.env.ARTIFACTS, page.object_key);
+  const html = await getHtmlObject(c.env, page.object_key);
   c.header("Content-Security-Policy", contentSecurityPolicy(Boolean(page.has_inline_script), frameAncestors));
   c.header("X-Htmlartifact-Draft-Id", draft.id);
   c.header("X-Htmlartifact-Draft-Version", String(version.version_number));

@@ -5,12 +5,13 @@ import { ensureSchema } from "./db.ts";
 import { renderNotFound } from "./render.ts";
 import { isSandboxRequest, registerSandbox } from "./sandbox.ts";
 import { registerServing } from "./serve.ts";
+import { probeStorage, storageKind } from "./storage.ts";
 import type { AppEnv, Env } from "./types.ts";
 import { registerWeb } from "./web.ts";
 import { registerWebhooks } from "./webhooks.ts";
 import { FAVICON_SVG } from "./favicon.ts";
 
-// htmlartifact on Cloudflare Workers. Bindings: DB (D1), ARTIFACTS (R2).
+// htmlartifact on Cloudflare Workers. Bindings: DB (D1), optional ARTIFACTS (R2).
 // One bundle, two origins, routed by request host: the app, and the sandbox
 // origin that serves artifact HTML only (src/sandbox.ts).
 function baseApp(): Hono<AppEnv> {
@@ -27,15 +28,16 @@ function baseApp(): Hono<AppEnv> {
   });
 
   // Deep health: config loaded (middleware above), D1 reachable with the
-  // schema in place, R2 reachable. 503 names the failing store, nothing more.
+  // schema in place, artifact storage (R2 or D1) reachable. 503 names the
+  // failing store, nothing more.
   app.get("/healthz", async (c) => {
     const probe = (run: () => Promise<unknown>) => run().then(() => true, () => false);
     const checks = {
       d1: await probe(() => c.env.DB.prepare("SELECT 1 FROM drafts LIMIT 1").all()),
-      r2: await probe(() => c.env.ARTIFACTS.head("healthz"))
+      storage: await probe(() => probeStorage(c.env))
     };
-    const ok = checks.d1 && checks.r2;
-    return c.json({ ok, checks }, ok ? 200 : 503);
+    const ok = checks.d1 && checks.storage;
+    return c.json({ ok, checks, storage: storageKind(c.env) }, ok ? 200 : 503);
   });
   app.get("/favicon.svg", (c) => c.body(FAVICON_SVG, 200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" }));
 

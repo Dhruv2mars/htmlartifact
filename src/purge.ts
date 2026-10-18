@@ -1,13 +1,16 @@
-// Real deletion. R2 objects live under `orgs/<organizationId>/drafts/<draftId>/...`,
-// so deleting an artifact or a whole workspace is deleting one key prefix.
+// Real deletion. Objects live under `orgs/<organizationId>/drafts/<draftId>/...`
+// (in R2 or D1, src/storage.ts; deleting clears both), so deleting an artifact
+// or a whole workspace is deleting one key prefix.
 // Every deletion is queued in D1 first (`pending_deletions`), attempted at once,
 // and retried by the ops Worker's cron until it succeeds.
+
+import { deleteObjects } from "./storage.ts";
 
 export type DeletionKind = "r2_prefix" | "workos_org" | "workos_membership";
 
 export interface PurgeEnv {
   DB: D1Database;
-  ARTIFACTS: R2Bucket;
+  ARTIFACTS?: R2Bucket;
   WORKOS_API_KEY?: string;
   WORKOS_API_URL?: string;
 }
@@ -38,18 +41,6 @@ export function queueDeletion(db: D1Database, kind: DeletionKind, target: string
     .bind(kind, target);
 }
 
-/** Delete every object under `prefix`. Returns how many were deleted. */
-export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<number> {
-  let deleted = 0;
-  for (;;) {
-    // Always list from the start: we delete what we list, so the next page is the new first page.
-    const page = await bucket.list({ prefix, limit: 1000 });
-    if (page.objects.length === 0) return deleted;
-    await bucket.delete(page.objects.map((object) => object.key));
-    deleted += page.objects.length;
-  }
-}
-
 async function deleteWorkosMembership(env: PurgeEnv, membershipId: string): Promise<void> {
   if (!env.WORKOS_API_KEY) throw new Error("WORKOS_API_KEY is not set");
   const base = (env.WORKOS_API_URL || "https://api.workos.com").replace(/\/$/, "");
@@ -72,7 +63,8 @@ async function deleteWorkosOrganization(env: PurgeEnv, organizationId: string): 
 
 export async function runDeletion(env: PurgeEnv, kind: DeletionKind, target: string): Promise<boolean> {
   try {
-    if (kind === "r2_prefix") await deletePrefix(env.ARTIFACTS, target);
+    // "r2_prefix" predates D1 storage: it deletes a key prefix in every backend.
+    if (kind === "r2_prefix") await deleteObjects(env, target);
     else if (kind === "workos_membership") await deleteWorkosMembership(env, target);
     else await deleteWorkosOrganization(env, target);
     await env.DB.prepare("DELETE FROM pending_deletions WHERE kind = ? AND target = ?").bind(kind, target).run();

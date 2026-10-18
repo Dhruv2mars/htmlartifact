@@ -9,7 +9,7 @@ import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
 import { activeMembership, bearerViewer } from "./auth.ts";
 import { deleteWorkspaceStatements, draftPrefix, membershipBeingUndone, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
-import { putHtmlObject } from "./storage.ts";
+import { stageObjects } from "./storage.ts";
 import {
   isMember,
   type AppEnv,
@@ -646,6 +646,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   };
 
   const statements: D1PreparedStatement[] = [];
+  let blobStatements: D1PreparedStatement[] = [];
   if (!unchanged) {
     versionId = newInternalId();
     const { pages } = validation;
@@ -657,15 +658,16 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     const objectKey = `${prefix}versions/${versionId}.html`;
     const pageKey = (page: { path: string }) => `${prefix}versions/${versionId}/${page.path}`;
     written = versionPrefix(viewer.organization_id, id, versionId);
-    // allSettled: on a failed write, wait for the others before cleaning up.
-    const puts = await Promise.allSettled([
-      putHtmlObject(c.env.ARTIFACTS, objectKey, index.html),
-      ...extraPages.map((page) => putHtmlObject(c.env.ARTIFACTS, pageKey(page), page.html))
-    ]);
-    const failed = puts.find((put) => put.status === "rejected");
-    if (failed) {
+    // R2: written now. D1: chunk inserts that join this batch after the
+    // version row (each conditional on it), so they commit together.
+    try {
+      blobStatements = await stageObjects(c.env, versionId, [
+        { key: objectKey, html: index.html },
+        ...extraPages.map((page) => ({ key: pageKey(page), html: page.html }))
+      ]);
+    } catch (error) {
       await discard();
-      throw failed.reason;
+      throw error;
     }
 
     if (!existing) {
@@ -740,6 +742,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
           .bind(versionId, page.path, pageKey(page), sha256(page.html), page.bytes, page.title, page.hasScripts ? 1 : 0, versionId)
       );
     }
+    statements.push(...blobStatements);
   }
   // Metadata applies even when the content is unchanged; only new content
   // moves updated_at.

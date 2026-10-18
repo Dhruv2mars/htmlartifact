@@ -25,12 +25,15 @@
     "typecheck:cli": "tsc -p cli/tsconfig.json",
     "pretest": "bun run build",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test": "bun run test:d1 && bun run test:r2",
+    "test:d1": "HTMLARTIFACT_TEST_STORAGE=d1 node --test --test-concurrency=1 test/*.test.js",
+    "test:r2": "HTMLARTIFACT_TEST_STORAGE=r2 node --test --test-concurrency=1 test/*.test.js",
     "prepublishOnly": "bun run build",
     "dev:local": "node scripts/dev-local.mjs",
     "build:pages": "bun scripts/build-pages.ts",
     "deploy:all": "bun scripts/deploy.ts",
-    "smoke": "bun scripts/smoke.ts"
+    "smoke": "bun scripts/smoke.ts",
+    "migrate:r2": "bun scripts/migrate-blobs-to-r2.ts"
   },
   "engines": {
     "node": ">=20.10"

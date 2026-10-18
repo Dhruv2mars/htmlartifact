@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { validateHtml, validateUpload } from "../src/html-policy.ts";
-import { accessToken, callApi, startStack } from "./helpers.js";
+import { STORAGE, accessToken, callApi, startStack } from "./helpers.js";
 
 const MiB = 1024 * 1024;
-const ACCOUNT_LIMIT = 4 * MiB; // MAX_ACCOUNT_HTML_BYTES default
+const ACCOUNT_LIMIT = 4 * MiB; // MAX_ACCOUNT_HTML_BYTES default with R2
+// The server's default for this run's storage (src/config.ts): 2 MiB on D1.
+const SERVER_LIMIT = STORAGE === "r2" ? 4 * MiB : 2 * MiB;
 
 // Dense, table-heavy markup of about `bytes` bytes: 7 elements per ~190-byte
 // row, the shape that made a full parse5 tree cost ~57 MB of heap per MB.
@@ -263,13 +265,18 @@ describe("large uploads through the API", () => {
     await stack?.stop();
   });
 
-  test("a dense ~4 MB page publishes", async () => {
-    const result = await callApi(stack, alice, "POST", "/api/uploads", { html: densePage(4_000_000) });
+  test("a dense page just under the limit publishes and reads back byte for byte", async () => {
+    // On D1 this spans several 1 MB chunks, and multi-byte text crosses chunk edges.
+    const html = densePage(SERVER_LIMIT - 64 * 1024, { extra: "<p>naïve café ☕ 日本語</p>".repeat(2000) });
+    const result = await callApi(stack, alice, "POST", "/api/uploads", { html });
     assert.equal(result.status, 201, JSON.stringify(result.body).slice(0, 500));
+    const read = await fetch(result.body.publicUrl, { headers: { Authorization: `Bearer ${alice}` } });
+    assert.equal(read.status, 200);
+    assert.equal(await read.text(), html);
   });
 
   test("a page over the account limit is refused with too-large", async () => {
-    const result = await callApi(stack, alice, "POST", "/api/uploads", { html: densePage(ACCOUNT_LIMIT + 1) });
+    const result = await callApi(stack, alice, "POST", "/api/uploads", { html: densePage(SERVER_LIMIT + 1) });
     assert.equal(result.status, 422);
     assert.deepEqual(
       result.body.issues.map((issue) => issue.code),
@@ -281,9 +288,9 @@ describe("large uploads through the API", () => {
     // 3x the limit plus 64 KiB is the most a valid upload's JSON can need.
     const result = await callApi(stack, alice, "POST", "/api/uploads", {
       html: densePage(1000),
-      padding: "x".repeat(3 * ACCOUNT_LIMIT + 64 * 1024)
+      padding: "x".repeat(3 * SERVER_LIMIT + 64 * 1024)
     });
     assert.equal(result.status, 413);
-    assert.match(result.body.error, /Request is over the 12\.1 MiB limit\./);
+    assert.match(result.body.error, STORAGE === "r2" ? /Request is over the 12\.1 MiB limit\./ : /Request is over the 6\.1 MiB limit\./);
   });
 });

@@ -35,11 +35,21 @@ export function getConfig(env: Env): Config {
     // under the CSP sandbox.
     sandboxOrigin,
     cookiePassword,
-    limits: {
-      accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 4 * 1024 * 1024),
-      largeBytes: Number(env.MAX_LARGE_HTML_BYTES || 16 * 1024 * 1024),
-      maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 50)
-    },
+    // Defaults depend on where HTML is stored. D1 (no R2 bucket bound): an
+    // upload is one D1 batch of ~2 statements per page plus one per MB, and
+    // Workers Free allows 50 D1 queries per request, so 10 pages and 2 MiB
+    // (4 MiB flagged) keep a full upload well inside it. R2: 50 pages, 4 MiB.
+    limits: env.ARTIFACTS
+      ? {
+          accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 4 * 1024 * 1024),
+          largeBytes: Number(env.MAX_LARGE_HTML_BYTES || 16 * 1024 * 1024),
+          maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 50)
+        }
+      : {
+          accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 2 * 1024 * 1024),
+          largeBytes: Number(env.MAX_LARGE_HTML_BYTES || 4 * 1024 * 1024),
+          maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 10)
+        },
     workos: {
       apiKey,
       clientId,

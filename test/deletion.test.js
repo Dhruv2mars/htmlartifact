@@ -5,6 +5,7 @@ import { after, before, describe, test } from "node:test";
 import { getPlatformProxy, unstable_dev } from "wrangler";
 import {
   CI_KEY,
+  STORAGE,
   accessToken,
   breakWorkos,
   callApi,
@@ -15,6 +16,7 @@ import {
   sendWebhook,
   signInTokens,
   startStack,
+  testConfigPath,
   workosApi
 } from "./helpers.js";
 
@@ -32,7 +34,7 @@ before(async () => {
   stack = await startStack({ directoryProvisioning: true });
   const state = path.join(stack.tmp, "state");
   proxy = await getPlatformProxy({
-    configPath: new URL("../wrangler.toml", import.meta.url).pathname,
+    configPath: testConfigPath(),
     persist: { path: path.join(state, "v3") }
   });
   // The deploy config names the production D1 database; local state is keyed
@@ -45,6 +47,10 @@ before(async () => {
       .readFileSync(new URL("../deploy/ops/wrangler.toml", import.meta.url), "utf8")
       .replace(/^main = .*$/m, `main = ${JSON.stringify(new URL("../src/ops.ts", import.meta.url).pathname)}`)
       .replace(/database_id = "[^"]+"/g, `database_id = "${appDatabaseId}"`)
+      // The deploy config leaves R2 unbound (production starts on D1); this
+      // run's storage decides: the same bucket as the app for R2, none for D1.
+      .replace(/^\[\[r2_buckets\]\][^[]*/gm, "") +
+      (STORAGE === "r2" ? '\n[[r2_buckets]]\nbinding = "ARTIFACTS"\nbucket_name = "htmlartifact-artifacts"\n' : "")
   );
   ops = await unstable_dev(new URL("../src/ops.ts", import.meta.url).pathname, {
     config: opsConfig,
@@ -64,15 +70,31 @@ after(async () => {
 });
 
 const upload = (token, body) => callApi(stack, token, "POST", "/api/uploads", body);
-const r2Keys = async (prefix) => (await proxy.env.ARTIFACTS.list({ prefix })).objects.map((o) => o.key).sort();
+// The stored objects, whichever backend this run uses (src/storage.ts).
+const r2Keys = async (prefix) =>
+  STORAGE === "r2"
+    ? (await proxy.env.ARTIFACTS.list({ prefix })).objects.map((o) => o.key).sort()
+    : (await rows("SELECT DISTINCT key FROM blobs WHERE key >= ? AND key < ? ORDER BY key", prefix, `${prefix}~`)).map((r) => r.key);
+const putObject = (key, html) =>
+  STORAGE === "r2"
+    ? proxy.env.ARTIFACTS.put(key, html)
+    : exec("INSERT INTO blobs (key, chunk, data) VALUES (?, 0, ?)", key, html);
+const deleteObject = (key) =>
+  STORAGE === "r2" ? proxy.env.ARTIFACTS.delete(key) : exec("DELETE FROM blobs WHERE key = ?", key);
 // The app, the ops Worker and this proxy share one local SQLite file; a read
 // racing a writer occasionally loses the lock. Retry only that transient error.
 async function rows(sql, ...binds) {
+  return retryLocked(async () => (await proxy.env.DB.prepare(sql).bind(...binds).all()).results);
+}
+// Direct writes from the test, retried the same way.
+const exec = (sql, ...binds) => retryLocked(() => proxy.env.DB.prepare(sql).bind(...binds).run());
+async function retryLocked(run) {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return (await proxy.env.DB.prepare(sql).bind(...binds).all()).results;
+      return await run();
     } catch (error) {
-      if (attempt >= 5 || !String(error?.message).includes("session commit token")) throw error;
+      const message = String(error?.message);
+      if (attempt >= 8 || !(message.includes("session commit token") || message.includes("SQLITE_BUSY"))) throw error;
       await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
     }
   }
@@ -201,15 +223,15 @@ describe("ops Worker cron", () => {
   test("queued deletions are retried until they succeed", async () => {
     // A queued R2 prefix, as left behind when R2 failed mid-request.
     const prefix = "orgs/org_cron_test/drafts/abcdefabcdef/";
-    await proxy.env.ARTIFACTS.put(`${prefix}versions/v1.html`, "<p>1</p>");
-    await proxy.env.ARTIFACTS.put(`${prefix}versions/v1/page.html`, "<p>2</p>");
+    await putObject(`${prefix}versions/v1.html`, "<p>1</p>");
+    await putObject(`${prefix}versions/v1/page.html`, "<p>2</p>");
     const outside = "orgs/org_cron_test/drafts/zzzzzzzzzzzz/versions/v1.html";
-    await proxy.env.ARTIFACTS.put(outside, "<p>keep</p>");
-    await proxy.env.DB.prepare("INSERT INTO pending_deletions (kind, target) VALUES ('r2_prefix', ?)").bind(prefix).run();
+    await putObject(outside, "<p>keep</p>");
+    await exec("INSERT INTO pending_deletions (kind, target) VALUES ('r2_prefix', ?)", prefix);
 
     // A queued WorkOS organization deletion while WorkOS is down.
     const org = await workosApi(stack.emulator, "POST", "/organizations", { name: "Cron Doomed" });
-    await proxy.env.DB.prepare("INSERT INTO pending_deletions (kind, target) VALUES ('workos_org', ?)").bind(org.id).run();
+    await exec("INSERT INTO pending_deletions (kind, target) VALUES ('workos_org', ?)", org.id);
     const restore = await breakWorkos(stack.emulator, "DELETE", `/organizations/${org.id}`);
     try {
       await runCron();
@@ -240,12 +262,8 @@ describe("ops Worker cron", () => {
     const old = await upload(alice, { html: page("Retention old") });
     const day = 24 * 60 * 60;
     const nowSeconds = Math.floor(Date.now() / 1000);
-    await proxy.env.DB.prepare("UPDATE draft_versions SET created_at = ?, source_ip = '203.0.113.9' WHERE id = ?")
-      .bind(nowSeconds - 31 * day, old.body.versionId)
-      .run();
-    await proxy.env.DB.prepare("UPDATE draft_versions SET created_at = ?, source_ip = '203.0.113.8' WHERE id = ?")
-      .bind(nowSeconds - 29 * day, fresh.body.versionId)
-      .run();
+    await exec("UPDATE draft_versions SET created_at = ?, source_ip = '203.0.113.9' WHERE id = ?", nowSeconds - 31 * day, old.body.versionId);
+    await exec("UPDATE draft_versions SET created_at = ?, source_ip = '203.0.113.8' WHERE id = ?", nowSeconds - 29 * day, fresh.body.versionId);
 
     await runCron();
     await eventually(
@@ -454,7 +472,7 @@ describe("review round 4", () => {
     await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${membership.id}/deactivate`);
 
     // Even with the webhook lost and the membership cache expired, their own API key stops working.
-    await proxy.env.DB.prepare("DELETE FROM memberships WHERE user_id = ?").bind(bobUser.id).run();
+    await exec("DELETE FROM memberships WHERE user_id = ?", bobUser.id);
     assert.equal(await status(bobKey), 403, "user-owned key follows its user's membership");
 
     // The webhook ends access and their Admin Portal sessions (revoke_link must succeed, or WorkOS retries).
@@ -514,7 +532,7 @@ describe("review round 4", () => {
     const { queueDeletion, versionPrefix } = await import("../src/purge.ts");
     const kept = "orgs/org_x/drafts/d1/versions/KEEPKEEPKEEPKEEPKEEP.html";
     const prefix = versionPrefix("org_x", "d1", "LOSTLOSTLOSTLOSTLOST");
-    for (const key of [`${prefix}.html`, `${prefix}/about.html`, kept]) await proxy.env.ARTIFACTS.put(key, "<p>secret</p>");
+    for (const key of [`${prefix}.html`, `${prefix}/about.html`, kept]) await putObject(key, "<p>secret</p>");
     // What discard() does when the immediate delete fails: the queued row stays.
     await queueDeletion(proxy.env.DB, "r2_prefix", prefix).run();
     assert.throws(() => queueDeletion(proxy.env.DB, "r2_prefix", "orgs/org_x/drafts/d1/versions/short"));
@@ -522,7 +540,7 @@ describe("review round 4", () => {
     await eventually(async () => (await r2Keys("orgs/org_x/")).length === 1, "upload's objects purged by the cron");
     assert.deepEqual(await r2Keys("orgs/org_x/"), [kept]);
     assert.equal(await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", prefix), 0);
-    await proxy.env.ARTIFACTS.delete(kept);
+    await deleteObject(kept);
   });
 });
 
@@ -631,7 +649,7 @@ describe("review round 10", () => {
       await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${nora.id}&organization_id=${org.id}`)
     ).data;
     await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${membership.id}`, { role_slug: "admin" });
-    await proxy.env.DB.prepare("DELETE FROM memberships WHERE user_id = ?").bind(nora.id).run();
+    await exec("DELETE FROM memberships WHERE user_id = ?", nora.id);
   });
   const liveCodes = async (token) => (await callApi(stack, token, "GET", "/api/workspaces/invites")).body.invites.map((i) => i.code);
 
@@ -850,5 +868,29 @@ describe("review round 12", () => {
     const live = (await callApi(stack, nora, "GET", "/api/workspaces/invites")).body.invites.map((i) => i.code);
     assert.ok(live.includes(standing));
     assert.equal(await count("SELECT COUNT(*) FROM joins WHERE user_id = ?", bobUser.id), 0, "their join rows are gone");
+  });
+});
+
+describe(`artifact storage (${STORAGE})`, () => {
+  test("uploads that lose a race leave no stored objects; deleting removes every chunk of every version", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    const first = await upload(alice, { html: page("Race v1"), slug: "race-storage" });
+    assert.equal(first.status, 201);
+    const results = await Promise.all(
+      Array.from({ length: 6 }, (_, i) => upload(alice, { html: page(`Race contender ${i}`, `<p>${"x".repeat(1500 * 1024)}</p>`), slug: "race-storage" }))
+    );
+    const won = results.filter((r) => r.status === 200).length;
+    assert.ok(won >= 1, results.map((r) => r.status).join(","));
+    const acme = await findOrganization(stack.emulator, "Acme");
+    const prefix = `orgs/${acme.id}/drafts/${first.body.draftId}/`;
+    const versions = await count("SELECT COUNT(*) FROM draft_versions WHERE draft_id = ?", first.body.draftId);
+    await eventually(async () => (await r2Keys(prefix)).length === versions, "exactly one object per committed version");
+    if (STORAGE === "d1") {
+      // 1.5 MB pages span two 1 MB chunks.
+      assert.ok((await count("SELECT COUNT(*) FROM blobs WHERE key >= ? AND key < ?", prefix, `${prefix}~`)) > versions);
+    }
+    assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${first.body.draftId}`)).status, 200);
+    assert.deepEqual(await r2Keys(prefix), []);
+    assert.equal(await count("SELECT COUNT(*) FROM blobs WHERE key >= ? AND key < ?", prefix, `${prefix}~`), 0);
   });
 });

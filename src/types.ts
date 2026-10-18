@@ -6,7 +6,8 @@
 // missing.
 export interface Env {
   DB: D1Database;
-  ARTIFACTS: R2Bucket;
+  // Optional: without it artifact HTML lives in D1 (src/storage.ts).
+  ARTIFACTS?: R2Bucket;
   HTMLARTIFACT_PUBLIC_BASE_URL?: string;
   HTMLARTIFACT_SANDBOX_ORIGIN?: string;
   /** "sandbox" on the usercontent deployment: every host it answers serves only the sandbox. */

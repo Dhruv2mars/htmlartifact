@@ -254,12 +254,12 @@ const ROUTES = {
   // index.ts (both apps)
   "GET /healthz": {
     kind: "global",
-    why: "no identifiers; reports only d1/r2 booleans",
+    why: "no identifiers; reports only store booleans and the storage kind",
     async run(key) {
       for (const base of [stack.baseUrl, stack.sandboxUrl]) {
         const res = await read({ token: B.olivia }, `${base}/healthz`);
         assert.equal(res.status, 200);
-        assert.deepEqual(Object.keys(JSON.parse(res.text)).sort(), ["checks", "ok"]);
+        assert.deepEqual(Object.keys(JSON.parse(res.text)).sort(), ["checks", "ok", "storage"]);
         assertClean(key, res.text);
       }
     }

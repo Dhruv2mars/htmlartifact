@@ -16,9 +16,10 @@ binding = "DB"
 database_name = "htmlartifact"
 database_id = "c1fd2f32-8d99-4229-8e39-b441df855a89"
 
-[[r2_buckets]]
-binding = "ARTIFACTS"
-bucket_name = "htmlartifact-artifacts"
+# R2 (switch on once R2 is enabled; README: Storage). Unbound: artifact HTML lives in D1.
+# [[r2_buckets]]
+# binding = "ARTIFACTS"
+# bucket_name = "htmlartifact-artifacts"
 
 [[services]]
 binding = "OPS"
@@ -35,9 +36,10 @@ binding = "DB"
 database_name = "htmlartifact-staging"
 database_id = "0c008194-08d1-4289-a7aa-e11d05da04cf"
 
-[[env.preview.r2_buckets]]
-binding = "ARTIFACTS"
-bucket_name = "htmlartifact-artifacts-staging"
+# R2 (switch on once R2 is enabled; README: Storage). Unbound: artifact HTML lives in D1.
+# [[env.preview.r2_buckets]]
+# binding = "ARTIFACTS"
+# bucket_name = "htmlartifact-artifacts-staging"
 
 [[env.preview.services]]
 binding = "OPS"

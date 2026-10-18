@@ -16,7 +16,7 @@ critical issues within 7 days. We will credit you unless you ask us not to.
 
 | Data | Where | Notes |
 |---|---|---|
-| Artifact HTML (every version, every page) | Cloudflare R2, `orgs/<organization>/drafts/<draft>/…` | Encrypted at rest by Cloudflare (AES-256). Never cached by browsers or shared caches (`Cache-Control: private, no-store`). |
+| Artifact HTML (every version, every page) | Cloudflare R2 (or, until R2 is enabled, D1 table `blobs`), keyed `orgs/<organization>/drafts/<draft>/…` | Encrypted at rest by Cloudflare (AES-256). Never cached by browsers or shared caches (`Cache-Control: private, no-store`). |
 | Artifact index: title, description, slug, repo name, git branch/commit subject, filename, sizes | Cloudflare D1 | Encrypted at rest by Cloudflare. |
 | Upload request metadata: `source_ip`, `user_agent` | Cloudflare D1 (`draft_versions`) | **Erased after 30 days** by a scheduled job. |
 | Workspace name and handle; invite codes (expiring, use-limited) | Cloudflare D1 | |
@@ -62,10 +62,12 @@ Artifact HTML may contain inline script. It never runs on the app's origin:
 ## Deletion
 
 - **Artifacts:** `htmlartifact delete <id>` (the author or a workspace admin)
-  makes the artifact unreadable immediately and deletes its R2 objects (every
-  version and every page) and its D1 rows in the same request. If any R2
-  delete fails, a scheduled job retries within 15 minutes, so the grace window
-  is at most **15 minutes**.
+  makes the artifact unreadable immediately and deletes its stored HTML (every
+  version and every page, in R2 and D1) and its D1 rows in the same request.
+  If any delete fails, a scheduled job retries within 15 minutes, so the grace
+  window is at most **15 minutes**. While artifact HTML is stored in D1 (before
+  R2 is switched on), deleted HTML also stays in D1 Time Travel history for its
+  retention window (7 days on Workers Free, 30 on Paid); see Backups.
 - **Workspaces:** `htmlartifact workspace delete --confirm <name>` (admins)
   blocks access at once, then deletes every artifact's R2 objects, every D1 row
   for the workspace, its invites and caches, and the WorkOS organization (which
@@ -76,8 +78,10 @@ Artifact HTML may contain inline script. It never runs on the app's origin:
   delete them. When WorkOS reports a user deleted, we scrub their cached name
   and email.
 - **Backups:** deleted D1 rows remain in D1 Time Travel history for its
-  retention window (30 days on Workers Paid, 7 on Free), then are gone. R2
-  objects have no versioning or backups: once deleted they cannot be restored.
+  retention window (30 days on Workers Paid, 7 on Free), then are gone. That
+  includes artifact HTML while it is stored in D1. R2 objects have no
+  versioning or backups: once deleted they cannot be restored, which is why
+  production moves artifact HTML to R2 as soon as R2 is enabled.
 
 ## Backups and restore
 

@@ -71,7 +71,7 @@ No servers to run. htmlartifact is one Cloudflare Worker:
 | Piece | Service |
 |---|---|
 | API, web pages, artifact serving | Cloudflare Workers ([Hono](https://hono.dev)) |
-| Artifact HTML | Cloudflare R2 |
+| Artifact HTML | Cloudflare R2, or D1 until R2 is switched on (see Storage) |
 | Artifact index, invites, caches | Cloudflare D1 (schema created automatically) |
 | Accounts, sign-up, workspaces (organizations), SSO | [WorkOS](https://workos.com) AuthKit |
 | CLI | TypeScript + [Effect](https://effect.website), bundled by Bun for Node.js ≥ 20.10, published to npm, run with `npx` |
@@ -84,12 +84,47 @@ bun run dev:local   # WorkOS emulator + Worker at http://localhost:8787, fully o
 bun run build       # CLI (TypeScript + Effect, cli/) → dist/htmlartifact.js
 HTMLARTIFACT_API_URL=http://localhost:8787 node dist/htmlartifact.js login
 bun run typecheck:cli
-bun run test        # builds the CLI, then 155 tests: real Worker (workerd) + official WorkOS emulator
+bun run test        # builds the CLI, then the full suite twice: D1 storage, then R2 (real Worker + official WorkOS emulator)
 ```
 
 `dev:local` seeds `alice@`, `bob@` and `carol@example.com`. Sign in with any of
 them on the emulator's login page. The CLI's browser sign-in is auto-approved
 as Alice.
+
+## Storage
+
+Artifact HTML is stored in R2 when the Worker has an `ARTIFACTS` bucket bound,
+and in D1 otherwise (`src/storage.ts`). Production starts on D1 because R2
+needs a card on the Cloudflare account.
+
+- **D1:** each object is split into ≤ 1 MB rows of a `blobs` table, written in
+  the same atomic batch as the version that references them, so a fresh
+  artifact opens for teammates immediately (D1, not KV: KV is eventually
+  consistent). Default limits are lower than on R2: 2 MiB per upload (4 MiB
+  for flagged accounts) and 10 pages, which keeps an upload's D1 batch well
+  inside Workers Free's 50 queries per request. D1 Free holds 5 GB.
+- **R2:** 4 MiB per upload (16 MiB flagged), 50 pages. Reads fall back to D1,
+  so objects stored before the switch keep working.
+- Deleting an artifact or workspace deletes its objects in both.
+
+**Switching to R2 (no downtime):**
+
+1. Enable R2 in the Cloudflare dashboard (needs a payment method), then:
+   `bunx wrangler r2 bucket create htmlartifact-artifacts` (and
+   `htmlartifact-artifacts-staging`).
+2. Uncomment the `r2_buckets` blocks in `deploy/app`, `deploy/usercontent` and
+   `deploy/ops` `wrangler.toml`, and run `bun run deploy:all`. From here new
+   artifacts go to R2; existing ones are still read from D1. `/healthz` reports
+   `"storage": "r2"`.
+3. `bun run migrate:r2` copies every D1 object into R2, downloads it again to
+   compare SHA-256, and deletes it from D1 only after it matches. It refuses to
+   delete anything until `/healthz` reports `"storage": "r2"` (otherwise the
+   app could not read the moved objects), and is safe to re-run.
+   `--dry-run` reports what would move; `--staging` targets staging.
+
+The binding goes in before the migration (not after) so every object is
+readable at every moment: during step 3 the app finds each object in R2 or,
+until it moves, in D1.
 
 ## Deploying (later)
 
@@ -104,7 +139,7 @@ as Alice.
      (`bun scripts/workos-setup.ts` does all of this through the WorkOS API.)
 2. Cloudflare:
    - Run `wrangler d1 create htmlartifact` and put the ID in `wrangler.toml`.
-   - Run `wrangler r2 bucket create htmlartifact-artifacts`.
+   - Optional: R2 for artifact HTML (see Storage); without it, D1 is used.
    - Run `wrangler secret put` for `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
      `WORKOS_WEBHOOK_SECRET` and `HTMLARTIFACT_COOKIE_PASSWORD` (32+ chars).
    - Run `bun run deploy`.
