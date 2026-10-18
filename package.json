@@ -9,35 +9,39 @@
     "url": "git+https://github.com/Dhruv2mars/htmlartifact.git"
   },
   "files": [
-    "bin/",
-    "src/html-policy.js",
+    "dist/",
     "README.md",
-    "NOTICE"
+    "NOTICE",
+    "LICENSE"
   ],
   "bin": {
-    "htmlartifact": "./bin/htmlartifact.js"
+    "htmlartifact": "./dist/htmlartifact.js"
   },
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "build": "bun build cli/main.ts --target=node --outfile dist/htmlartifact.js",
+    "build:binaries": "bun build cli/main.ts --compile --outfile release/htmlartifact",
+    "typecheck:cli": "tsc -p cli/tsconfig.json",
+    "pretest": "bun run build",
     "test": "node --test --test-concurrency=1 test/*.test.js",
+    "prepublishOnly": "bun run build",
     "dev:local": "node scripts/dev-local.mjs"
   },
   "engines": {
     "node": ">=20.10"
   },
-  "dependencies": {
-    "commander": "^14.0.0",
-    "parse5": "^7.3.0"
-  },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261018.1",
+    "@effect/platform-node": "^4.0.5",
     "@types/node": "^26.6.5",
     "@workos-inc/node": "^11.0.0",
     "@workos/emulate": "^0.15.0",
+    "effect": "^4.0.5",
     "hono": "^4.13.13",
     "jose": "^6.2.3",
     "nanoid": "^5.1.5",
+    "parse5": "^7.3.0",
     "typescript": "^7.0.2",
     "wrangler": "^4.151.1"
   }

@@ -6,10 +6,10 @@ import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 import { CI_KEY, callApi, page, refreshInto, signInTokens, startStack, writeHtml } from "./helpers.js";
 
-// The whole agent workflow through the real CLI binary, against a local
+// The whole agent workflow through the built CLI (dist/htmlartifact.js), against a local
 // Worker and the WorkOS emulator. Every command is what an agent would run.
 const run = promisify(execFile);
-const CLI = new URL("../bin/htmlartifact.js", import.meta.url).pathname;
+const CLI = new URL("../dist/htmlartifact.js", import.meta.url).pathname;
 let stack;
 let home;
 
@@ -84,6 +84,13 @@ test("sign in → create workspace → invite → teammate joins → publish →
 
 test("read refuses to send the token to another host", async () => {
   await assert.rejects(cli(["read", "https://evil.example/d/abcdefghijkl"]), /not your htmlartifact server/);
+});
+
+test("delete refuses a URL from another host, before any sign-in", async () => {
+  await assert.rejects(
+    cli(["delete", "https://evil.example/d/abcdefghijkl"], { HTMLARTIFACT_HOME: path.join(stack.tmp, "no-home") }),
+    /https:\/\/evil\.example is not your htmlartifact server/
+  );
 });
 
 test("an expired access token is refreshed and the rotated pair saved", async () => {

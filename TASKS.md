@@ -8,7 +8,8 @@ provably removes its R2 objects (every version).
 ## Phase 1 — TypeScript
 - [x] `src/html-policy.ts` (shared by server + CLI), `tsconfig.json`
 - [ ] Server → strict TypeScript (Hono), `bun run typecheck` clean, 37 tests green
-- [ ] CLI → TypeScript + Effect, built with `bun build --target=node` → `dist/htmlartifact.js`
+- [x] CLI → TypeScript + Effect, built with `bun build --target=node` → `dist/htmlartifact.js`
+- [x] CLI commands for Phase 2/3 endpoints (server side pending): `delete`, `workspace delete --confirm`, `workspace sso`, `workspace directory`
 
 ## Phase 2 — Security
 - [ ] Real deletion: draft delete purges R2 objects for every version/page (+ cron backstop)
@@ -33,5 +34,6 @@ provably removes its R2 objects (every version).
 - [ ] Rate limits (Workers rate-limit binding), logs/observability, health checks
 - [ ] GitHub Actions: tests, deploy, npm publish with provenance
 - [ ] Real WorkOS env: redirect URI, webhooks, MFA, SSO/DSync enabled
-- [ ] `DEFAULT_API_URL` = https://htmlartifact.pages.dev; publish CLI to npm
+- [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
+- [ ] Publish CLI to npm
 - [ ] Production walkthrough with two real accounts (item 4)
