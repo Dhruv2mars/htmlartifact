@@ -35,7 +35,6 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `workspace join <code>` | Join with a code |
 | `workspace list` / `switch <name>` | Your workspaces; change the current one |
 | `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately |
-| `workspace reinstate <email>` | Let someone who was removed rejoin with an invite code (admins) |
 | `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace |
 | `read <url>` | Download an artifact with your sign-in (how agents read links) |
 | `list [--all]` | Your artifacts, or the whole workspace's |

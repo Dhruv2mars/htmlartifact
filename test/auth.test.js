@@ -148,8 +148,6 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     const browser = new Browser(stack);
     const landed = await browser.signIn("bob@acme.test", { next: link });
     assert.equal(landed.status, 404, "bob is in Acme, not Nora Labs");
-    // Sam was removed earlier: an admin lets him back in before he can rejoin.
-    assert.equal((await callApi(stack, nora.accessToken, "POST", "/api/workspaces/members/reinstate", { email: "sam@new.test" })).status, 200);
     const fresh = new Browser(stack);
     const page1 = await fresh.signIn("sam@new.test", { next: link });
     assert.match(page1.finalUrl, /\/workspaces\?next=/);

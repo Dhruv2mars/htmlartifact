@@ -1,6 +1,6 @@
 import type { Event } from "@workos-inc/node";
 import type { Context, Hono } from "hono";
-import { bumpMembershipEpoch, setRemovedAtEpoch, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { bumpMembershipEpoch, now, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { deleteWorkspaceStatements, isWorkspaceDeleted, runWorkspaceDeletions, scrubUserStatements } from "./purge.ts";
 import type { AppEnv } from "./types.ts";
 import { revokePortalLinks, workos } from "./workos.ts";
@@ -39,7 +39,10 @@ export function registerWebhooks(app: Hono<AppEnv>): void {
 // applied from the payload: they trigger a re-check of the current state,
 // and only the newest re-check may write (membership epochs, src/db.ts).
 // Revocations of sessions, keys and users are one-way and order-safe.
-async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: string; data?: object }): Promise<void> {
+async function applyEvent(
+  c: Context<AppEnv>,
+  { event, data = {}, createdAt }: { event: string; data?: object; createdAt?: string }
+): Promise<void> {
   const db = c.env.DB;
   const userId = field(data, "userId") ?? field(data, "user_id");
   const organizationId = field(data, "organizationId") ?? field(data, "organization_id");
@@ -59,17 +62,18 @@ async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: str
       const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
         userId,
         organizationId,
-        statuses: ["active"],
-        limit: 1
+        statuses: ["active", "inactive", "pending"],
+        limit: 10
       });
-      const membership = page.data.find((m) => m.organizationId === organizationId);
+      const current = page.data.filter((m) => m.organizationId === organizationId);
+      const membership = current.find((m) => m.status === "active");
       const active = Boolean(membership);
       await setRevokedAtEpoch(db, userId, organizationId, !active, epoch);
-      // Removed or deactivated (including a deleted pending membership): an
-      // old invite must not bring them back. Active again (the directory
-      // reactivated them): the block lifts.
-      if (active || event !== "organization_membership.created") {
-        await setRemovedAtEpoch(db, userId, organizationId, !active, epoch);
+      // Removed or deactivated (not merely pending): they may hold an invite
+      // code, so codes issued up to this event stop working.
+      if (!current.some((m) => m.status === "active" || m.status === "pending")) {
+        const at = createdAt ? Math.floor(Date.parse(createdAt) / 1000) : NaN;
+        await revokeInvitesUpTo(db, organizationId, Number.isFinite(at) ? at : now());
       }
       // No longer an active admin: end any Admin Portal session they opened.
       // A failure returns 500, so WorkOS retries; access already ended above.

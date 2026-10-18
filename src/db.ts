@@ -47,12 +47,6 @@ CREATE TABLE IF NOT EXISTS membership_epochs (
   epoch INTEGER NOT NULL,
   PRIMARY KEY (user_id, organization_id)
 );
-CREATE TABLE IF NOT EXISTS removed_members (
-  user_id TEXT NOT NULL,
-  organization_id TEXT NOT NULL,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-  PRIMARY KEY (user_id, organization_id)
-);
 CREATE TABLE IF NOT EXISTS revocations (
   subject TEXT NOT NULL,
   organization_id TEXT NOT NULL,
@@ -338,27 +332,14 @@ export async function setRevoked(
   }
 }
 
-// Someone removed from a workspace (by an admin, the directory, or WorkOS)
-// cannot rejoin through an invite code until an admin reinstates them.
-// Written and cleared under the same membership epoch as revocations.
-export async function setRemovedAtEpoch(
-  db: D1Database,
-  userId: string,
-  organizationId: string,
-  removed: boolean,
-  epoch: number
-): Promise<void> {
-  const sql = removed
-    ? `INSERT INTO removed_members (user_id, organization_id) SELECT ?, ? WHERE ${EPOCH_IS} ON CONFLICT DO NOTHING`
-    : `DELETE FROM removed_members WHERE user_id = ? AND organization_id = ? AND ${EPOCH_IS}`;
-  await db.prepare(sql).bind(userId, organizationId, userId, organizationId, epoch).run();
-}
-
-export async function isRemoved(db: D1Database, userId: string, organizationId: string): Promise<boolean> {
-  return Boolean(
-    await db
-      .prepare("SELECT 1 FROM removed_members WHERE user_id = ? AND organization_id = ?")
-      .bind(userId, organizationId)
-      .first()
-  );
+// Invite codes are bearer credentials, so removing anyone revokes every code
+// the workspace had issued up to that moment: whoever was removed may hold
+// one. One-way and keyed by time, so late or repeated webhooks are harmless
+// (they only revoke codes that were already due), and codes issued after the
+// removal keep working.
+export async function revokeInvitesUpTo(db: D1Database, organizationId: string, at: number): Promise<void> {
+  await db
+    .prepare("UPDATE invites SET revoked_at = unixepoch() WHERE organization_id = ? AND revoked_at IS NULL AND created_at <= ?")
+    .bind(organizationId, at)
+    .run();
 }

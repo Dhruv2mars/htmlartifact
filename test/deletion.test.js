@@ -551,7 +551,7 @@ describe("review round 8", () => {
       data: { object: "organization_membership", id: membership.id, user_id: membership.user_id, organization_id: membership.organization_id }
     }).then((r) => assert.equal(r.status, 200));
 
-  test("removed people can't rejoin with an old invite until an admin reinstates them (in that workspace only)", async () => {
+  test("removing someone revokes the invite codes issued up to then; codes issued later still work", async () => {
     const nora = await signInTokens(stack, "nora@new.test");
     const created = await callApi(stack, nora.accessToken, "POST", "/api/workspaces", { name: "Rejoin Labs" });
     assert.equal(created.status, 201, JSON.stringify(created.body));
@@ -563,30 +563,40 @@ describe("review round 8", () => {
     assert.equal((await callApi(stack, noraAdmin, "DELETE", `/api/workspaces/members/${samUser.id}`)).status, 200);
 
     const rejoin = await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code });
-    assert.equal(rejoin.status, 403);
-    assert.match(rejoin.body.error, /workspace reinstate/);
+    assert.equal(rejoin.status, 404, "the old code is revoked");
 
-    // Another workspace's admin can't lift it.
-    const alice = await accessToken(stack, "alice@acme.test", "Acme");
-    assert.equal((await callApi(stack, alice, "POST", "/api/workspaces/members/reinstate", { email: "sam@new.test" })).status, 200);
-    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 403);
-
-    assert.equal((await callApi(stack, noraAdmin, "POST", "/api/workspaces/members/reinstate", { email: "SAM@new.test" })).status, 200);
-    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 200);
+    // The WorkOS webhook for that removal arriving late (or again) only revokes codes issued up to the removal.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const fresh = await callApi(stack, noraAdmin, "POST", "/api/workspaces/invites", {});
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    const late = await sendWebhook(stack, {
+      id: "event_late_removal",
+      event: "organization_membership.deleted",
+      created_at: new Date(Date.now() - 1100).toISOString(),
+      data: { object: "organization_membership", id: "om_gone", user_id: samUser.id, organization_id: org.id }
+    });
+    assert.equal(late.status, 200);
+    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: fresh.body.code })).status, 200);
   });
 
-  test("a deleted pending membership (directory deprovisioning) also blocks invite rejoin", async () => {
+  test("a membership deleted in WorkOS (e.g. directory deprovisioning) revokes old codes; an update to a live one does not", async () => {
     const nora = await signInTokens(stack, "nora@new.test", "Rejoin Labs");
     const org = await findOrganization(stack.emulator, "Rejoin Labs");
-    const sam = await signInTokens(stack, "sam@new.test", "Rejoin Labs");
-    const samUser = await findUser(stack.emulator, "sam@new.test");
-    const [membership] = (
-      await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${samUser.id}&organization_id=${org.id}`)
-    ).data;
-    await workosApi(stack.emulator, "DELETE", `/user_management/organization_memberships/${membership.id}`);
-    await membershipEvent("event_pending_deleted", "organization_membership.deleted", membership);
+    const olivia = await findUser(stack.emulator, "olivia@other.test");
+    // The emulator creates memberships active; pending ones are treated the same (src/webhooks.ts).
+    const pending = await workosApi(stack.emulator, "POST", "/user_management/organization_memberships", {
+      user_id: olivia.id,
+      organization_id: org.id
+    });
+    const codeWorks = async (code) =>
+      (await rows("SELECT revoked_at FROM invites WHERE code = ?", code))[0]?.revoked_at === null;
     const invite = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", {});
-    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 403);
+    await membershipEvent("event_pending_updated", "organization_membership.updated", pending);
+    assert.ok(await codeWorks(invite.body.code), "a live (active or pending) membership revokes nothing");
+
+    await workosApi(stack.emulator, "DELETE", `/user_management/organization_memberships/${pending.id}`);
+    await membershipEvent("event_pending_deleted", "organization_membership.deleted", pending);
+    assert.ok(!(await codeWorks(invite.body.code)), "deprovisioned: old codes revoked");
   });
 
   test("a demoted admin loses Admin Portal sessions; a demotion not yet seen by the cache is caught when minting a link", async () => {

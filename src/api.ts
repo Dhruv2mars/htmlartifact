@@ -1,7 +1,7 @@
 import type { Context, Hono, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { sha256 } from "./crypto.ts";
-import { FLAGS, bumpMembershipEpoch, findWorkspace, isRemoved, saveWorkspace, setRemovedAtEpoch, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { FLAGS, bumpMembershipEpoch, findWorkspace, now, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 import { formatBytes, validateUpload, type Issue, type PageInput } from "./html-policy.ts";
 import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
@@ -256,26 +256,10 @@ export function registerApi(app: Hono<AppEnv>): void {
     // Portal sessions outlive AuthKit sessions: end them first (a failure
     // here changes nothing, so the admin can simply retry).
     await revokePortalLinks(c.get("config"), viewer.organization_id, userId);
+    await revokeInvitesUpTo(c.env.DB, viewer.organization_id, now());
     const epoch = await bumpMembershipEpoch(c.env.DB, userId, viewer.organization_id);
     await client.userManagement.deleteOrganizationMembership(membership.id);
     await setRevokedAtEpoch(c.env.DB, userId, viewer.organization_id, true, epoch);
-    await setRemovedAtEpoch(c.env.DB, userId, viewer.organization_id, true, epoch);
-    return c.json({ ok: true });
-  });
-
-  // Lets someone who was removed rejoin through an invite (admins only).
-  // Always answers ok, so it cannot be used to probe which emails have accounts.
-  app.post("/api/workspaces/members/reinstate", requireMember, requireAdmin, perUser("reinstate", 30), async (c) => {
-    const viewer = c.get("viewer");
-    const body = await readJson(c, 16 * 1024);
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    if (!email.includes("@")) return c.json({ ok: false, error: "email is required." }, 422);
-    const users = await workos(c.get("config")).client.userManagement.listUsers({ email, limit: 10 });
-    for (const user of users.data.filter((u) => u.email.toLowerCase() === email)) {
-      await c.env.DB.prepare("DELETE FROM removed_members WHERE user_id = ? AND organization_id = ?")
-        .bind(user.id, viewer.organization_id)
-        .run();
-    }
     return c.json({ ok: true });
   });
 
@@ -412,13 +396,6 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
     if (inactive) {
       await release();
       return { status: 403, body: { ok: false, error: "Your access to this workspace was removed. Ask your IT admin." } };
-    }
-    if (!alreadyMember && (await isRemoved(db, viewer.account_id, organizationId))) {
-      await release();
-      return {
-        status: 403,
-        body: { ok: false, error: "You were removed from this workspace. Ask an admin to run `htmlartifact workspace reinstate <your email>`, then join again." }
-      };
     }
     if (alreadyMember) {
       await release();

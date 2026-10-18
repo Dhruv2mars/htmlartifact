@@ -116,16 +116,6 @@ const remove = Command.make(
   })
 ).pipe(Command.withDescription("Remove someone from your current workspace (admins). Their access ends immediately."));
 
-const reinstate = Command.make(
-  "reinstate",
-  { email: Argument.String("email").pipe(Argument.withDescription("Person to let back in")) },
-  Effect.fn(function* ({ email }) {
-    const { apiUrl, apiKey } = yield* getAuth();
-    yield* api(apiUrl, "/api/workspaces/members/reinstate", { apiKey, method: "POST", body: { email } });
-    yield* Console.log(`${email} can rejoin with an invite code now (\`htmlartifact workspace invite\`).`);
-  })
-).pipe(Command.withDescription("Let someone who was removed rejoin through an invite (admins)."));
-
 const deleteWorkspace = Command.make(
   "delete",
   {
@@ -200,5 +190,5 @@ const domains = portal(
 
 export const workspace = Command.make("workspace").pipe(
   Command.withDescription("Create, join, and manage workspaces."),
-  Command.withSubcommands([create, invite, join, list, switchCommand, members, remove, reinstate, deleteWorkspace, sso, directory, domains])
+  Command.withSubcommands([create, invite, join, list, switchCommand, members, remove, deleteWorkspace, sso, directory, domains])
 );
