@@ -47,6 +47,28 @@ const invite = Command.make(
   })
 ).pipe(Command.withDescription("Create an invite code for your current workspace (admins)."));
 
+const invites = Command.make(
+  "invites",
+  {
+    revoke: stringFlag("revoke", "code", 'Revoke this code ("all" revokes every live code)'),
+    json: jsonFlag()
+  },
+  Effect.fn(function* (options) {
+    const { apiUrl, apiKey } = yield* getAuth();
+    const revoke = Option.getOrUndefined(options.revoke);
+    if (revoke) {
+      yield* api(apiUrl, `/api/workspaces/invites/${encodeURIComponent(revoke)}`, { apiKey, method: "DELETE" });
+      return yield* Console.log(revoke === "all" ? "Revoked every live invite code." : `Revoked ${revoke}.`);
+    }
+    const result = (yield* api(apiUrl, "/api/workspaces/invites", { apiKey })) as { invites: Json[] };
+    if (options.json) return yield* printJson(result.invites);
+    if (!result.invites.length) return yield* Console.log("No live invite codes.");
+    for (const i of result.invites) {
+      yield* Console.log(`${i.code}  used ${i.uses}/${i.maxUses}, expires ${String(i.expiresAt).slice(0, 10)}`);
+    }
+  })
+).pipe(Command.withDescription("List live invite codes, or revoke one with --revoke <code> (admins)."));
+
 const join = Command.make(
   "join",
   {
@@ -190,5 +212,5 @@ const domains = portal(
 
 export const workspace = Command.make("workspace").pipe(
   Command.withDescription("Create, join, and manage workspaces."),
-  Command.withSubcommands([create, invite, join, list, switchCommand, members, remove, deleteWorkspace, sso, directory, domains])
+  Command.withSubcommands([create, invite, invites, join, list, switchCommand, members, remove, deleteWorkspace, sso, directory, domains])
 );

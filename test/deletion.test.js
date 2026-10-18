@@ -620,3 +620,83 @@ describe("review round 8", () => {
     assert.equal((await callApi(stack, nora, "POST", "/api/workspaces/portal", { intent: "sso" })).status, 403);
   });
 });
+
+describe("review round 10", () => {
+  before(async () => {
+    // Round 8 demoted Nora; make her Rejoin Labs' admin again.
+    const nora = await findUser(stack.emulator, "nora@new.test");
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    const [membership] = (
+      await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${nora.id}&organization_id=${org.id}`)
+    ).data;
+    await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${membership.id}`, { role_slug: "admin" });
+    await proxy.env.DB.prepare("DELETE FROM memberships WHERE user_id = ?").bind(nora.id).run();
+  });
+  const liveCodes = async (token) => (await callApi(stack, token, "GET", "/api/workspaces/invites")).body.invites.map((i) => i.code);
+
+  test("a membership deleted outside our app revokes old codes even if the person already rejoined", async () => {
+    const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    const old = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+    // WorkOS delivers the deletion late; meanwhile the membership looks live again.
+    const late = await sendWebhook(stack, {
+      id: "event_deleted_outside",
+      event: "organization_membership.deleted",
+      created_at: new Date(Date.now() + 1000).toISOString(),
+      data: { object: "organization_membership", id: "om_outside", user_id: "user_someone_removed", organization_id: org.id }
+    });
+    assert.equal(late.status, 200);
+    assert.ok(!(await liveCodes(nora)).includes(old), "revoked without consulting live state");
+  });
+
+  test("re-syncs of a deactivated membership never revoke codes issued after it", async () => {
+    const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    const sam = await findUser(stack.emulator, "sam@new.test");
+    const [membership] = (
+      await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${sam.id}&organization_id=${org.id}`)
+    ).data;
+    await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${membership.id}/deactivate`);
+    const fresh = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+    for (const id of ["event_resync_1", "event_resync_2"]) {
+      const r = await sendWebhook(stack, {
+        id,
+        event: "organization_membership.updated",
+        data: { object: "organization_membership", id: membership.id, user_id: sam.id, organization_id: org.id, status: "inactive" }
+      });
+      assert.equal(r.status, 200);
+    }
+    assert.ok((await liveCodes(nora)).includes(fresh));
+    const samToken = (await signInTokens(stack, "sam@new.test")).accessToken;
+    assert.equal((await callApi(stack, samToken, "POST", "/api/workspaces/join", { code: fresh })).status, 403, "inactive: refused");
+  });
+
+  test("admins list and revoke invite codes; members cannot", async () => {
+    const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
+    const a = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+    const b = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+    assert.ok((await liveCodes(nora)).includes(a));
+    assert.equal((await callApi(stack, nora, "DELETE", `/api/workspaces/invites/${a}`)).status, 200);
+    assert.equal((await callApi(stack, nora, "DELETE", `/api/workspaces/invites/${a}`)).status, 404, "already revoked");
+    const codes = await liveCodes(nora);
+    assert.ok(!codes.includes(a) && codes.includes(b));
+    const bob = await accessToken(stack, "alice@acme.test", "Acme");
+    assert.equal((await callApi(stack, bob, "DELETE", `/api/workspaces/invites/${b}`)).status, 404, "another workspace's admin");
+    assert.equal((await callApi(stack, nora, "DELETE", "/api/workspaces/invites/all")).status, 200);
+    assert.deepEqual(await liveCodes(nora), []);
+  });
+
+  test("a user deleted in WorkOS revokes the codes of the workspaces they were in", async () => {
+    const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
+    const code = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+    const sam = await findUser(stack.emulator, "sam@new.test");
+    const r = await sendWebhook(stack, {
+      id: "event_sam_deleted",
+      event: "user.deleted",
+      created_at: new Date(Date.now() + 1000).toISOString(),
+      data: { object: "user", id: sam.id, email: "sam@new.test" }
+    });
+    assert.equal(r.status, 200);
+    assert.ok(!(await liveCodes(nora)).includes(code));
+  });
+});

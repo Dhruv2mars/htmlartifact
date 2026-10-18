@@ -208,6 +208,41 @@ export function registerApi(app: Hono<AppEnv>): void {
     );
   });
 
+  // The workspace's live invite codes (admins only).
+  app.get("/api/workspaces/invites", requireMember, requireAdmin, async (c) => {
+    const viewer = c.get("viewer");
+    const { results } = await c.env.DB.prepare(
+      `SELECT code, created_at, expires_at, max_uses, uses FROM invites
+       WHERE organization_id = ? AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses
+       ORDER BY created_at DESC LIMIT 100`
+    )
+      .bind(viewer.organization_id)
+      .all<{ code: string; created_at: number; expires_at: number; max_uses: number; uses: number }>();
+    const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+    return c.json({
+      ok: true,
+      invites: results.map((i) => ({ code: i.code, createdAt: iso(i.created_at), expiresAt: iso(i.expires_at), uses: i.uses, maxUses: i.max_uses }))
+    });
+  });
+
+  // Revokes one invite code (admins only); "all" revokes every live code.
+  app.delete("/api/workspaces/invites/:code", requireMember, requireAdmin, async (c) => {
+    const viewer = c.get("viewer");
+    const param = c.req.param("code") || "";
+    if (param === "all") {
+      await revokeInvitesUpTo(c.env.DB, viewer.organization_id, now());
+      return c.json({ ok: true });
+    }
+    const code = normalizeInviteCode(param);
+    const result = code
+      ? await c.env.DB.prepare("UPDATE invites SET revoked_at = unixepoch() WHERE code = ? AND organization_id = ? AND revoked_at IS NULL")
+          .bind(code, viewer.organization_id)
+          .run()
+      : null;
+    if (!result?.meta.changes) return c.json({ ok: false, error: "No such live invite code in this workspace." }, 404);
+    return c.json({ ok: true });
+  });
+
   app.post("/api/workspaces/join", requireUser, perUser("join", 20, "auth"), async (c) => {
     const viewer = c.get("viewer");
     if (viewer.is_api_key) return c.json({ ok: false, error: "API keys cannot join workspaces." }, 403);
@@ -260,6 +295,8 @@ export function registerApi(app: Hono<AppEnv>): void {
     const epoch = await bumpMembershipEpoch(c.env.DB, userId, viewer.organization_id);
     await client.userManagement.deleteOrganizationMembership(membership.id);
     await setRevokedAtEpoch(c.env.DB, userId, viewer.organization_id, true, epoch);
+    // Again, for a code an in-flight request of theirs created meanwhile.
+    await revokeInvitesUpTo(c.env.DB, viewer.organization_id, now());
     return c.json({ ok: true });
   });
 
@@ -401,11 +438,19 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
       await release();
     } else {
       const epoch = await bumpMembershipEpoch(db, viewer.account_id, organizationId);
-      await workos(c.get("config")).client.userManagement.createOrganizationMembership({
+      const created = await workos(c.get("config")).client.userManagement.createOrganizationMembership({
         organizationId,
         userId: viewer.account_id,
         roleSlug: "member"
       });
+      // A removal revokes codes before it deletes the membership, so a code
+      // revoked while this join ran means someone was removed meanwhile (maybe
+      // this person): undo the join rather than race it.
+      const revoked = await db.prepare("SELECT revoked_at FROM invites WHERE code = ?").bind(code).first<{ revoked_at: number | null }>();
+      if (revoked?.revoked_at) {
+        await workos(c.get("config")).client.userManagement.deleteOrganizationMembership(created.id);
+        return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
+      }
       await setRevokedAtEpoch(db, viewer.account_id, organizationId, false, epoch);
     }
   } catch (error) {

@@ -55,26 +55,28 @@ async function applyEvent(
       // Deleting a workspace deletes its WorkOS organization, which fires
       // these for every member. Nothing is left to update: ignore them.
       if (await isWorkspaceDeleted(db, organizationId)) return;
+      // A deleted membership: they may hold an invite code, so the codes
+      // issued up to this event stop working. Unconditional and first (no
+      // lookup can fail before it; one-way and time-keyed, so late or repeated
+      // events only revoke codes already due). Deactivated memberships need
+      // no revocation: joinWithCode refuses them.
+      if (event === "organization_membership.deleted") {
+        await revokeInvitesUpTo(db, organizationId, eventTime(createdAt));
+      }
       // Fail safe: bump the epoch and drop the cache first, so if WorkOS
       // cannot be reached below, the next request re-checks live; and a slower
       // handler that started earlier can no longer write its stale answer.
       const epoch = await bumpMembershipEpoch(db, userId, organizationId);
-      const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
-        userId,
-        organizationId,
-        statuses: ["active", "inactive", "pending"],
-        limit: 10
-      });
-      const current = page.data.filter((m) => m.organizationId === organizationId);
-      const membership = current.find((m) => m.status === "active");
+      // A deleted user's memberships can 404: that is "no membership".
+      const page = await workos(c.get("config"))
+        .client.userManagement.listOrganizationMemberships({ userId, organizationId, statuses: ["active"], limit: 1 })
+        .catch((error: unknown) => {
+          if (Reflect.get(Object(error), "status") === 404) return { data: [] };
+          throw error;
+        });
+      const membership = page.data.find((m) => m.organizationId === organizationId);
       const active = Boolean(membership);
       await setRevokedAtEpoch(db, userId, organizationId, !active, epoch);
-      // Removed or deactivated (not merely pending): they may hold an invite
-      // code, so codes issued up to this event stop working.
-      if (!current.some((m) => m.status === "active" || m.status === "pending")) {
-        const at = createdAt ? Math.floor(Date.parse(createdAt) / 1000) : NaN;
-        await revokeInvitesUpTo(db, organizationId, Number.isFinite(at) ? at : now());
-      }
       // No longer an active admin: end any Admin Portal session they opened.
       // A failure returns 500, so WorkOS retries; access already ended above.
       if (membership?.role?.slug !== "admin") await revokePortalLinks(c.get("config"), organizationId, userId);
@@ -96,6 +98,15 @@ async function applyEvent(
       const id = field(data, "id");
       if (!id) throw new Error(`${event} has no id.`);
       await setRevoked(db, id, "*", true);
+      // They may hold invite codes to any workspace they were in.
+      const { results } = await db
+        .prepare(
+          `SELECT organization_id FROM memberships WHERE user_id = ?1
+           UNION SELECT organization_id FROM membership_epochs WHERE user_id = ?1`
+        )
+        .bind(id)
+        .all<{ organization_id: string }>();
+      for (const { organization_id } of results) await revokeInvitesUpTo(db, organization_id, eventTime(createdAt));
       await db.batch(scrubUserStatements(db, id));
       return;
     }
@@ -115,4 +126,10 @@ async function applyEvent(
 function field(data: object, key: string): string | undefined {
   const value: unknown = Reflect.get(data, key);
   return typeof value === "string" ? value : undefined;
+}
+
+// An event's time in unix seconds (now, if the payload has none).
+function eventTime(createdAt: string | undefined): number {
+  const at = createdAt ? Math.floor(Date.parse(createdAt) / 1000) : NaN;
+  return Number.isFinite(at) ? at : now();
 }

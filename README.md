@@ -32,9 +32,10 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `login` / `logout` / `whoami` | Sign in or create an account; show who you are and your current workspace |
 | `workspace create <name>` | New workspace; you are its admin |
 | `workspace invite` | Invite code + join link (admins). `--max-uses`, `--days` |
+| `workspace invites [--revoke <code\|all>]` | List live invite codes, or revoke one or all (admins) |
 | `workspace join <code>` | Join with a code |
 | `workspace list` / `switch <name>` | Your workspaces; change the current one |
-| `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately |
+| `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately, and every invite code issued until then is revoked (they may hold one): share a fresh code with the team |
 | `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace |
 | `read <url>` | Download an artifact with your sign-in (how agents read links) |
 | `list [--all]` | Your artifacts, or the whole workspace's |
@@ -83,7 +84,7 @@ bun run dev:local   # WorkOS emulator + Worker at http://localhost:8787, fully o
 bun run build       # CLI (TypeScript + Effect, cli/) → dist/htmlartifact.js
 HTMLARTIFACT_API_URL=http://localhost:8787 node dist/htmlartifact.js login
 bun run typecheck:cli
-bun run test        # builds the CLI, then 38 tests: real Worker (workerd) + official WorkOS emulator
+bun run test        # builds the CLI, then 114 tests: real Worker (workerd) + official WorkOS emulator
 ```
 
 `dev:local` seeds `alice@`, `bob@` and `carol@example.com`. Sign in with any of
@@ -99,7 +100,8 @@ as Alice.
      - `organization_membership.*`
      - `user.deleted`
      - `session.revoked`
-     - `api_key.revoked`
+     - `api_key.revoked`, `api_key.deleted`
+     (`bun scripts/workos-setup.ts` does all of this through the WorkOS API.)
 2. Cloudflare:
    - Run `wrangler d1 create htmlartifact` and put the ID in `wrangler.toml`.
    - Run `wrangler r2 bucket create htmlartifact-artifacts`.

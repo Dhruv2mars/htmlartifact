@@ -397,6 +397,39 @@ const ROUTES = {
       }
     }
   },
+  "GET /api/workspaces/invites": {
+    kind: "list",
+    why: "lists the caller's workspace's live codes only",
+    async run(key) {
+      for (const actor of apiActors()) {
+        const res = await call(actor, "GET", "/api/workspaces/invites");
+        const label = `${key} as ${actor.name}`;
+        if (actor.token === B.nora) {
+          assert.equal(res.status, 200, res.text);
+          assertClean(label, res.text);
+        } else {
+          assertDenied(label, res);
+        }
+      }
+    }
+  },
+  "DELETE /api/workspaces/invites/:code": {
+    kind: "resource",
+    why: "takes an invite code; A's live code is not the caller's to revoke, and 'all' means the caller's workspace",
+    async run(key) {
+      for (const actor of apiActors()) {
+        for (const target of [A.liveCode, "all"]) {
+          const res = await call(actor, "DELETE", `/api/workspaces/invites/${target}`);
+          const label = `${key} ${target} as ${actor.name}`;
+          if (actor.token === B.nora && target === "all") assert.equal(res.status, 200, res.text);
+          else assertDenied(label, res);
+          assertClean(label, res.text);
+        }
+      }
+      const live = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/invites");
+      assert.ok(live.body.invites.some((i) => i.code === A.liveCode), "A's live code survives");
+    }
+  },
   "POST /api/workspaces/join": {
     kind: "resource",
     why: "takes an invite code; A's used-up code must not admit anyone",
@@ -842,6 +875,8 @@ before(async () => {
   const sam = await signInTokens(stack, "sam@new.test");
   assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: A.usedCode })).status, 200);
   A.onlyMemberIds = [A.alice.id, A.bob.id, A.sam.id];
+  // A live invite of A's: only A's admins may see or revoke it.
+  A.liveCode = (await callApi(stack, A.aliceToken, "POST", "/api/workspaces/invites", {})).body.code;
 
   A.bobBrowser = new Browser(stack);
   await A.bobBrowser.signIn("bob@acme.test", { workspace: "Acme" });
@@ -888,7 +923,8 @@ before(async () => {
     "alice@acme.test",
     "bob@acme.test",
     "sam@new.test",
-    A.usedCode
+    A.usedCode,
+    A.liveCode
   ];
   for (const s of SECRETS) assert.ok(typeof s === "string" && s.length >= 4, `secret ${s}`);
 
