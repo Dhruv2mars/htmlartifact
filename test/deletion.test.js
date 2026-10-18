@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { getPlatformProxy, unstable_dev } from "wrangler";
@@ -34,8 +35,19 @@ before(async () => {
     configPath: new URL("../wrangler.toml", import.meta.url).pathname,
     persist: { path: path.join(state, "v3") }
   });
+  // The deploy config names the production D1 database; local state is keyed
+  // by database id, so point the ops Worker at the app's (root config) id.
+  const appDatabaseId = fs.readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8").match(/database_id = "([^"]+)"/)[1];
+  const opsConfig = path.join(stack.tmp, "ops.wrangler.toml");
+  fs.writeFileSync(
+    opsConfig,
+    fs
+      .readFileSync(new URL("../deploy/ops/wrangler.toml", import.meta.url), "utf8")
+      .replace(/^main = .*$/m, `main = ${JSON.stringify(new URL("../src/ops.ts", import.meta.url).pathname)}`)
+      .replace(/database_id = "[^"]+"/g, `database_id = "${appDatabaseId}"`)
+  );
   ops = await unstable_dev(new URL("../src/ops.ts", import.meta.url).pathname, {
-    config: new URL("../deploy/ops/wrangler.toml", import.meta.url).pathname,
+    config: opsConfig,
     ip: "127.0.0.1",
     persistTo: state,
     logLevel: "warn",
