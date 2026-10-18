@@ -119,8 +119,21 @@ export async function findUser(emulator, email) {
   return data[0];
 }
 
+// Delivers a correctly signed WorkOS webhook, as WorkOS would.
+export async function sendWebhook(stack, payload) {
+  const { createHmac } = await import("node:crypto");
+  const body = JSON.stringify(payload);
+  const t = Date.now();
+  const v1 = createHmac("sha256", WEBHOOK_SECRET).update(`${t}.${body}`).digest("hex");
+  return fetch(`${stack.baseUrl}/webhooks/workos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "WorkOS-Signature": `t=${t}, v1=${v1}` },
+    body
+  });
+}
+
 // A CLI-style access token for any seeded user, scoped to one organization.
-export async function accessToken(stack, email, organizationName) {
+export async function accessToken(stack, email, organizationName, { clientId } = {}) {
   const response = await fetch(`${stack.emulator.url}/user_management/authenticate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -128,7 +141,7 @@ export async function accessToken(stack, email, organizationName) {
       grant_type: "password",
       email,
       password: PASSWORD,
-      client_id: process.env.WORKOS_CLIENT_ID,
+      client_id: clientId || process.env.WORKOS_CLIENT_ID,
       client_secret: process.env.WORKOS_API_KEY
     })
   });
@@ -168,7 +181,11 @@ export class Browser {
     return this.request(url, {
       ...options,
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: this.stack.baseUrl,
+        ...options.headers
+      },
       body: new URLSearchParams(form).toString()
     });
   }

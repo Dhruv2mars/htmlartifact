@@ -38,8 +38,8 @@ with the `htmlartifact-read` skill.
   full snapshot, not a patch.
 - **Moved or renamed the file?** Run `htmlartifact upload <new-path> --draft <id>`
   once; later bare uploads from the new path update the same artifact.
-- **Stable URL across machines:** `--slug <name>` publishes at `/d/<name>`,
-  and the same slug always updates that artifact.
+- **Stable URL across machines:** `--slug <name>` publishes at `/t/<team-id>/<name>`,
+  and the same slug always updates that artifact. Slugs are per team.
 - Use `--new` only when the user explicitly wants a separate artifact.
 
 ## Finding things

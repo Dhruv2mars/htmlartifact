@@ -281,9 +281,10 @@ async function handleUpload(req, res, next) {
       // A slug is the draft's portable identity: the same slug updates the
       // same draft from any machine. A draftId sent with it must name that
       // same draft; with a free slug, draftId names the draft to rename.
-      const slugDraft = slug ? await findDraftBySlug(client, slug) : null;
+      // Slugs are unique per team, so only this team's drafts are visible here.
+      const slugDraft = slug ? await findDraftBySlug(client, slug, req.auth.organization_id) : null;
       if (slugDraft && slugDraft.account_id !== req.auth.account_id) {
-        throw httpError(409, `The custom URL "${slug}" belongs to someone else.`);
+        throw httpError(409, `The custom URL "${slug}" belongs to a teammate's artifact.`);
       }
       if (slugDraft && draftId && slugDraft.id !== draftId) {
         throw httpError(
@@ -292,11 +293,6 @@ async function handleUpload(req, res, next) {
         );
       }
 
-      // A member who switched organizations cannot push new versions into a
-      // draft that lives in the other one: same-account is not enough.
-      if (slugDraft && slugDraft.organization_id !== req.auth.organization_id) {
-        throw httpError(409, `The custom URL "${slug}" belongs to another organization.`);
-      }
       const existingDraft =
         slugDraft ||
         (draftId
@@ -393,7 +389,9 @@ async function handleUpload(req, res, next) {
     });
 
     const urlOptions = {
-      draftId: result.slug || result.draftId,
+      draftId: result.draftId,
+      slug: result.slug,
+      organizationId: req.auth.organization_id,
       publicBaseUrl: config.publicBaseUrl,
       requestBaseUrl: getRequestBaseUrl(req)
     };
@@ -423,7 +421,7 @@ async function handleUpload(req, res, next) {
       // Built from the draft ID, which never moves: a slug can be renamed
       // and later claimed by another draft. Multi-page URLs end in "/" so
       // relative links between pages resolve.
-      versionUrl: `${getDraftPublicUrl({ ...urlOptions, draftId: result.draftId })}/v/${
+      versionUrl: `${getDraftPublicUrl({ ...urlOptions, slug: null })}/v/${
         result.versionNumber
       }${multiPage ? "/" : ""}`,
       pages: multiPage
@@ -433,7 +431,7 @@ async function handleUpload(req, res, next) {
     });
   } catch (error) {
     // Two uploads racing to claim the same new custom URL.
-    if (error.code === "23505" && error.constraint === "drafts_slug_idx") {
+    if (error.code === "23505" && error.constraint === "drafts_org_slug_idx") {
       return res.status(409).json({ ok: false, error: "That custom URL was just taken. Pick another." });
     }
     next(error);
@@ -678,13 +676,13 @@ async function slugStatus(slug, req) {
   if (problem) return { slug, status: "unavailable", message: problem.message };
 
   const result = await pool.query(
-    "SELECT account_id FROM drafts WHERE slug = $1 AND deleted_at IS NULL LIMIT 1",
-    [slug]
+    "SELECT account_id FROM drafts WHERE organization_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1",
+    [req.auth.organization_id, slug]
   );
   const owner = result.rows[0];
   if (!owner) return { slug, status: "available" };
   if (owner.account_id === req.auth.account_id) return { slug, status: "yours" };
-  return { slug, status: "taken", message: `The custom URL "${slug}" is already taken.` };
+  return { slug, status: "taken", message: `The custom URL "${slug}" is used by a teammate's artifact.` };
 }
 
 // Splits a draft request into the draft reference and the path segments
@@ -705,9 +703,16 @@ function draftTarget(req) {
     segments.push(segment);
   }
   const hostRef = getDraftRefFromRequest(req);
-  if (hostRef) return { ref: hostRef, segments };
+  if (hostRef) return { ref: { id: hostRef }, segments };
+  // /t/<organization id>/<slug>/...: a team-scoped custom URL.
+  if (segments[0] === "t" && segments[1] && segments[2]) {
+    return {
+      ref: { organizationId: segments[1], slug: segments[2].toLowerCase() },
+      segments: segments.slice(3)
+    };
+  }
   if (segments[0] !== "d" || !segments[1]) return null;
-  return { ref: segments[1].toLowerCase(), segments: segments.slice(2) };
+  return { ref: { id: segments[1].toLowerCase() }, segments: segments.slice(2) };
 }
 
 // Serve the exact uploaded HTML, byte for byte, to EVERY client — browsers,
@@ -840,19 +845,19 @@ function draftContentSecurityPolicy({ allowInlineScripts = false } = {}) {
   return directives.join("; ");
 }
 
-// `ref` is a draft ID or a custom URL slug; the formats never overlap.
+// `ref` is { id } or { organizationId, slug }.
 async function findDraftVersion(ref, versionNumber) {
-  const draftResult = await pool.query(
-    `
-      SELECT *
-      FROM drafts
-      WHERE (id = $1 OR slug = $1)
-        AND deleted_at IS NULL
-        AND disabled_at IS NULL
-      LIMIT 1
-    `,
-    [ref]
-  );
+  const draftResult = ref.id
+    ? await pool.query(
+        "SELECT * FROM drafts WHERE id = $1 AND deleted_at IS NULL AND disabled_at IS NULL LIMIT 1",
+        [ref.id]
+      )
+    : await pool.query(
+        `SELECT * FROM drafts
+         WHERE organization_id = $1 AND slug = $2 AND deleted_at IS NULL AND disabled_at IS NULL
+         LIMIT 1`,
+        [ref.organizationId, ref.slug]
+      );
 
   const draft = draftResult.rows[0] || null;
   if (!draft) return { draft: null, version: null };
@@ -893,17 +898,18 @@ async function findOwnedDraft(client, draftId, accountId, organizationId) {
   return result.rows[0] || null;
 }
 
-async function findDraftBySlug(client, slug) {
+async function findDraftBySlug(client, slug, organizationId) {
   const result = await client.query(
     `
       SELECT *
       FROM drafts
-      WHERE slug = $1
+      WHERE organization_id = $1
+        AND slug = $2
         AND deleted_at IS NULL
       LIMIT 1
       FOR UPDATE
     `,
-    [slug]
+    [organizationId, slug]
   );
   return result.rows[0] || null;
 }

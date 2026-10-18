@@ -32,17 +32,28 @@ export function registerWebhookRoutes(app) {
   });
 }
 
+// WorkOS does not guarantee delivery order, so membership events are never
+// applied from the payload: they trigger a re-check of the current state in
+// WorkOS. Revocations of sessions, keys and users are one-way and safe in
+// any order.
 export async function applyEvent({ event, data = {} }) {
   const userId = data.userId ?? data.user_id;
   const organizationId = data.organizationId ?? data.organization_id;
 
   switch (event) {
     case "organization_membership.created":
-      return setRevoked(userId, organizationId, false);
     case "organization_membership.updated":
-      return setRevoked(userId, organizationId, data.status !== "active");
-    case "organization_membership.deleted":
-      return setRevoked(userId, organizationId, true);
+    case "organization_membership.deleted": {
+      if (!userId || !organizationId) return undefined;
+      const page = await workos().userManagement.listOrganizationMemberships({
+        userId,
+        organizationId,
+        statuses: ["active"],
+        limit: 1
+      });
+      const active = page.data.some((m) => m.organizationId === organizationId);
+      return setRevoked(userId, organizationId, !active);
+    }
     case "user.deleted":
       return setRevoked(data.id, "*", true);
     case "session.revoked":

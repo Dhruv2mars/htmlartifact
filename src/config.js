@@ -21,6 +21,8 @@ export const config = {
     clientId: env.WORKOS_CLIENT_ID,
     // Override only for the WorkOS emulator or a proxy.
     apiUrl: trimSlash(env.WORKOS_API_URL || "https://api.workos.com"),
+    // Optional: pin the access-token issuer (e.g. your custom auth domain).
+    issuer: env.WORKOS_ISSUER || null,
     // Signing secret of the WorkOS webhook endpoint that points at
     // /webhooks/workos. Optional, but without it removed members keep access
     // until their access token expires (minutes).

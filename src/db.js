@@ -129,7 +129,7 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS upload_events_draft_id_idx ON upload_events(draft_id);
     CREATE INDEX IF NOT EXISTS drafts_account_org_idx ON drafts(account_id, organization_id);
     CREATE INDEX IF NOT EXISTS drafts_org_updated_idx ON drafts(organization_id, updated_at DESC);
-    CREATE UNIQUE INDEX IF NOT EXISTS drafts_slug_idx ON drafts(slug);
+    CREATE UNIQUE INDEX IF NOT EXISTS drafts_org_slug_idx ON drafts(organization_id, slug);
   `);
 }
 
@@ -223,7 +223,8 @@ export async function setRevoked(subject, organizationId, revoked) {
       [subject, organizationId]
     );
   } else {
-    await pool.query(`DELETE FROM revocations WHERE subject = $1 AND organization_id IN ($2, '*')`, [
+    // Only the per-organization row: user-wide ('*') revocations are one-way.
+    await pool.query(`DELETE FROM revocations WHERE subject = $1 AND organization_id = $2`, [
       subject,
       organizationId
     ]);

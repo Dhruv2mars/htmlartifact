@@ -33,8 +33,8 @@ const ADMIN_PORTAL_INTENTS = new Set(["sso", "dsync", "domain_verification", "au
 // through to the 404 handler so an artifact origin never serves app UI.
 export function registerWebRoutes(app) {
   const web = [onlyApex];
-  // POSTed HTML forms: parse the body, then require a signed-in member.
-  const form = (extra) => [onlyApex, formBody, signedIn, ...extra];
+  // POSTed HTML forms: same-origin only, then parse, then a signed-in member.
+  const form = (extra) => [onlyApex, sameOrigin, formBody, signedIn, ...extra];
   const teamWriteLimit = createRateLimiter({
     windowMs: 3_600_000,
     max: Number(process.env.TEAM_WRITE_RATE_LIMIT_MAX || 30),
@@ -111,7 +111,7 @@ export function registerWebRoutes(app) {
     }
   });
 
-  app.post("/auth/sign-out", onlyApex, async (req, res) => {
+  app.post("/auth/sign-out", onlyApex, sameOrigin, async (req, res) => {
     res.append("Set-Cookie", clearSessionCookie());
     const sealed = readSealedSession(req);
     let target = "/workspace";
@@ -310,6 +310,23 @@ async function signedIn(req, res, next) {
     next();
   } catch (error) {
     next(error);
+  }
+}
+
+// CSRF defence for every state-changing browser route. SameSite=Lax stops
+// cross-site POSTs, but not ones from a sibling subdomain of the same site,
+// so require the browser-set Origin (or Referer) to be exactly this app.
+function sameOrigin(req, res, next) {
+  const source = req.get("origin") || refererOrigin(req.get("referer"));
+  if (source && source === new URL(webOrigin()).origin) return next();
+  res.status(403).type("text").send("Cross-origin form submission refused.\n");
+}
+
+function refererOrigin(value) {
+  try {
+    return value ? new URL(value).origin : null;
+  } catch {
+    return null;
   }
 }
 

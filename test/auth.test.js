@@ -8,6 +8,7 @@ import {
   findOrganization,
   findUser,
   page,
+  sendWebhook,
   startStack,
   workosApi
 } from "./helpers.js";
@@ -55,9 +56,9 @@ describe("publishing", () => {
     assert.equal((await upload("not-a-key", { html: page("x") })).status, 401);
   });
 
-  test("the receipt names the team", () => {
+  test("the receipt names the team, and slug URLs are team-scoped", () => {
     assert.equal(acmeArtifact.organization.name, "Acme");
-    assert.match(acmeArtifact.publicUrl, /\/d\/acme-plan$/);
+    assert.match(acmeArtifact.publicUrl, /\/t\/org_[^/]+\/acme-plan$/);
   });
 
   test("a CI organization API key publishes into its own team", async () => {
@@ -67,10 +68,26 @@ describe("publishing", () => {
     assert.equal(result.body.account.name, "Acme CI (API key)");
   });
 
-  test("another team cannot take over a slug", async () => {
+  test("custom URLs are per team: another team's slug is invisible and untouched", async () => {
     const olivia = await accessToken(stack, "olivia@other.test");
-    const result = await upload(olivia, { html: page("hijack"), slug: "acme-plan" });
-    assert.equal(result.status, 409);
+    const check = await fetch(`${stack.baseUrl}/api/check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${olivia}` },
+      body: JSON.stringify({ slug: "acme-plan" })
+    });
+    assert.equal((await check.json()).slug.status, "available", "no cross-team slug oracle");
+
+    const result = await upload(olivia, { html: page("Other plan"), slug: "acme-plan" });
+    assert.equal(result.status, 201);
+    assert.notEqual(result.body.publicUrl, acmeArtifact.publicUrl);
+    assert.match((await read(acmeArtifact.publicUrl, await accessToken(stack, "bob@acme.test"))).text, /Acme plan/);
+    assert.equal((await read(result.body.publicUrl, olivia)).status, 200);
+  });
+
+  test("a token issued to another WorkOS application is refused", async () => {
+    const foreign = await accessToken(stack, "alice@acme.test", null, { clientId: "client_unrelated_app" });
+    assert.equal((await upload(foreign, { html: page("x") })).status, 401);
+    assert.equal((await read(acmeArtifact.publicUrl, foreign)).status, 401);
   });
 
   test("a required publish permission blocks members without it", async () => {
@@ -187,6 +204,21 @@ describe("revocation", () => {
     assert.equal(revoked.rowCount, 1, "revoked by the signed WorkOS webhook");
   });
 
+  test("a stale, out-of-order removal event cannot lock out an active member", async () => {
+    const other = await findOrganization(stack.emulator, "Other");
+    const olivia = await findUser(stack.emulator, "olivia@other.test");
+    const response = await sendWebhook(stack, {
+      id: "event_stale",
+      event: "organization_membership.deleted",
+      created_at: new Date(0).toISOString(),
+      data: { object: "organization_membership", user_id: olivia.id, organization_id: other.id, status: "inactive" }
+    });
+    assert.equal(response.status, 200);
+    const token = await accessToken(stack, "olivia@other.test");
+    const me = await fetch(`${stack.baseUrl}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(me.status, 200);
+  });
+
   test("unsigned or forged webhooks are rejected", async () => {
     const forged = await fetch(`${stack.baseUrl}/webhooks/workos`, {
       method: "POST",
@@ -236,6 +268,25 @@ describe("web app", () => {
     await member.signIn("alice@acme.test");
     const denied = await member.post("/team/api-keys", { name: "nope" });
     assert.equal(denied.status, 403);
+  });
+
+  test("form posts from another origin are refused (CSRF)", async () => {
+    const browser = new Browser(stack);
+    await browser.signIn("nora@none.test");
+    for (const origin of ["https://evil.example", "http://sibling.127.0.0.1"]) {
+      const response = await browser.post(
+        "/team/invitations",
+        { email: "attacker@evil.example", role: "admin" },
+        { headers: { Origin: origin } }
+      );
+      assert.equal(response.status, 403, origin);
+    }
+    const noOrigin = await browser.request("/team/invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "email=attacker%40evil.example"
+    });
+    assert.equal(noOrigin.status, 403);
   });
 
   test("signed-out dashboard pages ask for sign-in", async () => {

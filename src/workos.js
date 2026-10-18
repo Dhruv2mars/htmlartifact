@@ -21,11 +21,21 @@ export function workos() {
 
 // Verifies a WorkOS access token (the CLI's bearer token) against this
 // client's JWKS and returns its claims: sub, sid, org_id, role, permissions.
+// The token must have been issued to THIS application: WorkOS environments
+// can hold several applications sharing users and signing keys.
 export async function verifyAccessToken(token) {
   jwks ||= createRemoteJWKSet(new URL(`${config.workos.apiUrl}/sso/jwks/${config.workos.clientId}`));
-  const { payload } = await jwtVerify(token, jwks);
-  if (typeof payload.sub !== "string" || !payload.sub) {
-    throw new Error("Access token has no sub.");
+  const { payload } = await jwtVerify(token, jwks, {
+    algorithms: ["RS256"],
+    ...(config.workos.issuer ? { issuer: config.workos.issuer } : {})
+  });
+  const audiences = [payload.aud].flat().filter(Boolean);
+  const forUs =
+    payload.client_id === config.workos.clientId ||
+    (payload.client_id === undefined && audiences.includes(config.workos.clientId));
+  if (!forUs) throw new Error("Access token was issued to another application.");
+  if (typeof payload.sub !== "string" || !payload.sub || typeof payload.sid !== "string") {
+    throw new Error("Access token has no sub or sid.");
   }
   return payload;
 }

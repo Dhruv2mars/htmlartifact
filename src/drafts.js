@@ -23,6 +23,7 @@ async function listDrafts(where, params, { requestBaseUrl, limit = 500 }) {
     `
       SELECT
         d.id,
+        d.organization_id,
         a.name AS author_name,
         d.slug,
         d.title,
@@ -69,12 +70,16 @@ async function listDrafts(where, params, { requestBaseUrl, limit = 500 }) {
     latestVersionAt: row.latest_version_at,
     disabled: Boolean(row.disabled_at),
     publicUrl: getDraftPublicUrl({
-      draftId: row.slug || row.id,
+      draftId: row.id,
+      slug: row.slug,
+      organizationId: row.organization_id,
       publicBaseUrl: config.publicBaseUrl,
       requestBaseUrl
     }),
     rawUrl: getDraftRawUrl({
-      draftId: row.slug || row.id,
+      draftId: row.id,
+      slug: row.slug,
+      organizationId: row.organization_id,
       publicBaseUrl: config.publicBaseUrl,
       requestBaseUrl
     })
@@ -111,7 +116,9 @@ export async function getAccountDraftWithVersions(accountId, organizationId, dra
       title: draft.title,
       description: draft.description,
       publicUrl: getDraftPublicUrl({
-        draftId: draft.slug || draft.id,
+        draftId: draft.id,
+        slug: draft.slug,
+        organizationId: draft.organization_id,
         publicBaseUrl: config.publicBaseUrl,
         requestBaseUrl
       }),

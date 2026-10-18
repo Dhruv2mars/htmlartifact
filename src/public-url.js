@@ -71,11 +71,15 @@ export function getHomeUrl({ publicBaseUrl, requestBaseUrl }) {
   return configured || normalizeUrl(requestBaseUrl);
 }
 
-// `draftId` may also be a custom URL slug; both name the same draft.
-export function getDraftPublicUrl({ draftId, publicBaseUrl, requestBaseUrl }) {
+// Custom URLs ("slugs") are unique per team, so their URL names the team:
+// /t/<organization id>/<slug>, always on the apex. Draft IDs are global.
+export function getDraftPublicUrl({ draftId, slug, organizationId, publicBaseUrl, requestBaseUrl }) {
   const configured = normalizeUrl(publicBaseUrl);
   const wildcard = parseWildcardBaseUrl(configured);
 
+  if (slug && organizationId) {
+    return `${getHomeUrl({ publicBaseUrl, requestBaseUrl })}/t/${organizationId}/${slug}`;
+  }
   if (wildcard) {
     wildcard.hostname = `${draftId}.${wildcard.hostname.slice(2)}`;
     wildcard.pathname = "/";
@@ -88,7 +92,10 @@ export function getDraftPublicUrl({ draftId, publicBaseUrl, requestBaseUrl }) {
   return `${baseUrl}/d/${draftId}`;
 }
 
-export function getDraftRawUrl({ draftId, publicBaseUrl, requestBaseUrl }) {
+export function getDraftRawUrl({ draftId, slug, organizationId, publicBaseUrl, requestBaseUrl }) {
+  if (slug && organizationId) {
+    return `${getHomeUrl({ publicBaseUrl, requestBaseUrl })}/t/${organizationId}/${slug}/raw`;
+  }
   const configured = normalizeUrl(publicBaseUrl);
   const wildcard = parseWildcardBaseUrl(configured);
 
@@ -104,8 +111,8 @@ export function getDraftRawUrl({ draftId, publicBaseUrl, requestBaseUrl }) {
   return `${baseUrl}/d/${draftId}/raw`;
 }
 
-// Returns the draft ID or custom URL slug named by a wildcard subdomain host,
-// or null for the apex, nested hosts, and reserved names such as www.
+// Returns the draft ID named by a wildcard subdomain host, or null for the
+// apex, nested hosts, and reserved names such as www.
 export function getDraftRefFromHost({ publicBaseUrl, host }) {
   const wildcard = parseWildcardBaseUrl(publicBaseUrl);
   if (!wildcard) return null;
@@ -115,8 +122,7 @@ export function getDraftRefFromHost({ publicBaseUrl, host }) {
   if (!requestHost || !requestHost.endsWith(`.${rootHost}`)) return null;
 
   const label = requestHost.slice(0, -(rootHost.length + 1));
-  if (DRAFT_ID_PATTERN.test(label) || !slugProblem(label)) return label;
-  return null;
+  return DRAFT_ID_PATTERN.test(label) ? label : null;
 }
 
 function parseWildcardBaseUrl(value) {
