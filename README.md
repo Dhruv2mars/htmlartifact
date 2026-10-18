@@ -84,7 +84,7 @@ bun run dev:local   # WorkOS emulator + Worker at http://localhost:8787, fully o
 bun run build       # CLI (TypeScript + Effect, cli/) → dist/htmlartifact.js
 HTMLARTIFACT_API_URL=http://localhost:8787 node dist/htmlartifact.js login
 bun run typecheck:cli
-bun run test        # builds the CLI, then 140 tests: real Worker (workerd) + official WorkOS emulator
+bun run test        # builds the CLI, then 155 tests: real Worker (workerd) + official WorkOS emulator
 ```
 
 `dev:local` seeds `alice@`, `bob@` and `carol@example.com`. Sign in with any of
