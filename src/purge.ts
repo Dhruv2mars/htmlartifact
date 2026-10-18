@@ -24,9 +24,13 @@ export const PENDING_DELETIONS_SCHEMA = `CREATE TABLE IF NOT EXISTS pending_dele
 export const orgPrefix = (organizationId: string) => `orgs/${organizationId}/`;
 export const draftPrefix = (organizationId: string, draftId: string) =>
   `${orgPrefix(organizationId)}drafts/${draftId}/`;
+export const versionPrefix = (organizationId: string, draftId: string, versionId: string) =>
+  `${draftPrefix(organizationId, draftId)}versions/${versionId}`;
 
 export function queueDeletion(db: D1Database, kind: DeletionKind, target: string): D1PreparedStatement {
-  if (kind === "r2_prefix" && !/^orgs\/[^/]+\/(drafts\/[^/]+\/)?$/.test(target)) {
+  // An org, an artifact, or one upload's objects (`.../versions/<versionId>`
+  // covers `<versionId>.html` and `<versionId>/...`; version IDs are fixed-length).
+  if (kind === "r2_prefix" && !/^orgs\/[^/]+\/(drafts\/[^/]+\/(versions\/[0-9A-Za-z]{20})?)?$/.test(target)) {
     throw new Error(`refusing to queue unscoped R2 prefix: ${target}`);
   }
   return db

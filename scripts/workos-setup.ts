@@ -19,6 +19,8 @@ const EVENTS = [
   "organization_membership.deleted",
   "organization.deleted",
   "user.deleted",
+  "dsync.user.deleted",
+  "dsync.user.updated",
   "session.revoked",
   "api_key.revoked",
   "api_key.deleted"

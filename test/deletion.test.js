@@ -427,3 +427,73 @@ describe("WorkOS Admin Portal", () => {
     }
   });
 });
+
+describe("review round 4", () => {
+  test("SCIM deprovisioning (dsync events) ends the membership in that directory's workspace only", async () => {
+    const bob = await accessToken(stack, "bob@acme.test", "Acme");
+    const bobUser = await findUser(stack.emulator, "bob@acme.test");
+    const acme = await findOrganization(stack.emulator, "Acme");
+    const other = await findOrganization(stack.emulator, "Other");
+    const memberships = async () =>
+      (await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${bobUser.id}&organization_id=${acme.id}`)).data;
+    const directoryUser = (organizationId, extra) => ({
+      object: "directory_user",
+      id: "directory_user_bob",
+      directory_id: "directory_acme",
+      organization_id: organizationId,
+      email: "BOB@acme.test",
+      ...extra
+    });
+    assert.equal((await callApi(stack, bob, "GET", "/api/drafts?scope=workspace")).status, 200);
+
+    // Still active in the directory, or deprovisioned from someone else's: no effect.
+    for (const [id, event, data] of [
+      ["event_ds_1", "dsync.user.updated", directoryUser(acme.id, { state: "active" })],
+      ["event_ds_2", "dsync.user.deleted", directoryUser(other.id, { state: "inactive" })]
+    ]) {
+      assert.equal((await sendWebhook(stack, { id, event, data })).status, 200);
+    }
+    assert.equal((await callApi(stack, bob, "GET", "/api/drafts?scope=workspace")).status, 200);
+    assert.equal((await memberships()).length, 1);
+
+    const response = await sendWebhook(stack, {
+      id: "event_ds_3",
+      event: "dsync.user.updated",
+      data: directoryUser(acme.id, { state: "inactive" })
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await memberships()).length, 0, "WorkOS membership removed");
+    assert.equal((await callApi(stack, bob, "GET", "/api/drafts?scope=workspace")).status, 403, "access ended");
+  });
+
+  test("a request that passed the revocation check cannot restore a deleted user's profile", async () => {
+    const { saveAccount } = await import("../src/db.ts");
+    const olivia = await findUser(stack.emulator, "olivia@other.test");
+    await saveAccount(proxy.env.DB, { id: olivia.id, name: "Olivia", email: "olivia@other.test" });
+    const response = await sendWebhook(stack, {
+      id: "event_user_deleted_olivia",
+      event: "user.deleted",
+      data: { object: "user", id: olivia.id, email: "olivia@other.test" }
+    });
+    assert.equal(response.status, 200);
+    // The paused request resumes and writes the profile it read before the webhook.
+    await saveAccount(proxy.env.DB, { id: olivia.id, name: "Olivia", email: "olivia@other.test" });
+    const [after] = await rows("SELECT name, email FROM accounts WHERE id = ?", olivia.id);
+    assert.deepEqual({ ...after }, { name: "Deleted user", email: null });
+  });
+
+  test("an uncommitted upload's objects are queued, so a failed cleanup is retried by the cron", async () => {
+    const { queueDeletion, versionPrefix } = await import("../src/purge.ts");
+    const kept = "orgs/org_x/drafts/d1/versions/KEEPKEEPKEEPKEEPKEEP.html";
+    const prefix = versionPrefix("org_x", "d1", "LOSTLOSTLOSTLOSTLOST");
+    for (const key of [`${prefix}.html`, `${prefix}/about.html`, kept]) await proxy.env.ARTIFACTS.put(key, "<p>secret</p>");
+    // What discard() does when the immediate delete fails: the queued row stays.
+    await queueDeletion(proxy.env.DB, "r2_prefix", prefix).run();
+    assert.throws(() => queueDeletion(proxy.env.DB, "r2_prefix", "orgs/org_x/drafts/d1/versions/short"));
+    await runCron();
+    await eventually(async () => (await r2Keys("orgs/org_x/")).length === 1, "upload's objects purged by the cron");
+    assert.deepEqual(await r2Keys("orgs/org_x/"), [kept]);
+    assert.equal(await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", prefix), 0);
+    await proxy.env.ARTIFACTS.delete(kept);
+  });
+});

@@ -143,11 +143,14 @@ export async function saveAccount(
 ): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO accounts (id, name, email, picture_url) VALUES (?, ?, ?, ?)
+      // Never for a deleted user: a request that passed the revocation check
+      // before user.deleted landed must not restore the scrubbed profile.
+      `INSERT INTO accounts (id, name, email, picture_url)
+       SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM revocations WHERE subject = ? AND organization_id = '*')
        ON CONFLICT (id) DO UPDATE SET name = excluded.name, email = excluded.email,
          picture_url = excluded.picture_url, updated_at = unixepoch()`
     )
-    .bind(id, name, email, pictureUrl)
+    .bind(id, name, email, pictureUrl, id)
     .run();
 }
 

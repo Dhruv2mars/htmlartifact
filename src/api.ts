@@ -8,7 +8,7 @@ import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspac
 import { draftUrl, slugProblem } from "./public-url.ts";
 import { clientIp, rateLimit } from "./rate-limit.ts";
 import { activeMembership, bearerViewer } from "./auth.ts";
-import { deleteWorkspaceStatements, draftPrefix, purgeDraft, runWorkspaceDeletions } from "./purge.ts";
+import { deleteWorkspaceStatements, draftPrefix, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, versionPrefix } from "./purge.ts";
 import { putHtmlObject } from "./storage.ts";
 import {
   isMember,
@@ -481,8 +481,14 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const title = validation.title || existing?.title || filename || "Untitled";
   const cleanDescription = cleanText(description, 1000);
   let versionId = current?.id;
-  // R2 keys this upload wrote; deleted again if its rows are not committed.
-  let written: string[] = [];
+  // Prefix of the R2 objects this upload writes; deleted again if its rows are
+  // not committed. Queued first, so a failed delete is retried by the cron.
+  let written: string | null = null;
+  const discard = async () => {
+    if (!written) return;
+    await queueDeletion(db, "r2_prefix", written).run().catch(() => undefined);
+    await runDeletion(c.env, "r2_prefix", written);
+  };
 
   const statements: D1PreparedStatement[] = [];
   if (!unchanged) {
@@ -495,11 +501,17 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     const prefix = draftPrefix(viewer.organization_id, id);
     const objectKey = `${prefix}versions/${versionId}.html`;
     const pageKey = (page: { path: string }) => `${prefix}versions/${versionId}/${page.path}`;
-    written = [objectKey, ...extraPages.map(pageKey)];
-    await Promise.all([
+    written = versionPrefix(viewer.organization_id, id, versionId);
+    // allSettled: on a failed write, wait for the others before cleaning up.
+    const puts = await Promise.allSettled([
       putHtmlObject(c.env.ARTIFACTS, objectKey, index.html),
       ...extraPages.map((page) => putHtmlObject(c.env.ARTIFACTS, pageKey(page), page.html))
     ]);
+    const failed = puts.find((put) => put.status === "rejected");
+    if (failed) {
+      await discard();
+      throw failed.reason;
+    }
 
     if (!existing) {
       statements.push(
@@ -599,8 +611,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   );
 
   // Nothing references the objects of an upload whose rows did not commit
-  // (lost race, artifact or workspace deleted meanwhile): delete them.
-  const discard = () => (written.length ? c.env.ARTIFACTS.delete(written) : Promise.resolve());
+  // (lost race, artifact or workspace deleted meanwhile): discard() them.
   try {
     const results = await db.batch(statements);
     // Another upload to this artifact landed after we read it (or it was

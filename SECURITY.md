@@ -109,8 +109,12 @@ those artifacts will 404.
   Admin Portal link to connect the company's identity provider;
   `workspace domains` verifies the email domain that routes people to it.
 - **Directory Sync (SCIM):** `htmlartifact workspace directory` gives an
-  Admin Portal link to connect the directory. Deprovisioned people lose access
-  automatically.
+  Admin Portal link to connect the directory. When the directory deprovisions
+  someone (`dsync.user.deleted`, or `dsync.user.updated` to inactive), the app
+  deletes their WorkOS membership in that workspace and revokes it locally, so
+  access ends on their next request. This works whether or not AuthKit
+  Directory Provisioning is enabled (with it on, WorkOS also removes the
+  membership itself).
 - **MFA:** enabled in AuthKit for password sign-ins.
 
 ## Incident response

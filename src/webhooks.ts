@@ -77,6 +77,28 @@ async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: str
       c.executionCtx.waitUntil(runWorkspaceDeletions(c.env, id));
       return;
     }
+    case "dsync.user.deleted":
+    case "dsync.user.updated": {
+      // SCIM deprovisioning. With AuthKit Directory Provisioning on, WorkOS also
+      // removes the membership itself; without it, only these events arrive.
+      // Either way: end the person's membership in the directory's org.
+      if (event === "dsync.user.updated" && field(data, "state") !== "inactive") return;
+      if (!organizationId || (await isWorkspaceDeleted(db, organizationId))) return;
+      const { userManagement } = workos(c.get("config")).client;
+      const email = field(data, "email")?.toLowerCase();
+      if (email) {
+        const users = await userManagement.listUsers({ email, limit: 10 });
+        for (const user of users.data.filter((u) => u.email.toLowerCase() === email)) {
+          const epoch = await bumpMembershipEpoch(db, user.id, organizationId);
+          const page = await userManagement.listOrganizationMemberships({ userId: user.id, organizationId, limit: 10 });
+          for (const membership of page.data.filter((m) => m.organizationId === organizationId)) {
+            await userManagement.deleteOrganizationMembership(membership.id);
+          }
+          await setRevokedAtEpoch(db, user.id, organizationId, true, epoch);
+        }
+      }
+      return;
+    }
     case "user.deleted": {
       // Revoke everywhere and drop cached PII. Their artifacts stay.
       const id = field(data, "id");
