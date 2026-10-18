@@ -1,42 +1,41 @@
-import express from "express";
-import { config } from "./config.js";
 import { forgetMembership, setRevoked } from "./db.js";
 import { workos } from "./workos.js";
 
-// WorkOS webhooks close the gap between "removed in WorkOS" and "access token
+// WorkOS webhooks close the gap between "removed in WorkOS" and "token
 // expired": a removed member, deleted user, revoked session or deleted API
 // key is denied on the next request. Point a WorkOS webhook endpoint at
 // /webhooks/workos and set WORKOS_WEBHOOK_SECRET.
-export function registerWebhookRoutes(app) {
-  app.post("/webhooks/workos", express.text({ type: "*/*", limit: "1mb" }), async (req, res) => {
-    if (!config.workos.webhookSecret) return res.status(404).end();
+export function registerWebhooks(app) {
+  app.post("/webhooks/workos", async (c) => {
+    const config = c.get("config");
+    if (!config.workos.webhookSecret) return c.body(null, 404);
 
     let event;
     try {
-      event = await workos().webhooks.constructEvent({
-        payload: req.body,
-        sigHeader: req.get("workos-signature") || "",
+      event = await workos(config).client.webhooks.constructEvent({
+        payload: await c.req.text(),
+        sigHeader: c.req.header("workos-signature") || "",
         secret: config.workos.webhookSecret
       });
     } catch {
-      return res.status(400).json({ ok: false, error: "Invalid signature." });
+      return c.json({ ok: false, error: "Invalid signature." }, 400);
     }
 
     try {
-      await applyEvent(event);
-      res.json({ ok: true });
+      await applyEvent(c, event);
+      return c.json({ ok: true });
     } catch (error) {
       console.error(`webhook ${event.event} failed:`, error);
-      res.status(500).json({ ok: false });
+      return c.json({ ok: false }, 500);
     }
   });
 }
 
 // WorkOS does not guarantee delivery order, so membership events are never
-// applied from the payload: they trigger a re-check of the current state in
-// WorkOS. Revocations of sessions, keys and users are one-way and safe in
-// any order.
-export async function applyEvent({ event, data = {} }) {
+// applied from the payload: they trigger a re-check of the current state.
+// Revocations of sessions, keys and users are one-way and order-safe.
+async function applyEvent(c, { event, data = {} }) {
+  const db = c.env.DB;
   const userId = data.userId ?? data.user_id;
   const organizationId = data.organizationId ?? data.organization_id;
 
@@ -44,27 +43,26 @@ export async function applyEvent({ event, data = {} }) {
     case "organization_membership.created":
     case "organization_membership.updated":
     case "organization_membership.deleted": {
-      if (!userId || !organizationId) return undefined;
-      // Fail safe: forget the cached membership first, so if WorkOS cannot be
-      // reached below, the next request re-checks live instead of trusting it.
-      await forgetMembership(userId, organizationId);
-      const page = await workos().userManagement.listOrganizationMemberships({
+      if (!userId || !organizationId) return;
+      // Fail safe: forget the cached membership first, so if WorkOS cannot
+      // be reached below, the next request re-checks live.
+      await forgetMembership(db, userId, organizationId);
+      const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
         userId,
         organizationId,
         statuses: ["active"],
         limit: 1
       });
       const active = page.data.some((m) => m.organizationId === organizationId);
-      return setRevoked(userId, organizationId, !active);
+      await setRevoked(db, userId, organizationId, !active);
+      return;
     }
     case "user.deleted":
-      return setRevoked(data.id, "*", true);
     case "session.revoked":
-      return setRevoked(data.id, "*", true);
     case "api_key.revoked":
     case "api_key.deleted":
-      return setRevoked(data.id, "*", true);
+      await setRevoked(db, data.id, "*", true);
+      return;
     default:
-      return undefined;
   }
 }

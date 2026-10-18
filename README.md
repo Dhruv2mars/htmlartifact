@@ -1,135 +1,115 @@
 # htmlartifact
 
-Publish HTML artifacts from coding agents (plans, specs, reviews, reports, UI
-mocks) to your team. **Only members of your team can open them.** Everyone
-else gets a sign-in page or a 404.
+Publish HTML artifacts from coding agents (plans, specs, reviews, reports,
+mocks) to your **workspace**. Everyone in the workspace can open them; nobody
+else can.
 
-- **Teams are WorkOS organizations.** Sign-in is [WorkOS AuthKit](https://workos.com/authkit),
-  so SSO, SCIM provisioning, MFA and domain capture come from WorkOS.
-- **Agents publish with a CLI.**
-- **Self-hosted.** It needs Node, Postgres, and a disk or any S3-compatible bucket.
+It's like [Postplan](https://www.npmjs.com/package/postplan), but private to a
+team. Everything works from a terminal, so an agent like Claude can run the
+whole flow.
 
-```sh
-htmlartifact upload plan.html
-# URL: https://artifacts.acme.com/d/k3j9x0a1b2c4
-# Team: Acme (visible to its members only)
-```
-
-## For teammates
+## How it works
 
 ```sh
-curl -fsSL https://<your-server>/install.sh | sh   # installs the CLI
-htmlartifact login                                  # browser sign-in, works over SSH
+# 1. Sign in or create an account (opens a browser once; works over SSH)
+npx htmlartifact login
+
+# 2. One person creates the workspace and invites people
+npx htmlartifact workspace create "Acme"
+npx htmlartifact workspace invite          # → HA-7KQ2-MX9P-4TRA
+
+# 3. Everyone else joins with the code
+npx htmlartifact login
+npx htmlartifact workspace join HA-7KQ2-MX9P-4TRA
+
+# 4. Anyone publishes; every member can open the link
+npx htmlartifact upload plan.html          # → https://…/d/k3j9x0a1b2c4
+npx htmlartifact read https://…/d/k3j9x0a1b2c4
 ```
 
 | Command | What it does |
 |---|---|
-| `htmlartifact upload <file-or-folder>` | Publish, or publish a new version of the same path |
-| `htmlartifact check <path>` | Validate against the server's rules without publishing |
-| `htmlartifact read <url>` | Download an artifact using your sign-in (agents use this) |
-| `htmlartifact list [--all]` | Your artifacts, or the whole team's |
-| `htmlartifact org list` / `org switch <team>` | See or change the team you publish to |
-| `htmlartifact whoami` / `logout` | Check or clear your sign-in |
+| `login` / `logout` / `whoami` | Sign in or create an account; show who you are and your current workspace |
+| `workspace create <name>` | New workspace; you are its admin |
+| `workspace invite` | Invite code + join link (admins). `--max-uses`, `--days` |
+| `workspace join <code>` | Join with a code |
+| `workspace list` / `switch <name>` | Your workspaces; change the current one |
+| `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately |
+| `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace |
+| `read <url>` | Download an artifact with your sign-in (how agents read links) |
+| `list [--all]` | Your artifacts, or the whole workspace's |
+| `check <path>` | Validate against the rules without publishing |
 
-In CI, set `HTMLARTIFACT_API_URL` and `HTMLARTIFACT_TOKEN` (a team API key that
-an admin creates on the **Team** page) instead of logging in.
+Every command takes `--json` for agents. In CI, set `HTMLARTIFACT_TOKEN` to a
+WorkOS organization API key instead of logging in.
 
-## How access works
+The web app has the same flow for people who prefer a browser: sign in, see
+the workspace's artifacts, and join with a code or a `/join/<code>` link.
 
-| Who | Credential | Checked on every request |
-|---|---|---|
-| Browser | AuthKit sign-in, WorkOS sealed-session cookie | Session valid, user is an **active member** of the artifact's organization |
-| CLI | WorkOS access token from the device flow (refresh token kept in `~/.htmlartifact`, mode 600) | JWT signature (WorkOS JWKS), then the same membership check |
-| CI | WorkOS organization API key | Key valid in WorkOS; its owning org must own the artifact |
+## Who can see what
 
-- **Membership is confirmed with WorkOS**, never taken from a token claim
-  alone. The result is cached for `HTMLARTIFACT_MEMBERSHIP_CACHE_SECONDS`
-  (default 300).
-- **WorkOS webhooks revoke access immediately.** When a member is removed, a
-  user is deleted, or a session or key is revoked, the next request is denied,
-  even if the token hasn't expired yet.
-- **Other teams get the same 404 as a missing artifact**, so artifact URLs
-  reveal nothing to outsiders.
-- **People in several teams switch automatically** when they open a link to
-  another team they belong to.
+- **An artifact belongs to the workspace it was published in.** Only active
+  members of that workspace can open it, in a browser or with a token.
+- **Signed-out visitors are sent to sign in.** Members of other workspaces get
+  a 404 that looks exactly like a missing page, so a URL reveals nothing.
+- **Membership is confirmed with WorkOS,** not taken from a token alone.
+  It's cached for 5 minutes, and WorkOS webhooks revoke it at once when
+  someone is removed.
 - **Artifact HTML runs under a strict CSP.** Scripted pages run in an
-  opaque-origin sandbox with no network or storage access, so they can't
-  read the session cookie.
-- **Nothing is anonymous.** Uploads and reads always need a credential.
+  opaque-origin sandbox, so they can't read the session or act as the app.
+- **Only admins can create invite codes.** Codes expire (7 days by default)
+  and have a use limit.
 
-## Self-hosting
+## Architecture
 
-### 1. WorkOS (free up to 1M monthly active users)
+No servers to run. htmlartifact is one Cloudflare Worker:
 
-1. Create a WorkOS environment, and enable **AuthKit** under User Management.
-2. **Redirects:**
-   - Callback URI: `https://<your-server>/auth/callback`
-   - Sign-out redirect: `https://<your-server>`
-3. **Roles:** keep `admin` and `member`. Optional: add a permission such as
-   `artifacts:publish` and set `HTMLARTIFACT_PUBLISH_PERMISSION` to it. Members
-   without that permission can read but not publish.
-4. **Webhooks** (recommended): add an endpoint at `https://<your-server>/webhooks/workos`
-   with these events:
-   - `organization_membership.created`, `organization_membership.updated`, `organization_membership.deleted`
-   - `user.deleted`
-   - `session.revoked`
-   - `api_key.revoked`
-
-   Put its secret in `WORKOS_WEBHOOK_SECRET`.
-5. Optional:
-   - **Audit Logs:** register `artifact.published` and `artifact.deleted`,
-     then set `HTMLARTIFACT_AUDIT_LOGS=true`.
-   - **API Keys:** enable it for CI publishing.
-
-Team admins set up SSO, directory sync and domain verification themselves:
-**Team → Single sign-on and provisioning** opens the WorkOS Admin Portal.
-
-### 2. Run it
-
-Needs Node 20.10+, Postgres, and [Bun](https://bun.sh) (installs deps and builds the CLI bundle):
-
-```sh
-cp .env.example .env    # fill in WorkOS keys, a cookie password, the public URL
-bun install && bun run build:cli
-node --env-file=.env src/server.js
-```
-
-### Configuration
-
-| Variable | Required | Meaning |
-|---|---|---|
-| `HTMLARTIFACT_PUBLIC_BASE_URL` | yes | Public origin, e.g. `https://artifacts.acme.com`. Use `https://*.artifacts.acme.com` to give each artifact its own subdomain (needs wildcard DNS + TLS) |
-| `HTMLARTIFACT_COOKIE_PASSWORD` | yes | 32+ random characters; encrypts the session cookie |
-| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID` | yes | From the WorkOS dashboard |
-| `DATABASE_URL` | yes | Postgres connection string |
-| `HTMLARTIFACT_STORAGE_DIR` | one of | Store artifacts on disk |
-| `AWS_S3_BUCKET_NAME`, `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | one of | Or any S3-compatible bucket (AWS, R2, MinIO) |
-| `WORKOS_WEBHOOK_SECRET` | no | Enables instant revocation |
-| `HTMLARTIFACT_PUBLISH_PERMISSION` | no | WorkOS permission required to publish |
-| `HTMLARTIFACT_ALLOW_TEAM_CREATION` | no | `false` stops signed-in users from creating new teams |
-| `HTMLARTIFACT_AUDIT_LOGS` | no | `true` sends publish/delete events to WorkOS Audit Logs |
-| `HTMLARTIFACT_MEMBERSHIP_CACHE_SECONDS` | no | How long a confirmed membership is trusted (default 300) |
-| `HTMLARTIFACT_TRUST_PROXY` | no | Express `trust proxy` setting (default: private networks) |
-| `HTMLARTIFACT_CLIENT_IP_HEADER` | no | A trusted single-IP header, e.g. `cf-connecting-ip` |
-| `MAX_ACCOUNT_HTML_BYTES`, `MAX_PAGES_PER_UPLOAD` | no | Upload limits (4 MiB, 50 pages) |
+| Piece | Service |
+|---|---|
+| API, web pages, artifact serving | Cloudflare Workers ([Hono](https://hono.dev)) |
+| Artifact HTML | Cloudflare R2 |
+| Artifact index, invites, caches | Cloudflare D1 (schema created automatically) |
+| Accounts, sign-up, workspaces (organizations), SSO | [WorkOS](https://workos.com) AuthKit |
+| CLI | Node.js, published to npm, run with `npx` |
 
 ## Development
 
 ```sh
 bun install
-TEST_DATABASE_URL=postgres://postgres@localhost:5432/postgres bun run test
+bun run dev:local   # WorkOS emulator + Worker at http://localhost:8787, fully offline
+HTMLARTIFACT_API_URL=http://localhost:8787 node bin/htmlartifact.js login
+bun run test        # 35 tests: real Worker (workerd) + official WorkOS emulator
 ```
 
-The tests run the real app against the official
-[WorkOS emulator](https://github.com/workos/emulate), a real Postgres and disk
-storage. They cover sign-in, cross-team isolation, org switching, webhook
-revocation, team admin, CI keys and the CLI end to end.
+`dev:local` seeds `alice@`, `bob@` and `carol@example.com`. Sign in with any of
+them on the emulator's login page. The CLI's browser sign-in is auto-approved
+as Alice.
+
+## Deploying (later)
+
+1. WorkOS:
+   - Create an environment and enable AuthKit.
+   - Add the redirect URI `https://<host>/auth/callback`.
+   - Add a webhook to `https://<host>/webhooks/workos` for these events:
+     - `organization_membership.*`
+     - `user.deleted`
+     - `session.revoked`
+     - `api_key.revoked`
+2. Cloudflare:
+   - Run `wrangler d1 create htmlartifact` and put the ID in `wrangler.toml`.
+   - Run `wrangler r2 bucket create htmlartifact-artifacts`.
+   - Run `wrangler secret put` for `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
+     `WORKOS_WEBHOOK_SECRET` and `HTMLARTIFACT_COOKIE_PASSWORD` (32+ chars).
+   - Run `bun run deploy`.
+3. Set `DEFAULT_API_URL` in `bin/htmlartifact.js` to the deployed URL and
+   publish the CLI to npm.
 
 ## Credits
 
 htmlartifact started from the MIT-licensed npm release of
-[Postplan](https://www.npmjs.com/package/postplan) 0.0.5 by t3dotgg: its
-HTML validator, artifact serving and CLI. The auth and team model are new. See `NOTICE`.
+[Postplan](https://www.npmjs.com/package/postplan) 0.0.5 by t3dotgg. The HTML
+validator, artifact serving rules and CLI upload flow come from it. See
+`NOTICE`.
 
 ## License
 

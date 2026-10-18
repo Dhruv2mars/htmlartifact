@@ -1,31 +1,27 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { config } from "./config.js";
-import { getCookieDomain } from "./public-url.js";
 
 export const SESSION_COOKIE = "htmlartifact_session";
 export const AUTH_STATE_COOKIE = "htmlartifact_auth_state";
 // The cookie only carries the WorkOS sealed session; WorkOS decides how long
-// the session really lives (dashboard: Authentication > Sessions).
+// the session really lives.
 const SESSION_COOKIE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const AUTH_STATE_TTL_SECONDS = 10 * 60;
 
-// Compact HMAC-signed tokens (base64url(JSON payload) + "." + HMAC-SHA256) for
-// the short-lived sign-in state (OAuth state + PKCE verifier).
+// Compact HMAC-signed tokens (base64url(JSON) + "." + HMAC-SHA256) for the
+// short-lived sign-in state (OAuth state, PKCE verifier, return path).
 export function signToken(payload, secret, ttlSeconds) {
-  const body = Buffer.from(
-    JSON.stringify({ ...payload, exp: nowSeconds() + ttlSeconds })
-  ).toString("base64url");
+  const body = Buffer.from(JSON.stringify({ ...payload, exp: nowSeconds() + ttlSeconds })).toString(
+    "base64url"
+  );
   return `${body}.${hmac(body, secret)}`;
 }
 
 export function verifyToken(token, secret) {
   if (typeof token !== "string" || !token.includes(".")) return null;
   const [body, signature] = token.split(".");
-  const expected = hmac(body, secret);
   const a = Buffer.from(signature || "");
-  const b = Buffer.from(expected);
+  const b = Buffer.from(hmac(body, secret));
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-
   try {
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
     if (!Number.isFinite(payload.exp) || payload.exp < nowSeconds()) return null;
@@ -35,40 +31,39 @@ export function verifyToken(token, secret) {
   }
 }
 
-export function createSessionCookie(sealedSession) {
-  return serializeCookie(SESSION_COOKIE, sealedSession, { maxAge: SESSION_COOKIE_TTL_SECONDS });
+export function sessionCookie(sealedSession, secure) {
+  return serializeCookie(SESSION_COOKIE, sealedSession, SESSION_COOKIE_TTL_SECONDS, secure);
 }
 
-export function clearSessionCookie() {
-  return serializeCookie(SESSION_COOKIE, "", { maxAge: 0 });
+export function clearSessionCookie(secure) {
+  return serializeCookie(SESSION_COOKIE, "", 0, secure);
 }
 
-export function createAuthStateCookie(payload) {
-  const token = signToken(payload, config.cookiePassword, AUTH_STATE_TTL_SECONDS);
-  return serializeCookie(AUTH_STATE_COOKIE, token, { maxAge: AUTH_STATE_TTL_SECONDS });
+export function authStateCookie(payload, secret, secure) {
+  return serializeCookie(
+    AUTH_STATE_COOKIE,
+    signToken(payload, secret, AUTH_STATE_TTL_SECONDS),
+    AUTH_STATE_TTL_SECONDS,
+    secure
+  );
 }
 
-export function clearAuthStateCookie() {
-  return serializeCookie(AUTH_STATE_COOKIE, "", { maxAge: 0 });
+export function clearAuthStateCookie(secure) {
+  return serializeCookie(AUTH_STATE_COOKIE, "", 0, secure);
 }
 
-export function readSealedSession(req) {
-  return readCookie(req, SESSION_COOKIE) || null;
+export function readAuthState(c, secret) {
+  const token = readCookie(c, AUTH_STATE_COOKIE);
+  return token ? verifyToken(token, secret) : null;
 }
 
-export function readAuthState(req) {
-  const token = readCookie(req, AUTH_STATE_COOKIE);
-  return token ? verifyToken(token, config.cookiePassword) : null;
-}
-
-export function readCookie(req, name) {
-  const header = req.get("cookie") || "";
+export function readCookie(c, name) {
+  const header = c.req.header("cookie") || "";
   for (const part of header.split(";")) {
     const eq = part.indexOf("=");
     if (eq === -1) continue;
     if (part.slice(0, eq).trim() === name) {
-      // A malformed value (bad percent-escape) must read as "no cookie", not
-      // throw: otherwise one bad cookie 500s every web page until cleared.
+      // A malformed value must read as "no cookie", not throw.
       try {
         return decodeURIComponent(part.slice(eq + 1).trim());
       } catch {
@@ -79,20 +74,9 @@ export function readCookie(req, name) {
   return null;
 }
 
-function serializeCookie(name, value, { maxAge }) {
-  const attributes = [
-    `${name}=${encodeURIComponent(value)}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    `Max-Age=${maxAge}`
-  ];
-  // With per-artifact subdomains the session must reach every subdomain, or
-  // members could never open an artifact URL. Artifact pages cannot read it:
-  // it is HttpOnly and scripted pages run in an opaque-origin sandbox.
-  const domain = getCookieDomain(config.publicBaseUrl);
-  if (domain) attributes.push(`Domain=${domain}`);
-  if (config.publicBaseUrl?.startsWith("https:")) attributes.push("Secure");
+function serializeCookie(name, value, maxAge, secure) {
+  const attributes = [`${name}=${encodeURIComponent(value)}`, "Path=/", "HttpOnly", "SameSite=Lax", `Max-Age=${maxAge}`];
+  if (secure) attributes.push("Secure");
   return attributes.join("; ");
 }
 

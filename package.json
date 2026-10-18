@@ -1,7 +1,7 @@
 {
   "name": "htmlartifact",
   "version": "0.1.0",
-  "description": "Publish HTML artifacts from coding agents to your team. Only members of your WorkOS organization can read them.",
+  "description": "Publish HTML artifacts from coding agents to your workspace. Only workspace members can open them.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -10,8 +10,7 @@
   },
   "files": [
     "bin/",
-    "src/",
-    "skills/",
+    "src/html-policy.js",
     "README.md",
     "NOTICE"
   ],
@@ -19,25 +18,24 @@
     "htmlartifact": "./bin/htmlartifact.js"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "build:cli": "bun build bin/htmlartifact.js --target=node --format=esm --outfile=dist/htmlartifact.mjs",
-    "test": "node --test --test-concurrency=1 test/*.test.js"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "dev:local": "node scripts/dev-local.mjs"
   },
   "engines": {
     "node": ">=20.10"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.835.0",
-    "@workos-inc/node": "^11.0.0",
     "commander": "^14.0.0",
-    "express": "^5.1.0",
-    "jose": "^6.2.3",
-    "nanoid": "^5.1.5",
-    "parse5": "^7.3.0",
-    "pg": "^8.16.2"
+    "parse5": "^7.3.0"
   },
   "devDependencies": {
-    "@workos/emulate": "^0.15.0"
+    "@workos-inc/node": "^11.0.0",
+    "@workos/emulate": "^0.15.0",
+    "hono": "^4.13.13",
+    "jose": "^6.2.3",
+    "nanoid": "^5.1.5",
+    "wrangler": "^4.151.1"
   }
 }

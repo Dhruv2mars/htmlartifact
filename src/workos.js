@@ -1,30 +1,35 @@
 import { WorkOS } from "@workos-inc/node";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { config } from "./config.js";
 
-// One WorkOS client for the server. WORKOS_API_URL only changes for the
-// WorkOS emulator (tests, local dev).
-let client;
-let jwks;
+// One WorkOS client (and JWKS cache) per configuration, reused across
+// requests within an isolate.
+const clients = new Map();
 
-export function workos() {
-  if (client) return client;
-  const url = new URL(config.workos.apiUrl);
-  client = new WorkOS(config.workos.apiKey, {
-    clientId: config.workos.clientId,
-    apiHostname: url.hostname,
-    https: url.protocol === "https:",
-    port: url.port ? Number(url.port) : undefined
-  });
-  return client;
+export function workos(config) {
+  const key = `${config.workos.apiUrl}|${config.workos.clientId}`;
+  let entry = clients.get(key);
+  if (!entry) {
+    const url = new URL(config.workos.apiUrl);
+    entry = {
+      client: new WorkOS(config.workos.apiKey, {
+        clientId: config.workos.clientId,
+        apiHostname: url.hostname,
+        https: url.protocol === "https:",
+        port: url.port ? Number(url.port) : undefined
+      }),
+      jwks: createRemoteJWKSet(new URL(`${config.workos.apiUrl}/sso/jwks/${config.workos.clientId}`)),
+      keyCache: new Map()
+    };
+    clients.set(key, entry);
+  }
+  return entry;
 }
 
-// Verifies a WorkOS access token (the CLI's bearer token) against this
-// client's JWKS and returns its claims: sub, sid, org_id, role, permissions.
-// The token must have been issued to THIS application: WorkOS environments
-// can hold several applications sharing users and signing keys.
-export async function verifyAccessToken(token) {
-  jwks ||= createRemoteJWKSet(new URL(`${config.workos.apiUrl}/sso/jwks/${config.workos.clientId}`));
+// Verifies a WorkOS access token (the CLI's bearer token) and returns its
+// claims (sub, sid, org_id, role). It must have been issued to THIS app:
+// a WorkOS environment can hold several apps sharing users and keys.
+export async function verifyAccessToken(config, token) {
+  const { jwks } = workos(config);
   const { payload } = await jwtVerify(token, jwks, {
     algorithms: ["RS256"],
     ...(config.workos.issuer ? { issuer: config.workos.issuer } : {})
@@ -40,24 +45,22 @@ export async function verifyAccessToken(token) {
   return payload;
 }
 
-// WorkOS API key (CI) → { id, name, organizationId, userId, permissions }, or
-// null. Validation is an API call, so results are cached briefly; a revoked
-// key stops working within KEY_CACHE_MS.
+// A WorkOS organization API key (CI) → { id, name, organizationId, userId },
+// or null. Validation is an API call, so results are cached for a minute.
 const KEY_CACHE_MS = 60_000;
-const keyCache = new Map();
 
-export async function validateApiKey(value) {
+export async function validateApiKey(config, value) {
+  const { client, keyCache } = workos(config);
   const cached = keyCache.get(value);
   if (cached && cached.expiresAt > Date.now()) return cached.key;
 
-  const { apiKey } = await workos().apiKeys.createValidation({ value });
+  const { apiKey } = await client.apiKeys.createValidation({ value });
   const key = apiKey
     ? {
         id: apiKey.id,
         name: apiKey.name,
         organizationId: apiKey.owner.type === "organization" ? apiKey.owner.id : apiKey.owner.organizationId,
-        userId: apiKey.owner.type === "user" ? apiKey.owner.id : null,
-        permissions: apiKey.permissions || []
+        userId: apiKey.owner.type === "user" ? apiKey.owner.id : null
       }
     : null;
   if (keyCache.size > 10_000) keyCache.clear();
@@ -68,19 +71,4 @@ export async function validateApiKey(value) {
 export function displayName(user) {
   const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
   return name || user.email || user.id;
-}
-
-// Best-effort WorkOS Audit Logs event; never fails the request.
-export function audit(organizationId, event) {
-  if (!config.workos.auditLogs) return;
-  workos()
-    .auditLogs.createEvent(organizationId, { occurredAt: new Date(), ...event })
-    .catch((error) => console.error(`audit log ${event.action} failed:`, error.message));
-}
-
-// Test hook.
-export function resetWorkosClient() {
-  client = undefined;
-  jwks = undefined;
-  keyCache.clear();
 }

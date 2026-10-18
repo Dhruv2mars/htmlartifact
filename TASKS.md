@@ -1,43 +1,32 @@
-# htmlartifact — build checklist
+# htmlartifact — checklist
 
-Done = a teammate in WorkOS org A can publish from the CLI and read in browser + CLI;
-a user in org B (or signed out) gets 401/redirect on every artifact URL; the
-integration suite proves it; the default skills install with one command; repo public.
+Done = through the CLI alone (as an agent would): sign up/in → create a
+workspace → invite → others join → publish → every member can open the
+artifact, and nobody outside the workspace can. Verified by tests against the
+real Worker runtime + the official WorkOS emulator, and by hand in a browser.
 
-## Setup
-- [x] Repo from postplan 0.0.5 npm source (MIT), import commit kept for provenance
-- [x] Public GitHub repo `Dhruv2mars/htmlartifact`
-- [x] Rename postplan → htmlartifact (CLI, env vars, cookies, headers, state dir)
+## Done
+- [x] Start from postplan 0.0.5 (MIT), rename to htmlartifact, public repo
+- [x] Use Postplan for real (CLI, publish, browser, sign-in, list) to learn the workflow
+- [x] Serverless: one Cloudflare Worker (Hono) + R2 + D1; no servers, no Docker
+- [x] WorkOS AuthKit for accounts, sign-up and workspaces (organizations)
+- [x] CLI sign-in through the browser (device flow, relayed by the Worker)
+- [x] `workspace create | invite | join | list | switch | members | remove`
+- [x] Invite codes: admin-only, expiring, use-limited; also `/join/<code>` links
+- [x] Artifacts belong to a workspace; only members can open them (browser, token, CI key)
+- [x] Membership checked with WorkOS; webhooks revoke immediately; order-independent
+- [x] CSRF origin check, JWT bound to our client, open-redirect guard, strict CSP
+- [x] Browser: sign in, workspace feed, mine, version history, join, switch
+- [x] Non-member opening a link → join → lands back on the link
+- [x] `bun run dev:local`: fully offline stack (emulator + Worker)
+- [x] 35 tests (API, browser flows, CLI end-to-end, revocation, security)
+- [x] Walked the flow by hand in a browser (Alice publishes via CLI; Bob signs in, joins, opens it)
+- [x] Skills removed for now
 
-## Auth (WorkOS)
-- [x] Research current WorkOS APIs (AuthKit, sessions, CLI device flow, API keys, events)
-- [x] Web sign-in via AuthKit, sealed sessions, org switching
-- [x] CLI sign-in (device flow or minted keys) scoped to one org
-- [x] Artifacts owned by an organization; reads require membership of that org
-- [x] Remove anonymous uploads
-- [x] Fast revocation (membership removal / user deletion)
-
-## Product
-- [x] Filesystem storage backend (S3 stays optional)
-- [x] Proxy-agnostic client IP (no Railway assumptions)
-- [x] Workspace feed: dashboard + `htmlartifact list --all`
-- [x] `htmlartifact read <url>` for agents (authenticated fetch)
-- [x] Server-hosted installer: CLI + default skills in one `curl | sh`
-
-## Default skills (shipped in `skills/`)
-- [x] `htmlartifact` — publish/update/list
-- [x] `htmlartifact-read` — read an artifact URL
-- [x] `htmlartifact-design` — how to write a good HTML artifact
-
-## Verify
-- [x] Integration tests (real Postgres, fs storage, mocked WorkOS) for every auth boundary
-- [x] CLI end-to-end against a local server
-- [x] No `postplan` references outside LICENSE/NOTICE/attribution
-- [x] README, .env.example (no Docker, by request)
-- [x] Nothing on this machine's postplan setup touched
-
-## Found along the way
-- [x] WorkOS emulator lets a refresh switch into a non-member org → membership now verified with WorkOS for every user credential (cached 5 min)
-- [x] Emulator requires the API key for device authorize → CLI auth relayed through the server
-- [x] Independent security review (Codex gpt-6.1-sol, high): 4 findings fixed with regression tests (CSRF Origin check, JWT client binding, order-independent webhooks, per-team slugs)
-- [ ] Verify against a real WorkOS staging env (device flow enablement, refresh-switch behaviour)
+## Later (by request)
+- [ ] Create the WorkOS account; set up a real environment
+- [ ] Verify against real WorkOS (device flow, refresh-into-org, webhooks)
+- [ ] Deploy the Worker (D1, R2, secrets) and pick the domain
+- [ ] Set `DEFAULT_API_URL`, publish the CLI to npm so `npx htmlartifact` works
+- [ ] Optional: serve artifacts from a separate domain for extra isolation (Postplan uses per-artifact subdomains)
+- [ ] Optional: CI API keys from the CLI (`workspace keys create`), SSO setup links

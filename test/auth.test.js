@@ -5,249 +5,340 @@ import {
   CI_KEY,
   OTHER_CI_KEY,
   accessToken,
+  breakWorkos,
+  callApi,
   findOrganization,
   findUser,
   page,
+  refreshInto,
   sendWebhook,
+  signInTokens,
   startStack,
   workosApi
 } from "./helpers.js";
 
 let stack;
-let acmeArtifact; // { draftId, publicUrl } published by alice in Acme
+let acme; // the artifact alice published in Acme: upload receipt
 
 before(async () => {
   stack = await startStack();
   const alice = await accessToken(stack, "alice@acme.test");
-  const result = await upload(alice, { html: page("Acme plan"), slug: "acme-plan" });
+  const result = await callApi(stack, alice, "POST", "/api/uploads", { html: page("Acme plan"), slug: "acme-plan" });
   assert.equal(result.status, 201, JSON.stringify(result.body));
-  acmeArtifact = result.body;
+  acme = result.body;
 });
 
 after(async () => {
   await stack?.stop();
 });
 
-async function upload(token, body) {
-  const response = await fetch(`${stack.baseUrl}/api/uploads`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify(body)
-  });
-  return { status: response.status, body: await response.json() };
-}
+const upload = (token, body) => callApi(stack, token, "POST", "/api/uploads", body);
 
 async function read(url, token) {
-  const response = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    redirect: "manual"
-  });
+  const response = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {}, redirect: "manual" });
   return { status: response.status, text: await response.text(), headers: response.headers };
 }
 
-describe("publishing", () => {
-  test("anonymous uploads are refused", async () => {
-    const result = await upload(null, { html: page("anon") });
-    assert.equal(result.status, 401);
+describe("workspaces, driven entirely through the API (as an agent would)", () => {
+  let nora;
+  let workspace;
+
+  test("a brand-new account has no workspace and cannot publish yet", async () => {
+    nora = await signInTokens(stack, "nora@new.test");
+    const me = await callApi(stack, nora.accessToken, "GET", "/api/me");
+    assert.equal(me.status, 200);
+    assert.equal(me.body.workspace, null);
+    const attempt = await upload(nora.accessToken, { html: page("too early") });
+    assert.equal(attempt.status, 403);
+    assert.match(attempt.body.error, /workspace create/);
   });
 
-  test("a forged or garbage bearer token is refused", async () => {
+  test("they create a workspace, become its admin, and can publish", async () => {
+    const created = await callApi(stack, nora.accessToken, "POST", "/api/workspaces", { name: "Nora Labs" });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    workspace = created.body.workspace;
+    assert.equal(workspace.role, "admin");
+    assert.match(workspace.handle, /^nora-labs-[a-z0-9]{4}$/);
+
+    nora = await refreshInto(stack, nora, workspace.id);
+    const me = await callApi(stack, nora.accessToken, "GET", "/api/me");
+    assert.equal(me.body.workspace.name, "Nora Labs");
+    assert.equal(me.body.workspace.role, "admin");
+
+    const published = await upload(nora.accessToken, { html: page("Nora plan") });
+    assert.equal(published.status, 201);
+    assert.equal(published.body.workspace.name, "Nora Labs");
+  });
+
+  test("the admin creates an invite; a new account joins with the code", async () => {
+    const invite = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", {});
+    assert.equal(invite.status, 201);
+    const { code } = invite.body;
+    assert.match(code, /^HA-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+
+    let sam = await signInTokens(stack, "sam@new.test");
+    const joined = await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", {
+      code: code.toLowerCase().replaceAll("-", " ")
+    });
+    assert.equal(joined.status, 200, JSON.stringify(joined.body));
+    assert.equal(joined.body.workspace.name, "Nora Labs");
+
+    sam = await refreshInto(stack, sam, workspace.id);
+    const feed = await callApi(stack, sam.accessToken, "GET", "/api/drafts?scope=workspace");
+    const noraPlan = feed.body.drafts.find((d) => d.title === "Nora plan");
+    assert.ok(noraPlan);
+    const opened = await read(noraPlan.publicUrl, sam.accessToken);
+    assert.equal(opened.status, 200);
+    assert.match(opened.text, /Nora plan/);
+
+    const members = await callApi(stack, nora.accessToken, "GET", "/api/workspaces/members");
+    assert.deepEqual(members.body.members.map((m) => m.email).sort(), ["nora@new.test", "sam@new.test"]);
+  });
+
+  test("bad, unknown, or used-up codes are refused", async () => {
+    const olivia = await accessToken(stack, "olivia@other.test");
+    for (const bad of ["nope", "HA-AAAA-AAAA-AAAA", ""]) {
+      const result = await callApi(stack, olivia, "POST", "/api/workspaces/join", { code: bad });
+      assert.equal(result.status, 404, bad);
+    }
+    const single = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", { maxUses: 1 });
+    const max = await accessToken(stack, "max@both.test", "Acme");
+    assert.equal((await callApi(stack, max, "POST", "/api/workspaces/join", { code: single.body.code })).status, 200);
+    assert.equal((await callApi(stack, olivia, "POST", "/api/workspaces/join", { code: single.body.code })).status, 404);
+  });
+
+  test("only admins can invite", async () => {
+    const bob = await accessToken(stack, "bob@acme.test");
+    assert.equal((await callApi(stack, bob, "POST", "/api/workspaces/invites", {})).status, 403);
+  });
+
+  test("an admin removes a member; their still-valid token stops working at once", async () => {
+    let sam = await signInTokens(stack, "sam@new.test", "Nora Labs");
+    sam = await refreshInto(stack, sam, workspace.id);
+    assert.equal((await callApi(stack, sam.accessToken, "GET", "/api/drafts?scope=workspace")).status, 200);
+
+    const members = await callApi(stack, nora.accessToken, "GET", "/api/workspaces/members");
+    const samId = members.body.members.find((m) => m.email === "sam@new.test").id;
+    assert.equal((await callApi(stack, nora.accessToken, "DELETE", `/api/workspaces/members/${samId}`)).status, 200);
+    assert.equal((await callApi(stack, sam.accessToken, "GET", "/api/drafts?scope=workspace")).status, 403);
+  });
+
+  test("a non-member who opens a link, signs in and joins lands back on that link", async () => {
+    const invite = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", {});
+    const feed = await callApi(stack, nora.accessToken, "GET", "/api/drafts?scope=workspace");
+    const link = new URL(feed.body.drafts.find((d) => d.title === "Nora plan").publicUrl).pathname;
+    const browser = new Browser(stack);
+    const landed = await browser.signIn("bob@acme.test", { next: link });
+    assert.equal(landed.status, 404, "bob is in Acme, not Nora Labs");
+    const fresh = new Browser(stack);
+    const page1 = await fresh.signIn("sam@new.test", { next: link });
+    assert.match(page1.finalUrl, /\/workspaces\?next=/);
+    assert.match(page1.text_, /ask whoever shared it for an invite code/i);
+    const joined = await fresh.post("/join", { code: invite.body.code, next: link });
+    assert.equal(new URL(joined.finalUrl).pathname, link);
+    assert.match(joined.text_, /Nora plan/);
+  });
+
+  test("a join link works in the browser too", async () => {
+    const invite = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", {});
+    const browser = new Browser(stack);
+    const landing = await browser.signIn("olivia@other.test", { next: `/join/${invite.body.code}` });
+    assert.match(landing.text_, /Join Nora Labs/);
+    const joined = await browser.post("/join", { code: invite.body.code });
+    assert.equal(joined.status, 200);
+    assert.match(joined.text_, /<h1>Nora Labs<\/h1>/);
+    assert.match(joined.text_, /Nora plan/);
+  });
+});
+
+describe("publishing", () => {
+  test("anonymous and garbage credentials are refused", async () => {
+    assert.equal((await upload(null, { html: page("anon") })).status, 401);
     assert.equal((await upload("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig", { html: page("x") })).status, 401);
     assert.equal((await upload("not-a-key", { html: page("x") })).status, 401);
-  });
-
-  test("the receipt names the team, and slug URLs are team-scoped", () => {
-    assert.equal(acmeArtifact.organization.name, "Acme");
-    assert.match(acmeArtifact.publicUrl, /\/t\/org_[^/]+\/acme-plan$/);
-  });
-
-  test("a CI organization API key publishes into its own team", async () => {
-    const result = await upload(CI_KEY, { html: page("CI report") });
-    assert.equal(result.status, 201, JSON.stringify(result.body));
-    assert.equal(result.body.organization.name, "Acme");
-    assert.equal(result.body.account.name, "Acme CI (API key)");
-  });
-
-  test("custom URLs are per team: another team's slug is invisible and untouched", async () => {
-    const olivia = await accessToken(stack, "olivia@other.test");
-    const check = await fetch(`${stack.baseUrl}/api/check`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${olivia}` },
-      body: JSON.stringify({ slug: "acme-plan" })
-    });
-    assert.equal((await check.json()).slug.status, "available", "no cross-team slug oracle");
-
-    const result = await upload(olivia, { html: page("Other plan"), slug: "acme-plan" });
-    assert.equal(result.status, 201);
-    assert.notEqual(result.body.publicUrl, acmeArtifact.publicUrl);
-    assert.match((await read(acmeArtifact.publicUrl, await accessToken(stack, "bob@acme.test"))).text, /Acme plan/);
-    assert.equal((await read(result.body.publicUrl, olivia)).status, 200);
   });
 
   test("a token issued to another WorkOS application is refused", async () => {
     const foreign = await accessToken(stack, "alice@acme.test", null, { clientId: "client_unrelated_app" });
     assert.equal((await upload(foreign, { html: page("x") })).status, 401);
-    assert.equal((await read(acmeArtifact.publicUrl, foreign)).status, 401);
+    assert.equal((await read(acme.publicUrl, foreign)).status, 401);
   });
 
-  test("a required publish permission blocks members without it", async () => {
-    stack.config.publishPermission = "artifacts:publish";
-    try {
-      const bob = await accessToken(stack, "bob@acme.test");
-      const result = await upload(bob, { html: page("bob") });
-      assert.equal(result.status, 403);
-      assert.match(result.body.error, /artifacts:publish/);
-    } finally {
-      stack.config.publishPermission = null;
-    }
+  test("the receipt names the workspace; custom URLs live under it", () => {
+    assert.equal(acme.workspace.name, "Acme");
+    assert.match(acme.publicUrl, /\/w\/acme-[a-z0-9]{4}\/acme-plan$/);
+    assert.match(acme.versionUrl, /\/d\/[a-z0-9]{12}\/v\/1$/);
+  });
+
+  test("identical content is a no-op; new content is a new version at the same URL", async () => {
+    const alice = await accessToken(stack, "alice@acme.test");
+    const same = await upload(alice, { html: page("Acme plan"), slug: "acme-plan" });
+    assert.equal(same.body.unchanged, true);
+    assert.equal(same.body.versionNumber, 1);
+    const next = await upload(alice, { html: page("Acme plan v2"), slug: "acme-plan" });
+    assert.equal(next.body.versionNumber, 2);
+    assert.equal(next.body.draftId, acme.draftId);
+    assert.match((await read(`${acme.publicUrl}/v/1`, alice)).text, /Acme plan</);
+    assert.match((await read(acme.publicUrl, alice)).text, /Acme plan v2/);
+  });
+
+  test("a CI organization API key publishes into its own workspace", async () => {
+    const result = await upload(CI_KEY, { html: page("CI report") });
+    assert.equal(result.status, 201, JSON.stringify(result.body));
+    assert.equal(result.body.workspace.name, "Acme");
+    assert.equal(result.body.account.name, "Acme CI (API key)");
+  });
+
+  test("custom URLs are per workspace: no cross-workspace oracle or collision", async () => {
+    const olivia = await accessToken(stack, "olivia@other.test", "Other");
+    const check = await callApi(stack, olivia, "POST", "/api/check", { slug: "acme-plan" });
+    assert.equal(check.body.slug.status, "available");
+    const result = await upload(olivia, { html: page("Other plan"), slug: "acme-plan" });
+    assert.equal(result.status, 201);
+    assert.notEqual(result.body.publicUrl, acme.publicUrl);
+    assert.equal((await read(result.body.publicUrl, olivia)).status, 200);
+  });
+
+  test("multi-page uploads serve each page", async () => {
+    const alice = await accessToken(stack, "alice@acme.test");
+    const result = await upload(alice, {
+      files: [
+        { path: "index.html", html: page("Index", '<a href="details.html">details</a>') },
+        { path: "details.html", html: page("Details") }
+      ]
+    });
+    assert.equal(result.status, 201, JSON.stringify(result.body));
+    assert.match((await read(`${result.body.publicUrl}/details`, alice)).text, /Details/);
+  });
+
+  test("invalid HTML is rejected with line-level issues", async () => {
+    const alice = await accessToken(stack, "alice@acme.test");
+    const result = await upload(alice, {
+      html: `<!doctype html><title>x</title><script src="https://x.test/a.js"></script>`
+    });
+    assert.equal(result.status, 422);
+    assert.ok(result.body.issues.length > 0);
   });
 });
 
 describe("reading", () => {
   test("signed-out curl gets 401, never the HTML", async () => {
-    const result = await read(acmeArtifact.publicUrl);
+    const result = await read(acme.publicUrl);
     assert.equal(result.status, 401);
     assert.doesNotMatch(result.text, /Acme plan/);
   });
 
   test("signed-out browsers are sent to sign-in and come back", async () => {
-    const response = await fetch(acmeArtifact.publicUrl, { headers: { Accept: "text/html" }, redirect: "manual" });
+    const response = await fetch(acme.publicUrl, { headers: { Accept: "text/html" }, redirect: "manual" });
     assert.equal(response.status, 302);
-    const location = new URL(response.headers.get("location"));
+    const location = new URL(response.headers.get("location"), stack.baseUrl);
     assert.equal(location.pathname, "/auth/sign-in");
-    assert.equal(location.searchParams.get("next"), acmeArtifact.publicUrl);
+    assert.equal(location.searchParams.get("next"), new URL(acme.publicUrl).pathname);
   });
 
-  test("every member of the team can read, by token and in the browser", async () => {
+  test("members read by token and in the browser, under a strict CSP", async () => {
     const bob = await accessToken(stack, "bob@acme.test");
-    const byToken = await read(acmeArtifact.publicUrl, bob);
+    const byToken = await read(acme.publicUrl, bob);
     assert.equal(byToken.status, 200);
-    assert.match(byToken.text, /Acme plan/);
     assert.match(byToken.headers.get("content-security-policy"), /default-src 'none'/);
+    assert.match(byToken.headers.get("cache-control"), /private, no-store/);
 
     const browser = new Browser(stack);
-    const landed = await browser.signIn("bob@acme.test", { next: acmeArtifact.publicUrl });
+    const landed = await browser.signIn("bob@acme.test", { next: new URL(acme.publicUrl).pathname });
     assert.equal(landed.status, 200);
     assert.match(landed.text_, /Acme plan/);
   });
 
-  test("the team CI key can read team artifacts", async () => {
-    assert.equal((await read(acmeArtifact.publicUrl, CI_KEY)).status, 200);
+  test("the workspace CI key can read workspace artifacts", async () => {
+    assert.equal((await read(acme.publicUrl, CI_KEY)).status, 200);
   });
 
-  test("members of another team get 404, by token, key, and browser", async () => {
-    const olivia = await accessToken(stack, "olivia@other.test");
-    assert.equal((await read(acmeArtifact.publicUrl, olivia)).status, 404);
-    assert.equal((await read(acmeArtifact.publicUrl, OTHER_CI_KEY)).status, 404);
-    assert.equal((await read(`${acmeArtifact.publicUrl}/raw`, olivia)).status, 404);
-    assert.equal((await read(`${stack.baseUrl}/d/${acmeArtifact.draftId}/v/1`, olivia)).status, 404);
-
+  test("other workspaces get 404 by token, key, browser, raw and version URLs", async () => {
+    const olivia = await accessToken(stack, "olivia@other.test", "Other");
+    for (const url of [acme.publicUrl, `${acme.publicUrl}/raw`, acme.versionUrl, `${stack.baseUrl}/d/${acme.draftId}`]) {
+      assert.equal((await read(url, olivia)).status, 404, url);
+      assert.equal((await read(url, OTHER_CI_KEY)).status, 404, url);
+    }
     const browser = new Browser(stack);
-    await browser.signIn("olivia@other.test");
-    const response = await browser.get(acmeArtifact.publicUrl);
+    await browser.signIn("olivia@other.test", { workspace: "Other" });
+    const response = await browser.get(acme.publicUrl);
     assert.equal(response.status, 404);
     assert.doesNotMatch(response.text_, /Acme plan/);
   });
 
-  test("a 404 for another team looks exactly like a missing artifact", async () => {
-    const olivia = await accessToken(stack, "olivia@other.test");
-    const denied = await read(acmeArtifact.publicUrl, olivia);
-    const missing = await read(`${stack.baseUrl}/d/nonexistent99`, olivia);
+  test("a 404 for another workspace looks exactly like a missing artifact", async () => {
+    const olivia = await accessToken(stack, "olivia@other.test", "Other");
+    const denied = await read(`${stack.baseUrl}/d/${acme.draftId}`, olivia);
+    const missing = await read(`${stack.baseUrl}/d/zzzzzzzzzzzz`, olivia);
     assert.equal(denied.status, missing.status);
     assert.equal(denied.text, missing.text);
   });
 
-  test("a member of both teams is switched into the artifact's team", async () => {
+  test("a member of both workspaces is switched into the artifact's workspace", async () => {
     const browser = new Browser(stack);
-    await browser.signIn("max@both.test", { organizationName: "Other" });
-    const workspace = await browser.get("/workspace");
-    assert.match(workspace.text_, /<h1>Other<\/h1>/);
-
-    const response = await browser.get(acmeArtifact.publicUrl);
+    await browser.signIn("max@both.test", { workspace: "Other" });
+    assert.match((await browser.get("/")).text_, /<h1>Other<\/h1>/);
+    const response = await browser.get(acme.publicUrl);
     assert.equal(response.status, 200);
     assert.match(response.text_, /Acme plan/);
-    assert.match((await browser.get("/workspace")).text_, /<h1>Acme<\/h1>/);
-  });
-
-  test("workspace feeds are per team", async () => {
-    const bob = await accessToken(stack, "bob@acme.test");
-    const olivia = await accessToken(stack, "olivia@other.test");
-    const list = async (token) =>
-      (await (await fetch(`${stack.baseUrl}/api/drafts?scope=workspace`, { headers: { Authorization: `Bearer ${token}` } })).json()).drafts;
-    assert.ok((await list(bob)).some((d) => d.draftId === acmeArtifact.draftId));
-    assert.ok(!(await list(olivia)).some((d) => d.draftId === acmeArtifact.draftId));
+    assert.match((await browser.get("/")).text_, /<h1>Acme<\/h1>/);
   });
 });
 
 describe("revocation", () => {
-  test("removing a member in WorkOS revokes their still-valid token at once", async () => {
+  test("removing a member in WorkOS revokes their still-valid token (webhook)", async () => {
     const token = await accessToken(stack, "bob@acme.test");
-    assert.equal((await read(acmeArtifact.publicUrl, token)).status, 200);
-
-    const acme = await findOrganization(stack.emulator, "Acme");
+    assert.equal((await read(acme.publicUrl, token)).status, 200);
+    const org = await findOrganization(stack.emulator, "Acme");
     const bob = await findUser(stack.emulator, "bob@acme.test");
     const { data } = await workosApi(
       stack.emulator,
       "GET",
-      `/user_management/organization_memberships?user_id=${bob.id}&organization_id=${acme.id}`
+      `/user_management/organization_memberships?user_id=${bob.id}&organization_id=${org.id}`
     );
     await workosApi(stack.emulator, "DELETE", `/user_management/organization_memberships/${data[0].id}`);
-
     let status;
     for (let i = 0; i < 50; i += 1) {
-      status = (await read(acmeArtifact.publicUrl, token)).status;
+      status = (await read(acme.publicUrl, token)).status;
       if (status !== 200) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    assert.equal(status, 401);
-    const revoked = await stack.pool.query("SELECT 1 FROM revocations WHERE subject = $1", [bob.id]);
-    assert.equal(revoked.rowCount, 1, "revoked by the signed WorkOS webhook");
+    assert.equal(status, 404);
   });
 
   test("a stale, out-of-order removal event cannot lock out an active member", async () => {
-    const other = await findOrganization(stack.emulator, "Other");
+    const org = await findOrganization(stack.emulator, "Other");
     const olivia = await findUser(stack.emulator, "olivia@other.test");
     const response = await sendWebhook(stack, {
       id: "event_stale",
       event: "organization_membership.deleted",
       created_at: new Date(0).toISOString(),
-      data: { object: "organization_membership", user_id: olivia.id, organization_id: other.id, status: "inactive" }
+      data: { object: "organization_membership", user_id: olivia.id, organization_id: org.id, status: "inactive" }
     });
     assert.equal(response.status, 200);
-    const token = await accessToken(stack, "olivia@other.test");
-    const me = await fetch(`${stack.baseUrl}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
-    assert.equal(me.status, 200);
+    const token = await accessToken(stack, "olivia@other.test", "Other");
+    const me = await callApi(stack, token, "GET", "/api/me");
+    assert.equal(me.body.workspace?.name, "Other");
   });
 
-  test("if WorkOS is unreachable during a webhook, the cached membership is dropped", async () => {
-    const token = await accessToken(stack, "olivia@other.test");
-    const me = () => fetch(`${stack.baseUrl}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
-    assert.equal((await me()).status, 200); // membership now cached
-    const other = await findOrganization(stack.emulator, "Other");
+  test("if WorkOS is unreachable during a webhook, cached access is dropped, not kept", async () => {
+    const token = await accessToken(stack, "olivia@other.test", "Other");
+    assert.equal((await callApi(stack, token, "GET", "/api/drafts")).status, 200); // membership cached
+    const org = await findOrganization(stack.emulator, "Other");
     const olivia = await findUser(stack.emulator, "olivia@other.test");
-
-    const { workos } = await import("../src/workos.js");
-    const original = workos().userManagement.listOrganizationMemberships;
-    workos().userManagement.listOrganizationMemberships = async () => {
-      throw new Error("WorkOS unreachable");
-    };
+    const restore = await breakWorkos(stack.emulator, "GET", "/user_management/organization_memberships");
     try {
       const response = await sendWebhook(stack, {
         id: "event_unreachable",
         event: "organization_membership.deleted",
-        data: { object: "organization_membership", user_id: olivia.id, organization_id: other.id }
+        data: { object: "organization_membership", user_id: olivia.id, organization_id: org.id }
       });
       assert.equal(response.status, 500, "WorkOS retries the delivery");
-      const cached = await stack.pool.query(
-        "SELECT 1 FROM memberships WHERE user_id = $1 AND organization_id = $2",
-        [olivia.id, other.id]
-      );
-      assert.equal(cached.rowCount, 0);
-      assert.notEqual((await me()).status, 200, "no stale access while WorkOS is down");
+      assert.notEqual((await callApi(stack, token, "GET", "/api/drafts")).status, 200, "no stale access");
     } finally {
-      workos().userManagement.listOrganizationMemberships = original;
+      await restore();
     }
-    assert.equal((await me()).status, 200, "recovers once WorkOS answers");
+    assert.equal((await callApi(stack, token, "GET", "/api/drafts")).status, 200, "recovers once WorkOS answers");
   });
 
   test("unsigned or forged webhooks are rejected", async () => {
@@ -265,71 +356,32 @@ describe("web app", () => {
     const response = await fetch(`${stack.baseUrl}/auth/sign-in?next=${encodeURIComponent("https://evil.example/")}`, {
       redirect: "manual"
     });
-    const stateCookie = response.headers.getSetCookie().find((c) => c.startsWith("htmlartifact_auth_state="));
+    const cookie = response.headers.getSetCookie().find((c) => c.startsWith("htmlartifact_auth_state="));
     const payload = JSON.parse(
-      Buffer.from(decodeURIComponent(stateCookie.split(";")[0].split("=")[1]).split(".")[0], "base64url").toString()
+      Buffer.from(decodeURIComponent(cookie.split(";")[0].split("=")[1]).split(".")[0], "base64url").toString()
     );
-    assert.equal(payload.next, "/workspace");
-  });
-
-  test("someone without a team lands on onboarding and can create one", async () => {
-    const browser = new Browser(stack);
-    const landed = await browser.signIn("nora@none.test");
-    assert.match(landed.url, /\/onboarding$/);
-    assert.match(landed.text_, /Create a team/);
-
-    const created = await browser.post("/teams", { name: "Nora Labs" });
-    assert.match(created.url, /\/team$/);
-    assert.match(created.text_, /Nora Labs/);
-    assert.match(created.text_, /You are an admin/);
-    assert.match(created.text_, /Invite a teammate/);
-  });
-
-  test("team admins mint working CI keys; members cannot", async () => {
-    const browser = new Browser(stack);
-    await browser.signIn("nora@none.test");
-    const created = await browser.post("/team/api-keys", { name: "GitHub Actions" });
-    const value = created.text_.match(/<code>(sk_[^<]+)<\/code>/)?.[1];
-    assert.ok(value, "key value shown once");
-    const result = await upload(value, { html: page("from nora ci") });
-    assert.equal(result.status, 201);
-    assert.equal(result.body.organization.name, "Nora Labs");
-
-    const member = new Browser(stack);
-    await member.signIn("alice@acme.test");
-    const denied = await member.post("/team/api-keys", { name: "nope" });
-    assert.equal(denied.status, 403);
+    assert.equal(payload.next, "/");
   });
 
   test("form posts from another origin are refused (CSRF)", async () => {
     const browser = new Browser(stack);
-    await browser.signIn("nora@none.test");
+    await browser.signIn("alice@acme.test");
     for (const origin of ["https://evil.example", "http://sibling.127.0.0.1"]) {
-      const response = await browser.post(
-        "/team/invitations",
-        { email: "attacker@evil.example", role: "admin" },
-        { headers: { Origin: origin } }
-      );
+      const response = await browser.post("/workspaces", { name: "Evil" }, { headers: { Origin: origin } });
       assert.equal(response.status, 403, origin);
     }
-    const noOrigin = await browser.request("/team/invitations", {
+    const noOrigin = await browser.request("/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "email=attacker%40evil.example"
+      body: "name=Evil"
     });
     assert.equal(noOrigin.status, 403);
   });
 
-  test("signed-out dashboard pages ask for sign-in", async () => {
-    for (const path of ["/workspace", "/dashboard", "/team", "/cli/auth"]) {
+  test("signed-out pages ask for sign-in", async () => {
+    for (const path of ["/", "/mine", "/workspaces"]) {
       const response = await fetch(`${stack.baseUrl}${path}`, { redirect: "manual" });
       assert.equal(response.status, 401, path);
     }
-  });
-
-  test("the installer only touches htmlartifact paths", async () => {
-    const script = await (await fetch(`${stack.baseUrl}/install.sh`)).text();
-    assert.match(script, /htmlartifact\.mjs/);
-    assert.doesNotMatch(script, /postplan/i);
   });
 });

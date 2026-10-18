@@ -4,7 +4,7 @@ const DRAFT_ID_PATTERN = /^[a-z0-9]{12}$/;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 const RESERVED_SLUGS = new Set([
   "admin", "api", "app", "assets", "auth", "blog", "cdn", "cli", "d", "dashboard",
-  "docs", "files", "help", "htmlartifact", "install", "login", "mail", "raw", "signin", "static",
+  "docs", "files", "help", "htmlartifact", "login", "mail", "raw", "signin", "static",
   "status", "support", "www"
 ]);
 
@@ -27,137 +27,19 @@ export function slugProblem(slug) {
   return null;
 }
 
-// The registrable host the session cookie is scoped to in wildcard mode, so
-// one sign-in covers the apex and every artifact subdomain. Null otherwise.
-export function getCookieDomain(publicBaseUrl) {
-  const wildcard = parseWildcardBaseUrl(publicBaseUrl);
-  return wildcard ? wildcard.hostname.slice(2) : null;
+// Artifact URLs are paths on the service's own origin:
+//   /d/<draft id>             any artifact, by its permanent ID
+//   /w/<workspace>/<slug>     a custom URL, unique within its workspace
+export function draftUrl(origin, draft, workspaceHandle) {
+  return draft.slug && workspaceHandle
+    ? `${origin}/w/${workspaceHandle}/${draft.slug}`
+    : `${origin}/d/${draft.id}`;
 }
 
-// Whether an absolute URL points into this deployment (apex or, in wildcard
-// mode, an artifact subdomain), making it a safe post-sign-in destination.
-export function isOwnUrl(value, publicBaseUrl) {
-  const target = parseUrl(value);
-  const configured = parseUrl(publicBaseUrl);
-  if (!target || !configured) return false;
-  if (target.protocol !== configured.protocol) return false;
-  const host = target.host.toLowerCase();
-  const wildcard = parseWildcardBaseUrl(publicBaseUrl);
-  if (!wildcard) return host === configured.host.toLowerCase();
-  const root = wildcard.host.slice(2).toLowerCase();
-  return host === root || (host.endsWith(`.${root}`) && !host.slice(0, -(root.length + 1)).includes("."));
-}
-
-export function getRequestBaseUrl(req) {
-  const forwardedProto = req.get("x-forwarded-proto");
-  const protocol = forwardedProto
-    ? forwardedProto.split(",")[0].trim()
-    : req.protocol || "http";
-  return `${protocol}://${req.get("host")}`;
-}
-
-export function getHomeUrl({ publicBaseUrl, requestBaseUrl }) {
-  const configured = normalizeUrl(publicBaseUrl);
-  const wildcard = parseWildcardBaseUrl(configured);
-
-  if (wildcard) {
-    wildcard.hostname = wildcard.hostname.slice(2);
-    wildcard.pathname = "/";
-    wildcard.search = "";
-    wildcard.hash = "";
-    return stripTrailingSlash(wildcard.toString());
-  }
-
-  return configured || normalizeUrl(requestBaseUrl);
-}
-
-// Custom URLs ("slugs") are unique per team, so their URL names the team:
-// /t/<organization id>/<slug>, always on the apex. Draft IDs are global.
-export function getDraftPublicUrl({ draftId, slug, organizationId, publicBaseUrl, requestBaseUrl }) {
-  const configured = normalizeUrl(publicBaseUrl);
-  const wildcard = parseWildcardBaseUrl(configured);
-
-  if (slug && organizationId) {
-    return `${getHomeUrl({ publicBaseUrl, requestBaseUrl })}/t/${organizationId}/${slug}`;
-  }
-  if (wildcard) {
-    wildcard.hostname = `${draftId}.${wildcard.hostname.slice(2)}`;
-    wildcard.pathname = "/";
-    wildcard.search = "";
-    wildcard.hash = "";
-    return stripTrailingSlash(wildcard.toString());
-  }
-
-  const baseUrl = configured || normalizeUrl(requestBaseUrl);
-  return `${baseUrl}/d/${draftId}`;
-}
-
-export function getDraftRawUrl({ draftId, slug, organizationId, publicBaseUrl, requestBaseUrl }) {
-  if (slug && organizationId) {
-    return `${getHomeUrl({ publicBaseUrl, requestBaseUrl })}/t/${organizationId}/${slug}/raw`;
-  }
-  const configured = normalizeUrl(publicBaseUrl);
-  const wildcard = parseWildcardBaseUrl(configured);
-
-  if (wildcard) {
-    wildcard.hostname = wildcard.hostname.slice(2);
-    wildcard.pathname = `/d/${draftId}/raw`;
-    wildcard.search = "";
-    wildcard.hash = "";
-    return wildcard.toString();
-  }
-
-  const baseUrl = configured || normalizeUrl(requestBaseUrl);
-  return `${baseUrl}/d/${draftId}/raw`;
-}
-
-// Returns the draft ID named by a wildcard subdomain host, or null for the
-// apex, nested hosts, and reserved names such as www.
-export function getDraftRefFromHost({ publicBaseUrl, host }) {
-  const wildcard = parseWildcardBaseUrl(publicBaseUrl);
-  if (!wildcard) return null;
-
-  const rootHost = wildcard.hostname.slice(2).toLowerCase();
-  const requestHost = parseHost(host);
-  if (!requestHost || !requestHost.endsWith(`.${rootHost}`)) return null;
-
-  const label = requestHost.slice(0, -(rootHost.length + 1));
-  return DRAFT_ID_PATTERN.test(label) ? label : null;
-}
-
-function parseWildcardBaseUrl(value) {
-  const url = parseUrl(value);
-  if (!url || !url.hostname.startsWith("*.")) return null;
-  return url;
-}
-
-function parseHost(value) {
-  const normalized = String(value || "").trim();
-  if (!normalized) return null;
-
-  try {
-    return new URL(`http://${normalized}`).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-function parseUrl(value) {
-  const normalized = normalizeUrl(value);
-  if (!normalized) return null;
-
-  try {
-    return new URL(normalized);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeUrl(value) {
-  if (typeof value !== "string") return "";
-  return value.trim().replace(/\/+$/, "");
-}
-
-function stripTrailingSlash(value) {
-  return value.replace(/\/+$/, "");
+// Post-sign-in destinations: same-site relative paths only, never an open
+// redirect.
+export function safeNext(value) {
+  if (typeof value !== "string") return "/";
+  if (value.startsWith("/") && !value.startsWith("//") && !value.includes("\\")) return value;
+  return "/";
 }

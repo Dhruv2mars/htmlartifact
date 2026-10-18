@@ -1,16 +1,16 @@
-// Server-rendered dashboard pages. These are htmlartifact's own UI (apex domain
-// only): unlike artifact serving they may use inline styles/JS freely; the
+// Server-rendered pages: htmlartifact's own UI, never artifact content. The
 // artifact CSP never applies here.
 
 export function renderSignIn({ next }) {
-  const target = `/auth/sign-in?next=${encodeURIComponent(next || "/dashboard")}`;
+  const target = `/auth/sign-in?next=${encodeURIComponent(next || "/")}`;
   return webPage({
     title: "Sign in · htmlartifact",
     body: `
       <main class="narrow center">
         <h1>htmlartifact</h1>
-        <p class="muted">Artifacts here are visible only to members of their organization.</p>
-        <p><a class="button" href="${escapeHtml(target)}">Sign in</a></p>
+        <p class="muted">HTML artifacts from coding agents, visible only to your workspace.</p>
+        <p><a class="button" href="${escapeHtml(target)}">Sign in or create an account</a></p>
+        <p class="muted small">From a terminal or an agent: <code>npx htmlartifact login</code></p>
       </main>
     `
   });
@@ -29,52 +29,37 @@ export function renderAuthError({ title = "Sign-in problem", message, retry = tr
   });
 }
 
-// Every artifact any member of the current organization has published.
+// Everything the current workspace has published, newest first.
 export function renderWorkspace({ session, drafts }) {
+  const name = session.workspace.name;
   return webPage({
-    title: `${session.organization_name || "Workspace"} · htmlartifact`,
+    title: `${name} · htmlartifact`,
     header: pageHeader({ session, active: "workspace" }),
     body: `
       <main>
-        <h1>${escapeHtml(session.organization_name || "Workspace")}</h1>
-        <p class="muted">Everything your team has published, newest first. Only members can open these.</p>
+        <h1>${escapeHtml(name)}</h1>
+        <p class="muted">Everything this workspace has published. Only members can open these.</p>
         ${
           drafts.length
             ? drafts.map((draft) => renderDraftRow(draft, { showAuthor: true })).join("\n")
-            : `<p class="muted">Nothing published yet.</p>`
+            : `<p class="muted">Nothing published yet. From a terminal or an agent: <code>npx htmlartifact upload plan.html</code></p>`
         }
       </main>
     `
   });
 }
 
-export function renderDashboard({ session, drafts }) {
-  const groups = groupByRepo(drafts);
-  const sections = groups
-    .map(
-      (group) => `
-        <section>
-          <h2>${escapeHtml(group.label)}${
-            group.href
-              ? ` <a class="small repo-link" href="${escapeHtml(group.href)}" target="_blank" rel="noopener noreferrer">GitHub ↗</a>`
-              : ""
-          }</h2>
-          ${group.drafts.map(renderDraftRow).join("\n")}
-        </section>
-      `
-    )
-    .join("\n");
-
+export function renderMine({ session, drafts }) {
   return webPage({
-    title: "My artifacts · htmlartifact",
-    header: pageHeader({ session, active: "dashboard" }),
+    title: "Mine · htmlartifact",
+    header: pageHeader({ session, active: "mine" }),
     body: `
       <main>
         <h1>My artifacts</h1>
         ${
           drafts.length
-            ? sections
-            : `<p class="muted">Nothing yet. Set up the CLI from <a href="/cli/auth">CLI setup</a>, then run <code>htmlartifact upload plan.html</code>.</p>`
+            ? drafts.map((draft) => renderDraftRow(draft)).join("\n")
+            : `<p class="muted">Nothing yet. Publish with <code>npx htmlartifact upload plan.html</code>.</p>`
         }
       </main>
     `
@@ -90,17 +75,15 @@ export function renderDraftDetail({ session, draft, versions }) {
           <td>${escapeHtml(v.git_commit_subject || "")}${v.git_dirty ? ' <span class="pill warn">dirty</span>' : ""}</td>
           <td class="muted">${escapeHtml(v.git_branch || "")} ${escapeHtml((v.git_commit_sha || "").slice(0, 7))}</td>
           <td class="muted">${escapeHtml(formatDate(v.created_at))}</td>
-        </tr>
-      `
+        </tr>`
     )
     .join("\n");
-
   return webPage({
     title: `${draft.title} · htmlartifact`,
-    header: pageHeader({ session, active: "dashboard" }),
+    header: pageHeader({ session, active: "mine" }),
     body: `
       <main>
-        <p class="small"><a href="/dashboard">← My artifacts</a></p>
+        <p class="small"><a href="/mine">← My artifacts</a></p>
         <h1>${escapeHtml(draft.title)}</h1>
         ${draft.description ? `<p class="muted">${escapeHtml(draft.description)}</p>` : ""}
         <p><a href="${escapeHtml(draft.publicUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(draft.publicUrl)}</a></p>
@@ -113,127 +96,55 @@ export function renderDraftDetail({ session, draft, versions }) {
   });
 }
 
-export function renderCliSetup({ session, homeUrl }) {
-  const install = `curl -fsSL ${homeUrl}/install.sh | sh`;
+// Signed in, no workspace selected: pick one, create one, or join one.
+export function renderWorkspaces({ session, workspaces, next = null }) {
+  const list = workspaces.length
+    ? `<ul class="orgs">${workspaces
+        .map(
+          (w) => `<li><form method="post" action="/workspaces/switch"><input type="hidden" name="id" value="${escapeHtml(w.id)}"><button class="linklike" type="submit">${escapeHtml(w.name)}</button>${w.current ? ' <span class="muted small">current</span>' : ""}</form></li>`
+        )
+        .join("")}</ul>`
+    : `<p class="muted">You are not in a workspace yet.</p>`;
   return webPage({
-    title: "CLI setup · htmlartifact",
-    header: pageHeader({ session, active: "cli" }),
+    title: "Workspaces · htmlartifact",
+    header: pageHeader({ session, active: "workspaces" }),
     body: `
       <main class="narrow">
-        <h1>Set up the CLI</h1>
-        <p class="muted">Installs the <code>htmlartifact</code> CLI.</p>
-        ${codeBox(install)}
-        <p class="muted">Then sign in. It opens this site in a browser, works over SSH too:</p>
-        ${codeBox("htmlartifact login")}
-        <p class="muted small">Needs Node.js 20+. Re-run the install line any time to update. CI should use an organization API key from <a href="/team">Team</a> as <code>HTMLARTIFACT_TOKEN</code>.</p>
+        <h1>Workspaces</h1>
+        ${next ? `<p class="notice">That link belongs to a workspace you are not in. Ask whoever shared it for an invite code and enter it below; you will go straight back to the link.</p>` : ""}
+        ${list}
+        <h2>Create a workspace</h2>
+        <form method="post" action="/workspaces" class="inline">
+          <input name="name" required maxlength="100" placeholder="Workspace name">
+          <button class="button" type="submit">Create</button>
+        </form>
+        <h2>Join a workspace</h2>
+        <form method="post" action="/join" class="inline">
+          ${next ? `<input type="hidden" name="next" value="${escapeHtml(next)}">` : ""}
+          <input name="code" required maxlength="40" placeholder="Invite code, e.g. HA-7KQ2-MX9P-4TRA">
+          <button class="button" type="submit">Join</button>
+        </form>
+        <p class="muted small">From a terminal or an agent: <code>htmlartifact workspace create "Acme"</code>, <code>htmlartifact workspace join &lt;code&gt;</code></p>
       </main>
     `
   });
 }
 
-export function renderOnboarding({ session, memberships, allowTeamCreation }) {
+export function renderJoin({ session, code, workspaceName }) {
   return webPage({
-    title: "Choose a team · htmlartifact",
+    title: `Join ${workspaceName} · htmlartifact`,
     header: pageHeader({ session, active: "" }),
     body: `
-      <main class="narrow">
-        <h1>Choose a team</h1>
-        <p class="muted">Artifacts belong to a team, and only its members can read them.</p>
-        ${memberships.length ? orgSwitcher(memberships, session.organization_id) : `<p class="muted">You are not in a team yet. Ask a teammate to invite ${escapeHtml(session.email || "you")} from their Team page${allowTeamCreation ? ", or create one" : ""}.</p>`}
-        ${
-          allowTeamCreation
-            ? `<h2>Create a team</h2>
-        <form method="post" action="/teams" class="inline">
-          <input name="name" required maxlength="100" placeholder="Team name">
-          <button class="button" type="submit">Create</button>
-        </form>`
-            : ""
-        }
+      <main class="narrow center">
+        <h1>Join ${escapeHtml(workspaceName)}</h1>
+        <p class="muted">You will see everything this workspace publishes, and they will see what you publish here.</p>
+        <form method="post" action="/join">
+          <input type="hidden" name="code" value="${escapeHtml(code)}">
+          <button class="button" type="submit">Join workspace</button>
+        </form>
       </main>
     `
   });
-}
-
-export function renderTeam({ session, isAdmin, memberships, apiKeys = [], newKey = null, notice = null }) {
-  const keyRows = apiKeys
-    .map(
-      (key) => `
-        <tr>
-          <td>${escapeHtml(key.name)}</td>
-          <td class="muted"><code>${escapeHtml(key.obfuscatedValue || "")}</code></td>
-          <td class="muted">${key.lastUsedAt ? escapeHtml(formatDate(key.lastUsedAt)) : "never used"}</td>
-          <td>
-            <form method="post" action="/team/api-keys/${escapeHtml(key.id)}/delete">
-              <button class="linklike" type="submit">Delete</button>
-            </form>
-          </td>
-        </tr>
-      `
-    )
-    .join("\n");
-
-  const admin = `
-        <h2>Invite a teammate</h2>
-        <form method="post" action="/team/invitations" class="inline">
-          <input name="email" type="email" required placeholder="name@company.com">
-          <select name="role"><option value="member">Member</option><option value="admin">Admin</option></select>
-          <button class="button" type="submit">Send invite</button>
-        </form>
-
-        <h2>CI API keys</h2>
-        <p class="muted small">For publishing from CI: set the value as <code>HTMLARTIFACT_TOKEN</code>. It publishes as this team.</p>
-        ${newKey ? `<p>New key <strong>${escapeHtml(newKey.name)}</strong>. Shown once, copy it now:</p>${codeBox(newKey.value)}` : ""}
-        <form method="post" action="/team/api-keys" class="inline">
-          <input name="name" maxlength="80" placeholder="Key name, e.g. GitHub Actions">
-          <button class="button" type="submit">Create key</button>
-        </form>
-        ${apiKeys.length ? `<table><tr><th>Name</th><th>Key</th><th>Last used</th><th></th></tr>${keyRows}</table>` : ""}
-
-        <h2>Single sign-on and provisioning</h2>
-        <p class="muted small">Opens the WorkOS Admin Portal for this team.</p>
-        <div class="actions">
-          ${[
-            ["sso", "Set up SSO"],
-            ["dsync", "Directory sync (SCIM)"],
-            ["domain_verification", "Verify a domain"],
-            ["audit_logs", "Audit log streaming"]
-          ]
-            .map(
-              ([intent, label]) =>
-                `<form method="post" action="/team/admin-portal/${intent}"><button class="button secondary" type="submit">${label}</button></form>`
-            )
-            .join("")}
-        </div>`;
-
-  return webPage({
-    title: `Team · ${session.organization_name || "htmlartifact"}`,
-    header: pageHeader({ session, active: "team" }),
-    body: `
-      <main class="narrow">
-        <h1>${escapeHtml(session.organization_name || "Team")}</h1>
-        ${notice ? `<p class="notice">${escapeHtml(notice)}</p>` : ""}
-        <p class="muted">You are ${isAdmin ? "an admin" : "a member"} of this team.</p>
-        ${isAdmin ? admin : `<p class="muted small">Admins can invite people, create CI keys, and set up SSO.</p>`}
-        <h2>Your teams</h2>
-        ${orgSwitcher(memberships, session.organization_id)}
-        <p class="small"><a href="/onboarding">Create another team</a></p>
-      </main>
-    `
-  });
-}
-
-function orgSwitcher(memberships, currentId) {
-  return `<ul class="orgs">${memberships
-    .map((m) =>
-      m.organizationId === currentId
-        ? `<li><strong>${escapeHtml(m.organizationName)}</strong> <span class="muted small">current</span></li>`
-        : `<li><form method="post" action="/orgs/switch"><input type="hidden" name="organizationId" value="${escapeHtml(m.organizationId)}"><button class="linklike" type="submit">${escapeHtml(m.organizationName)}</button></form></li>`
-    )
-    .join("")}</ul>`;
-}
-
-function codeBox(text) {
-  return `<div class="keybox"><code>${escapeHtml(text)}</code><button class="button copy" type="button">Copy</button></div>`;
 }
 
 function renderDraftRow(draft, { showAuthor = false } = {}) {
@@ -247,64 +158,27 @@ function renderDraftRow(draft, { showAuthor = false } = {}) {
         ${draft.description ? `<div class="muted small">${escapeHtml(draft.description)}</div>` : ""}
       </div>
       <div class="row-meta muted small">
-        ${showAuthor ? `${escapeHtml(draft.author || "")} ·` : `<a href="/dashboard/drafts/${escapeHtml(draft.draftId)}">Details</a> ·`}
+        ${showAuthor ? `${escapeHtml(draft.author || "")} ·` : `<a href="/mine/${escapeHtml(draft.draftId)}">Details</a> ·`}
         v${draft.latestVersionNumber ?? "—"} · ${draft.versionCount} version${draft.versionCount === 1 ? "" : "s"} · ${escapeHtml(formatDate(draft.updatedAt))}
       </div>
     </div>
   `;
 }
 
-function groupByRepo(drafts) {
-  const map = new Map();
-  for (const draft of drafts) {
-    const hasRepo = draft.repoOrg && draft.repoName;
-    const key = hasRepo ? `${draft.repoOrg}/${draft.repoName}` : "";
-    if (!map.has(key)) {
-      // Drafts uploaded by pre-0.0.3 CLIs have no repo_host; default those to
-      // github.com so the one-click repo link still works. Any member draft
-      // with a recorded host upgrades the group's link below.
-      map.set(key, {
-        label: hasRepo ? key : "No repository",
-        href: hasRepo
-          ? `https://${draft.repoHost || "github.com"}/${draft.repoOrg}/${draft.repoName}`
-          : null,
-        drafts: []
-      });
-    }
-    const group = map.get(key);
-    if (hasRepo && draft.repoHost) {
-      group.href = `https://${draft.repoHost}/${draft.repoOrg}/${draft.repoName}`;
-    }
-    group.drafts.push(draft);
-  }
-  // Repo groups first (already newest-first within), "No repository" last.
-  return [...map.entries()].sort(([a], [b]) => (a === "") - (b === "")).map(([, g]) => g);
-}
-
 function pageHeader({ session = {}, active }) {
-  // Profile data comes from WorkOS; only render an avatar for https URLs.
-  const avatar =
-    typeof session.picture_url === "string" && session.picture_url.startsWith("https://")
-      ? `<img class="avatar" src="${escapeHtml(session.picture_url)}" alt="" referrerpolicy="no-referrer">`
-      : "";
-  // The email is PII: blurred until hover/focus so it never leaks on
-  // screenshares.
+  const link = (href, key, label) =>
+    `<a href="${href}" class="${active === key ? "active" : ""}">${escapeHtml(label)}</a>`;
   const email = session.email
     ? `<span class="muted small pii" tabindex="0" title="Hover to reveal">${escapeHtml(session.email)}</span>`
     : "";
-  const link = (href, key, label) =>
-    `<a href="${href}" class="${active === key ? "active" : ""}">${escapeHtml(label)}</a>`;
-
   return `
     <header class="top">
       <nav>
-        ${session.organization_id ? link("/workspace", "workspace", session.organization_name || "Workspace") : ""}
-        ${session.organization_id ? link("/dashboard", "dashboard", "Mine") : ""}
-        ${session.organization_id ? link("/team", "team", "Team") : ""}
-        ${link("/cli/auth", "cli", "CLI setup")}
+        ${session.workspace ? link("/", "workspace", session.workspace.name) : ""}
+        ${session.workspace ? link("/mine", "mine", "Mine") : ""}
+        ${link("/workspaces", "workspaces", "Workspaces")}
       </nav>
       <form method="post" action="/auth/sign-out">
-        ${avatar}
         ${email}
         <button class="linklike" type="submit">Sign out</button>
       </form>

@@ -11,10 +11,9 @@ import pkg from "../package.json" with { type: "json" };
 
 // Single source of truth for the version: package.json (inlined in the bundle).
 const VERSION = pkg.version;
-// A server's /install.sh replaces this placeholder with its own URL, so an
-// installed CLI already knows where its workspace lives.
-const BAKED_API_URL = "__HTMLARTIFACT_API_URL__";
-const DEFAULT_API_URL = BAKED_API_URL.startsWith("__") ? null : BAKED_API_URL;
+// The hosted htmlartifact service. Set when it is deployed; until then use
+// --api-url or HTMLARTIFACT_API_URL.
+const DEFAULT_API_URL = null;
 const HTMLARTIFACT_DIR = process.env.HTMLARTIFACT_HOME || path.join(os.homedir(), ".htmlartifact");
 const CONFIG_PATH = path.join(HTMLARTIFACT_DIR, "config.json");
 const CREDENTIALS_PATH = path.join(HTMLARTIFACT_DIR, "credentials.json");
@@ -28,14 +27,14 @@ const program = new Command();
 
 program
   .name("htmlartifact")
-  .description("Publish HTML artifacts that only your team can read.")
+  .description("Publish HTML artifacts that only your workspace can open.")
   .version(VERSION);
 
 program
   .command("login")
-  .description("Sign in through your browser (works over SSH: open the link on any device).")
-  .option("--api-url <url>", "The htmlartifact server, e.g. https://artifacts.acme.com")
-  .option("--team <name>", "If you are in several teams, sign in to this one")
+  .description("Sign in, or create an account, in your browser (works over SSH: open the link on any device).")
+  .option("--api-url <url>", "Use another htmlartifact service")
+  .option("--workspace <name>", "If you are in several workspaces, start in this one")
   .action(async (options) => {
     const apiUrl = resolveApiUrl(options.apiUrl);
     const start = await postJson(`${apiUrl}/api/cli/device`, {});
@@ -44,7 +43,7 @@ program
     }
     const device = start.body;
 
-    console.log("Open this link and confirm the code:\n");
+    console.log("Open this link, sign in (or create an account), and confirm the code:\n");
     console.log(`  ${device.verification_uri_complete || device.verification_uri}\n`);
     console.log(`  Code: ${device.user_code}\n`);
     console.log("Waiting for you to finish in the browser...");
@@ -55,16 +54,19 @@ program
       await new Promise((resolve) => setTimeout(resolve, interval));
       let poll = await postJson(`${apiUrl}/api/cli/token`, { device_code: device.device_code });
       if (poll.body.code === "organization_selection_required") {
-        poll = await selectTeam(apiUrl, poll.body, options.team);
+        poll = await selectWorkspace(apiUrl, poll.body, options.workspace);
       }
       if (poll.ok) {
         const session = saveSession({ apiUrl, tokens: poll.body });
-        if (!session.organizationId) {
-          throw new CliError(`Signed in, but you are not in a team yet. Create or join one at ${apiUrl}/onboarding, then run htmlartifact login again.`);
+        const me = await api(apiUrl, "/api/me", { apiKey: session.accessToken });
+        console.log(`\nSigned in as ${me.email || me.name}.`);
+        if (me.workspace) {
+          console.log(`Workspace: ${me.workspace.name}`);
+        } else {
+          console.log("You are not in a workspace yet. Next, either:");
+          console.log('  htmlartifact workspace create "<name>"   start one and invite people');
+          console.log("  htmlartifact workspace join <code>       join with an invite code");
         }
-        const me = await requestJson(`${apiUrl}/api/me`, { apiKey: session.accessToken });
-        if (!me.ok) throw new CliError(serverErrorMessage(me.body));
-        console.log(`\nSigned in as ${me.body.email || me.body.name} in team "${me.body.organizationName}".`);
         return;
       }
       const error = poll.body.error || poll.body.code;
@@ -88,44 +90,119 @@ program
 
 program
   .command("whoami")
-  .description("Show who you are signed in as, and in which team.")
-  .option("--api-url <url>", "The htmlartifact server")
+  .description("Show who you are signed in as, and your current workspace.")
+  .option("--json", "Print JSON")
   .action(async (options) => {
-    const { apiUrl, apiKey } = await getAuth(options.apiUrl);
-    const { ok, body } = await requestJson(`${apiUrl}/api/me`, { apiKey });
-    if (!ok) throw new CliError(serverErrorMessage(body));
-    console.log(`User: ${body.name}${body.email ? ` <${body.email}>` : ""}`);
-    console.log(`Team: ${body.organizationName} (${body.organizationId})`);
-    console.log(`Server: ${apiUrl}`);
+    const { apiUrl, apiKey } = await getAuth();
+    const me = await api(apiUrl, "/api/me", { apiKey });
+    if (options.json) return printJson({ ...me, apiUrl });
+    console.log(`User: ${me.name}${me.email ? ` <${me.email}>` : ""}`);
+    console.log(
+      me.workspace
+        ? `Workspace: ${me.workspace.name} (${me.workspace.role || "member"})`
+        : "Workspace: none yet (htmlartifact workspace create <name> | workspace join <code>)"
+    );
+    console.log(`Service: ${apiUrl}`);
   });
 
-const orgCommand = program.command("org").description("List or switch teams.");
+const workspace = program.command("workspace").description("Create, join, and manage workspaces.");
 
-orgCommand
+workspace
+  .command("create")
+  .argument("<name>", "Workspace name, e.g. \"Acme\"")
+  .description("Create a workspace (you become its admin) and switch to it.")
+  .option("--json", "Print JSON")
+  .action(async (name, options) => {
+    const { apiUrl, apiKey } = await getAuth();
+    const result = await api(apiUrl, "/api/workspaces", { apiKey, body: { name } });
+    await switchSession(result.workspace.id);
+    if (options.json) return printJson(result);
+    console.log(`Created workspace "${result.workspace.name}" and switched to it.`);
+    console.log("Invite people with: htmlartifact workspace invite");
+  });
+
+workspace
+  .command("invite")
+  .description("Create an invite code for your current workspace (admins).")
+  .option("--max-uses <n>", "How many people can use it", Number)
+  .option("--days <n>", "Days until it expires", Number)
+  .option("--json", "Print JSON")
+  .action(async (options) => {
+    const { apiUrl, apiKey } = await getAuth();
+    const result = await api(apiUrl, "/api/workspaces/invites", {
+      apiKey,
+      body: { maxUses: options.maxUses, ttlDays: options.days }
+    });
+    if (options.json) return printJson(result);
+    console.log(`Invite to "${result.workspace.name}": ${result.code}`);
+    console.log(`Expires ${result.expiresAt.slice(0, 10)}, up to ${result.maxUses} people.\n`);
+    console.log("They run:");
+    console.log("  npx htmlartifact login");
+    console.log(`  npx htmlartifact workspace join ${result.code}`);
+    console.log(`Or open: ${result.joinUrl}`);
+  });
+
+workspace
+  .command("join")
+  .argument("<code>", "Invite code, e.g. HA-7KQ2-MX9P-4TRA")
+  .description("Join a workspace with an invite code and switch to it.")
+  .option("--json", "Print JSON")
+  .action(async (code, options) => {
+    const { apiUrl, apiKey } = await getAuth();
+    const result = await api(apiUrl, "/api/workspaces/join", { apiKey, body: { code } });
+    await switchSession(result.workspace.id);
+    if (options.json) return printJson(result);
+    console.log(`${result.alreadyMember ? "Already in" : "Joined"} "${result.workspace.name}". It is now your current workspace.`);
+  });
+
+workspace
   .command("list")
-  .description("List the teams you belong to.")
-  .action(async () => {
+  .description("List your workspaces (* = current).")
+  .option("--json", "Print JSON")
+  .action(async (options) => {
     const { apiUrl, apiKey } = await getAuth();
-    const { ok, body } = await requestJson(`${apiUrl}/api/orgs`, { apiKey });
-    if (!ok) throw new CliError(serverErrorMessage(body));
-    for (const org of body.organizations) {
-      console.log(`${org.current ? "*" : " "} ${org.name}  (${org.id})`);
-    }
+    const { workspaces } = await api(apiUrl, "/api/workspaces", { apiKey });
+    if (options.json) return printJson(workspaces);
+    if (!workspaces.length) return console.log("No workspaces yet.");
+    for (const w of workspaces) console.log(`${w.current ? "*" : " "} ${w.name}  (${w.role || "member"})`);
   });
 
-orgCommand
+workspace
   .command("switch")
-  .argument("<team>", "Team name or ID")
-  .description("Publish to and read from another of your teams.")
-  .action(async (team) => {
+  .argument("<name>", "Workspace name or ID")
+  .description("Make another of your workspaces the current one.")
+  .action(async (name) => {
     const { apiUrl, apiKey } = await getAuth();
-    const { ok, body } = await requestJson(`${apiUrl}/api/orgs`, { apiKey });
-    if (!ok) throw new CliError(serverErrorMessage(body));
-    const wanted = team.toLowerCase();
-    const org = body.organizations.find((o) => o.id === team || o.name.toLowerCase() === wanted);
-    if (!org) throw new CliError(`You are not in a team named "${team}". See: htmlartifact org list`);
-    await refreshSession(readJson(CREDENTIALS_PATH, {}), { organizationId: org.id });
-    console.log(`Switched to team "${org.name}".`);
+    const { workspaces } = await api(apiUrl, "/api/workspaces", { apiKey });
+    const wanted = name.toLowerCase();
+    const match = workspaces.find((w) => w.id === name || w.handle === wanted || w.name?.toLowerCase() === wanted);
+    if (!match) throw new CliError(`You are not in a workspace named "${name}". See: htmlartifact workspace list`);
+    await switchSession(match.id);
+    console.log(`Switched to "${match.name}".`);
+  });
+
+workspace
+  .command("members")
+  .description("List the members of your current workspace.")
+  .option("--json", "Print JSON")
+  .action(async (options) => {
+    const { apiUrl, apiKey } = await getAuth();
+    const { members } = await api(apiUrl, "/api/workspaces/members", { apiKey });
+    if (options.json) return printJson(members);
+    for (const m of members) console.log(`${m.name} <${m.email}>  ${m.role || "member"}`);
+  });
+
+workspace
+  .command("remove")
+  .argument("<email>", "Member to remove")
+  .description("Remove someone from your current workspace (admins). Their access ends immediately.")
+  .action(async (email) => {
+    const { apiUrl, apiKey } = await getAuth();
+    const { members } = await api(apiUrl, "/api/workspaces/members", { apiKey });
+    const member = members.find((m) => m.email?.toLowerCase() === email.toLowerCase());
+    if (!member) throw new CliError(`${email} is not a member of this workspace.`);
+    await api(apiUrl, `/api/workspaces/members/${member.id}`, { apiKey, method: "DELETE" });
+    console.log(`Removed ${email}.`);
   });
 
 program
@@ -159,7 +236,7 @@ program
     }
     const html = await response.text();
     if (!response.ok) {
-      const hint = response.status === 404 ? " Not found in your current team (see: htmlartifact org list)." : "";
+      const hint = response.status === 404 ? " Not found in your current workspace (see: htmlartifact workspace list)." : "";
       throw new CliError(`HTTP ${response.status} for ${target}.${hint}`);
     }
     const out = options.out
@@ -220,7 +297,7 @@ program
     if (!ok) {
       const staleMapping = status === 404 && mappedDraftId;
       const hint = staleMapping
-        ? "\nThe saved artifact for this path is in another team or was deleted. Re-run with --new to publish a new one."
+        ? "\nThe saved artifact for this path is in another workspace or was deleted. Re-run with --new to publish a new one."
         : "";
       if (options.json) {
         printJson({ ok: false, status, error: body.error || null, errors: body.errors || [], issues: body.issues || [] });
@@ -243,7 +320,7 @@ program
       contentHash: body.contentHash,
       totalBytes: body.totalBytes,
       account: body.account?.name || null,
-      team: body.organization?.name || null,
+      workspace: body.workspace?.name || null,
       pages: body.pages || null,
       // The draft ID never moves; a slug can be renamed and reused by
       // another draft, so it would not reliably name this one.
@@ -315,8 +392,8 @@ program
 
 program
   .command("list")
-  .description("List your artifacts in the current team (--all: everyone's).")
-  .option("--all", "List every artifact published in your team")
+  .description("List your artifacts in the current workspace (--all: everyone's).")
+  .option("--all", "List everything published in your workspace")
   .option("--api-url <url>", "The htmlartifact server")
   .option("--json", "Print the raw JSON response")
   .action(async (options) => {
@@ -335,7 +412,7 @@ program
     }
 
     if (!drafts.length) {
-      console.log(options.all ? "Nothing published in this team yet." : "Nothing yet. Publish with: htmlartifact upload <file>");
+      console.log(options.all ? "Nothing published in this workspace yet." : "Nothing yet. Publish with: htmlartifact upload <file>");
       return;
     }
 
@@ -407,25 +484,38 @@ async function refreshSession(session, { organizationId } = {}) {
   });
   if (!result.ok) {
     const reason = result.body.error_description || result.body.message || result.body.error || result.status;
-    if (organizationId) throw new CliError(`Could not switch team: ${reason}`);
+    if (organizationId) throw new CliError(`Could not switch workspace: ${reason}`);
     throw new CliError(`Your sign-in expired (${reason}). Run: htmlartifact login`);
   }
   return saveSession({ apiUrl: session.apiUrl, tokens: result.body });
 }
 
-// Several teams and no --team: list them and stop, rather than guess.
-async function selectTeam(apiUrl, pending, team) {
-  const teams = pending.organizations || [];
-  const wanted = team?.toLowerCase();
-  const org = wanted && teams.find((o) => o.id === team || o.name.toLowerCase() === wanted);
+// Several workspaces and no --workspace: list them and stop, not guess.
+async function selectWorkspace(apiUrl, pending, name) {
+  const choices = pending.organizations || [];
+  const wanted = name?.toLowerCase();
+  const org = wanted && choices.find((o) => o.id === name || o.name.toLowerCase() === wanted);
   if (!org) {
-    const names = teams.map((o) => `  ${o.name}`).join("\n");
-    throw new CliError(`You are in several teams. Run again with --team <name>:\n${names}`);
+    const names = choices.map((o) => `  ${o.name}`).join("\n");
+    throw new CliError(`You are in several workspaces. Run again with --workspace <name>:\n${names}`);
   }
   return postJson(`${apiUrl}/api/cli/token`, {
     pending_authentication_token: pending.pending_authentication_token,
     organization_id: org.id
   });
+}
+
+// Moves the saved CLI sign-in into another workspace (token refresh).
+async function switchSession(organizationId) {
+  if (process.env.HTMLARTIFACT_TOKEN) return;
+  await refreshSession(readJson(CREDENTIALS_PATH, {}), { organizationId });
+}
+
+// Calls the API and returns the JSON body, or throws the server's error.
+async function api(apiUrl, pathname, { apiKey, body, method } = {}) {
+  const result = await requestJson(`${apiUrl}${pathname}`, { apiKey, body, method });
+  if (!result.ok) throw new CliError(serverErrorMessage(result.body));
+  return result.body;
 }
 
 function saveSession({ apiUrl, tokens }) {
@@ -555,7 +645,7 @@ function readUploadSource(target) {
 // POSTs `body` as JSON (GET when absent) and returns { ok, status, body }.
 // Unreachable servers throw NetworkError, so callers can tell "could not
 // reach the server" apart from "the server rejected this".
-async function requestJson(url, { apiKey, body, timeoutMs = 30_000 } = {}) {
+async function requestJson(url, { apiKey, body, method, timeoutMs = 30_000 } = {}) {
   const headers = { "User-Agent": `htmlartifact/${VERSION}` };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -563,7 +653,7 @@ async function requestJson(url, { apiKey, body, timeoutMs = 30_000 } = {}) {
   let response;
   try {
     response = await fetch(url, {
-      method: body === undefined ? "GET" : "POST",
+      method: method || (body === undefined ? "GET" : "POST"),
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs)
@@ -630,10 +720,10 @@ function printReceipt(receipt) {
   console.log(`URL: ${receipt.url}`);
   console.log(`Raw HTML: ${receipt.rawUrl}`);
   if (receipt.versionUrl) console.log(`Version URL: ${receipt.versionUrl}`);
-  console.log(`Draft ID: ${receipt.draftId}`);
+  console.log(`Artifact ID: ${receipt.draftId}`);
   console.log(`Version: ${receipt.versionNumber}`);
   if (receipt.pages) console.log(`Pages: ${receipt.pages.map((page) => page.path).join(", ")}`);
-  console.log(`Team: ${receipt.team} (visible to its members only)`);
+  console.log(`Workspace: ${receipt.workspace} (members only)`);
   console.log(`Update: ${receipt.updateCommand}`);
   for (const warning of receipt.warnings) {
     console.warn(`Warning: ${warning}`);
@@ -647,7 +737,7 @@ function printCheckReport(report) {
     console.log("Checked markup locally. Account and limits were not checked.");
   } else if (report.limits) {
     console.log(`Account: ${report.account?.name}`);
-    console.log(`Team: ${report.organization?.name}`);
+    console.log(`Workspace: ${report.workspace?.name}`);
     console.log(`Limit: ${formatBytes(report.limits.maxBytes)} per upload, ${report.limits.maxPages} page(s)`);
   }
   if (report.slug) {

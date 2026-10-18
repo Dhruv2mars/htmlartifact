@@ -1,0 +1,21 @@
+# htmlartifact on Cloudflare Workers: artifacts in R2, data in D1, accounts
+# and workspaces in WorkOS. Secrets (wrangler secret put): WORKOS_API_KEY,
+# WORKOS_CLIENT_ID, HTMLARTIFACT_COOKIE_PASSWORD, WORKOS_WEBHOOK_SECRET.
+name = "htmlartifact"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "htmlartifact"
+database_id = "00000000-0000-0000-0000-000000000000" # set after: wrangler d1 create htmlartifact
+
+[[r2_buckets]]
+binding = "ARTIFACTS"
+bucket_name = "htmlartifact-artifacts"
+
+[[rules]]
+type = "Text"
+globs = ["**/*.svg"]
+fallthrough = true

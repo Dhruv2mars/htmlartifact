@@ -1,260 +1,217 @@
-import pg from "pg";
-import { config, requireEnv } from "./config.js";
-import { newInternalId } from "./ids.js";
+// D1 (SQLite) access. The schema is created on first use by each isolate, so
+// a fresh deployment needs no migration step. Times are unix seconds.
 
-const { Pool } = pg;
+export const FLAGS = { largeUploads: "large-uploads" };
 
-// Per-account feature flags, stored in accounts.flags. Set them with SQL:
-//   UPDATE accounts SET flags = ARRAY['large-uploads'] WHERE email = '...';
-export const FLAGS = {
-  largeUploads: "large-uploads"
-};
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT,
+  picture_url TEXT,
+  flags TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE TABLE IF NOT EXISTS workspaces (
+  organization_id TEXT PRIMARY KEY,
+  handle TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  created_by TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE TABLE IF NOT EXISTS invites (
+  code TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  expires_at INTEGER NOT NULL,
+  max_uses INTEGER NOT NULL,
+  uses INTEGER NOT NULL DEFAULT 0,
+  revoked_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS memberships (
+  user_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  role TEXT,
+  checked_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, organization_id)
+);
+CREATE TABLE IF NOT EXISTS revocations (
+  subject TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (subject, organization_id)
+);
+CREATE TABLE IF NOT EXISTS drafts (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  current_version_id TEXT,
+  repo_org TEXT,
+  repo_name TEXT,
+  repo_host TEXT,
+  slug TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  deleted_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS drafts_org_slug_idx ON drafts(organization_id, slug);
+CREATE INDEX IF NOT EXISTS drafts_org_updated_idx ON drafts(organization_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS drafts_account_idx ON drafts(account_id, organization_id);
+CREATE TABLE IF NOT EXISTS draft_versions (
+  id TEXT PRIMARY KEY,
+  draft_id TEXT NOT NULL,
+  version_number INTEGER NOT NULL,
+  object_key TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  file_size INTEGER NOT NULL,
+  page_count INTEGER NOT NULL DEFAULT 1,
+  has_inline_script INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT NOT NULL,
+  credential_id TEXT,
+  source_ip TEXT,
+  user_agent TEXT,
+  cli_version TEXT,
+  git_branch TEXT,
+  git_commit_sha TEXT,
+  git_commit_subject TEXT,
+  git_dirty INTEGER,
+  original_filename TEXT,
+  ci_run_url TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  UNIQUE (draft_id, version_number)
+);
+CREATE TABLE IF NOT EXISTS draft_pages (
+  draft_version_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  object_key TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  file_size INTEGER NOT NULL,
+  title TEXT,
+  has_inline_script INTEGER NOT NULL,
+  PRIMARY KEY (draft_version_id, path)
+);
+`;
 
-export const pool = new Pool({
-  connectionString: requireEnv("DATABASE_URL", config.databaseUrl)
-});
+const ready = new WeakMap();
 
-export async function initDb() {
-  await pool.query(`
-    -- People and machine credentials that publish. id is the WorkOS user id
-    -- (user_...) or, for CI, the WorkOS API key id (api_key_...). Profile
-    -- columns are a cache of WorkOS, refreshed by src/auth.js.
-    CREATE TABLE IF NOT EXISTS accounts (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      email TEXT,
-      picture_url TEXT,
-      flags TEXT[] NOT NULL DEFAULT '{}',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-
-    -- Cache of WorkOS organization names; WorkOS stays the source of truth.
-    CREATE TABLE IF NOT EXISTS organizations (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-
-    -- Access removed in WorkOS (webhooks), honoured before tokens expire.
-    -- organization_id '*' means every organization (user deleted).
-    CREATE TABLE IF NOT EXISTS revocations (
-      subject TEXT NOT NULL,
-      organization_id TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (subject, organization_id)
-    );
-
-    -- Verified WorkOS memberships. A token's org claim is only trusted once
-    -- WorkOS confirms the membership; rows expire after a few minutes.
-    CREATE TABLE IF NOT EXISTS memberships (
-      user_id TEXT NOT NULL,
-      organization_id TEXT NOT NULL,
-      checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (user_id, organization_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS drafts (
-      id TEXT PRIMARY KEY,
-      account_id TEXT NOT NULL REFERENCES accounts(id),
-      organization_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      description TEXT,
-      current_version_id TEXT,
-      repo_org TEXT,
-      repo_name TEXT,
-      repo_host TEXT,
-      slug TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      deleted_at TIMESTAMPTZ,
-      disabled_at TIMESTAMPTZ,
-      disabled_reason TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS draft_versions (
-      id TEXT PRIMARY KEY,
-      draft_id TEXT NOT NULL REFERENCES drafts(id),
-      version_number INTEGER NOT NULL,
-      object_key TEXT NOT NULL,
-      content_hash TEXT NOT NULL,
-      file_size INTEGER NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      created_by TEXT NOT NULL REFERENCES accounts(id),
-      credential_id TEXT,
-      source_ip TEXT,
-      user_agent TEXT,
-      cli_version TEXT,
-      git_branch TEXT,
-      git_commit_sha TEXT,
-      git_commit_subject TEXT,
-      git_dirty BOOLEAN,
-      original_filename TEXT,
-      request_id TEXT,
-      has_inline_script BOOLEAN,
-      external_image_hosts JSONB,
-      ci_run_url TEXT,
-      ci_actor TEXT,
-      page_count INTEGER NOT NULL DEFAULT 1,
-      UNIQUE (draft_id, version_number)
-    );
-
-    CREATE TABLE IF NOT EXISTS upload_events (
-      id TEXT PRIMARY KEY,
-      draft_id TEXT NOT NULL REFERENCES drafts(id),
-      draft_version_id TEXT REFERENCES draft_versions(id),
-      account_id TEXT NOT NULL REFERENCES accounts(id),
-      organization_id TEXT NOT NULL,
-      event_type TEXT NOT NULL,
-      source_ip TEXT,
-      user_agent TEXT,
-      metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-
-    -- Pages of a multi-page version other than index.html, which stays on
-    -- draft_versions.object_key so single-page versions need no rows here.
-    CREATE TABLE IF NOT EXISTS draft_pages (
-      draft_version_id TEXT NOT NULL REFERENCES draft_versions(id),
-      path TEXT NOT NULL,
-      object_key TEXT NOT NULL,
-      content_hash TEXT NOT NULL,
-      file_size INTEGER NOT NULL,
-      title TEXT,
-      has_inline_script BOOLEAN NOT NULL,
-      PRIMARY KEY (draft_version_id, path)
-    );
-
-    CREATE INDEX IF NOT EXISTS draft_versions_draft_id_idx ON draft_versions(draft_id);
-    CREATE INDEX IF NOT EXISTS upload_events_draft_id_idx ON upload_events(draft_id);
-    CREATE INDEX IF NOT EXISTS drafts_account_org_idx ON drafts(account_id, organization_id);
-    CREATE INDEX IF NOT EXISTS drafts_org_updated_idx ON drafts(organization_id, updated_at DESC);
-    CREATE UNIQUE INDEX IF NOT EXISTS drafts_org_slug_idx ON drafts(organization_id, slug);
-    -- Slugs used to be globally unique; that index leaked other teams' slugs.
-    DROP INDEX IF EXISTS drafts_slug_idx;
-  `);
+// Runs the idempotent schema once per isolate and D1 binding.
+export function ensureSchema(db) {
+  let promise = ready.get(db);
+  if (!promise) {
+    const statements = SCHEMA.split(";")
+      .map((statement) => statement.trim())
+      .filter(Boolean)
+      .map((statement) => db.prepare(statement));
+    promise = db.batch(statements).catch((error) => {
+      ready.delete(db);
+      throw error;
+    });
+    ready.set(db, promise);
+  }
+  return promise;
 }
 
-// Upserts the cached profile for an account. Called with fresh WorkOS data.
-export async function saveAccount({ id, name, email = null, pictureUrl = null }) {
-  await pool.query(
-    `
-      INSERT INTO accounts (id, name, email, picture_url)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (id) DO UPDATE
-        SET name = EXCLUDED.name, email = EXCLUDED.email,
-            picture_url = EXCLUDED.picture_url, updated_at = now()
-    `,
-    [id, name, email, pictureUrl]
-  );
+export const now = () => Math.floor(Date.now() / 1000);
+
+export async function saveAccount(db, { id, name, email = null, pictureUrl = null }) {
+  await db
+    .prepare(
+      `INSERT INTO accounts (id, name, email, picture_url) VALUES (?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET name = excluded.name, email = excluded.email,
+         picture_url = excluded.picture_url, updated_at = unixepoch()`
+    )
+    .bind(id, name, email, pictureUrl)
+    .run();
 }
 
-export async function saveOrganization({ id, name }) {
-  await pool.query(
-    `
-      INSERT INTO organizations (id, name) VALUES ($1, $2)
-      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
-    `,
-    [id, name]
-  );
+export async function findAccount(db, id, maxAgeSeconds = null) {
+  const row = await db.prepare("SELECT * FROM accounts WHERE id = ?").bind(id).first();
+  if (!row) return null;
+  if (maxAgeSeconds !== null && row.updated_at < now() - maxAgeSeconds) return null;
+  return { ...row, flags: JSON.parse(row.flags || "[]") };
 }
 
-export async function findAccount(id) {
-  const result = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [id]);
-  return result.rows[0] || null;
+export async function findWorkspace(db, organizationId) {
+  return db.prepare("SELECT * FROM workspaces WHERE organization_id = ?").bind(organizationId).first();
 }
 
-// Cached rows younger than maxAgeSeconds, or null (missing or stale).
-export async function findFreshAccount(id, maxAgeSeconds) {
-  const result = await pool.query(
-    `SELECT * FROM accounts WHERE id = $1 AND updated_at > now() - make_interval(secs => $2)`,
-    [id, maxAgeSeconds]
-  );
-  return result.rows[0] || null;
+export async function findWorkspaceByHandle(db, handle) {
+  return db.prepare("SELECT * FROM workspaces WHERE handle = ?").bind(handle).first();
 }
 
-export async function findFreshOrganization(id, maxAgeSeconds) {
-  const result = await pool.query(
-    `SELECT * FROM organizations WHERE id = $1 AND updated_at > now() - make_interval(secs => $2)`,
-    [id, maxAgeSeconds]
-  );
-  return result.rows[0] || null;
+export async function saveWorkspace(db, { organizationId, handle, name, createdBy = null }) {
+  await db
+    .prepare(
+      `INSERT INTO workspaces (organization_id, handle, name, created_by) VALUES (?, ?, ?, ?)
+       ON CONFLICT (organization_id) DO UPDATE SET name = excluded.name, updated_at = unixepoch()`
+    )
+    .bind(organizationId, handle, name, createdBy)
+    .run();
 }
 
-export async function hasFreshMembership(userId, organizationId, maxAgeSeconds) {
-  const result = await pool.query(
-    `SELECT 1 FROM memberships
-     WHERE user_id = $1 AND organization_id = $2 AND checked_at > now() - make_interval(secs => $3)`,
-    [userId, organizationId, maxAgeSeconds]
-  );
-  return result.rowCount > 0;
+export async function hasFreshMembership(db, userId, organizationId, maxAgeSeconds) {
+  const row = await db
+    .prepare("SELECT role FROM memberships WHERE user_id = ? AND organization_id = ? AND checked_at > ?")
+    .bind(userId, organizationId, now() - maxAgeSeconds)
+    .first();
+  return row ? { role: row.role } : null;
 }
 
-export async function saveMembership(userId, organizationId, active) {
+export async function saveMembership(db, userId, organizationId, active, role = null) {
   if (active) {
-    await pool.query(
-      `INSERT INTO memberships (user_id, organization_id) VALUES ($1, $2)
-       ON CONFLICT (user_id, organization_id) DO UPDATE SET checked_at = now()`,
-      [userId, organizationId]
-    );
+    await db
+      .prepare(
+        `INSERT INTO memberships (user_id, organization_id, role, checked_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (user_id, organization_id) DO UPDATE SET role = excluded.role, checked_at = excluded.checked_at`
+      )
+      .bind(userId, organizationId, role, now())
+      .run();
   } else {
-    await pool.query(`DELETE FROM memberships WHERE user_id = $1 AND organization_id = $2`, [
-      userId,
-      organizationId
-    ]);
+    await forgetMembership(db, userId, organizationId);
   }
 }
 
-export async function forgetMembership(userId, organizationId) {
-  await pool.query(`DELETE FROM memberships WHERE user_id = $1 AND organization_id = $2`, [
-    userId,
-    organizationId
-  ]);
+export async function forgetMembership(db, userId, organizationId) {
+  await db
+    .prepare("DELETE FROM memberships WHERE user_id = ? AND organization_id = ?")
+    .bind(userId, organizationId)
+    .run();
 }
 
-// subjects: user, API key, or session ids; any revoked one denies.
-export async function isRevoked(subjects, organizationId) {
-  const result = await pool.query(
-    `SELECT 1 FROM revocations WHERE subject = ANY($1) AND organization_id IN ($2, '*') LIMIT 1`,
-    [subjects.filter(Boolean), organizationId]
-  );
-  return result.rowCount > 0;
+// subjects: user, API key, or session ids; any revoked one denies. Pass
+// organizationId '*' for the everywhere-revocations.
+export async function isRevoked(db, subjects, organizationId) {
+  const list = subjects.filter(Boolean);
+  if (!list.length) return false;
+  const marks = list.map(() => "?").join(", ");
+  const row = await db
+    .prepare(`SELECT 1 FROM revocations WHERE subject IN (${marks}) AND organization_id = ? LIMIT 1`)
+    .bind(...list, organizationId)
+    .first();
+  return Boolean(row);
 }
 
-export async function setRevoked(subject, organizationId, revoked) {
+// organizationId '*' revokes everywhere (user deleted, session revoked) and
+// is one-way; per-organization rows follow WorkOS membership.
+export async function setRevoked(db, subject, organizationId, revoked) {
   if (revoked) {
-    await pool.query(
-      `DELETE FROM memberships WHERE user_id = $1 AND ($2 = '*' OR organization_id = $2)`,
-      [subject, organizationId]
-    );
-    await pool.query(
-      `INSERT INTO revocations (subject, organization_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [subject, organizationId]
-    );
-  } else {
-    // Only the per-organization row: user-wide ('*') revocations are one-way.
-    await pool.query(`DELETE FROM revocations WHERE subject = $1 AND organization_id = $2`, [
-      subject,
-      organizationId
+    await db.batch([
+      db
+        .prepare("DELETE FROM memberships WHERE user_id = ? AND (? = '*' OR organization_id = ?)")
+        .bind(subject, organizationId, organizationId),
+      db
+        .prepare("INSERT INTO revocations (subject, organization_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
+        .bind(subject, organizationId)
     ]);
+  } else {
+    await db
+      .prepare("DELETE FROM revocations WHERE subject = ? AND organization_id = ?")
+      .bind(subject, organizationId)
+      .run();
   }
-}
-
-export async function withTransaction(work) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const value = await work(client);
-    await client.query("COMMIT");
-    return value;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export function newEventId() {
-  return newInternalId();
 }
