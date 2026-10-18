@@ -1,6 +1,6 @@
 import express from "express";
 import { config } from "./config.js";
-import { setRevoked } from "./db.js";
+import { forgetMembership, setRevoked } from "./db.js";
 import { workos } from "./workos.js";
 
 // WorkOS webhooks close the gap between "removed in WorkOS" and "access token
@@ -45,6 +45,9 @@ export async function applyEvent({ event, data = {} }) {
     case "organization_membership.updated":
     case "organization_membership.deleted": {
       if (!userId || !organizationId) return undefined;
+      // Fail safe: forget the cached membership first, so if WorkOS cannot be
+      // reached below, the next request re-checks live instead of trusting it.
+      await forgetMembership(userId, organizationId);
       const page = await workos().userManagement.listOrganizationMemberships({
         userId,
         organizationId,

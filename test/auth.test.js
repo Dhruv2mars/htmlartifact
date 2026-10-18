@@ -219,6 +219,37 @@ describe("revocation", () => {
     assert.equal(me.status, 200);
   });
 
+  test("if WorkOS is unreachable during a webhook, the cached membership is dropped", async () => {
+    const token = await accessToken(stack, "olivia@other.test");
+    const me = () => fetch(`${stack.baseUrl}/api/me`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal((await me()).status, 200); // membership now cached
+    const other = await findOrganization(stack.emulator, "Other");
+    const olivia = await findUser(stack.emulator, "olivia@other.test");
+
+    const { workos } = await import("../src/workos.js");
+    const original = workos().userManagement.listOrganizationMemberships;
+    workos().userManagement.listOrganizationMemberships = async () => {
+      throw new Error("WorkOS unreachable");
+    };
+    try {
+      const response = await sendWebhook(stack, {
+        id: "event_unreachable",
+        event: "organization_membership.deleted",
+        data: { object: "organization_membership", user_id: olivia.id, organization_id: other.id }
+      });
+      assert.equal(response.status, 500, "WorkOS retries the delivery");
+      const cached = await stack.pool.query(
+        "SELECT 1 FROM memberships WHERE user_id = $1 AND organization_id = $2",
+        [olivia.id, other.id]
+      );
+      assert.equal(cached.rowCount, 0);
+      assert.notEqual((await me()).status, 200, "no stale access while WorkOS is down");
+    } finally {
+      workos().userManagement.listOrganizationMemberships = original;
+    }
+    assert.equal((await me()).status, 200, "recovers once WorkOS answers");
+  });
+
   test("unsigned or forged webhooks are rejected", async () => {
     const forged = await fetch(`${stack.baseUrl}/webhooks/workos`, {
       method: "POST",

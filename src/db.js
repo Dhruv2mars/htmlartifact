@@ -130,6 +130,8 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS drafts_account_org_idx ON drafts(account_id, organization_id);
     CREATE INDEX IF NOT EXISTS drafts_org_updated_idx ON drafts(organization_id, updated_at DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS drafts_org_slug_idx ON drafts(organization_id, slug);
+    -- Slugs used to be globally unique; that index leaked other teams' slugs.
+    DROP INDEX IF EXISTS drafts_slug_idx;
   `);
 }
 
@@ -201,6 +203,13 @@ export async function saveMembership(userId, organizationId, active) {
       organizationId
     ]);
   }
+}
+
+export async function forgetMembership(userId, organizationId) {
+  await pool.query(`DELETE FROM memberships WHERE user_id = $1 AND organization_id = $2`, [
+    userId,
+    organizationId
+  ]);
 }
 
 // subjects: user, API key, or session ids; any revoked one denies.
