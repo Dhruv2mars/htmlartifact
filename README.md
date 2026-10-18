@@ -101,16 +101,12 @@ Team admins set up SSO, directory sync and domain verification themselves:
 
 ### 2. Run it
 
+Needs Node 20.10+, Postgres, and [Bun](https://bun.sh) (installs deps and builds the CLI bundle):
+
 ```sh
 cp .env.example .env    # fill in WorkOS keys, a cookie password, the public URL
-docker compose up -d    # app + Postgres, artifacts stored on a volume
-```
-
-Without Docker, you need Node 20.10+, Postgres, and [Bun](https://bun.sh) to
-build the CLI bundle:
-
-```sh
-bun install && bun run build:cli && bun run start
+bun install && bun run build:cli
+node --env-file=.env src/server.js
 ```
 
 ### Configuration

@@ -33,12 +33,11 @@ integration suite proves it; the default skills install with one command; repo p
 - [x] Integration tests (real Postgres, fs storage, mocked WorkOS) for every auth boundary
 - [x] CLI end-to-end against a local server
 - [x] No `postplan` references outside LICENSE/NOTICE/attribution
-- [x] README, .env.example, Dockerfile
+- [x] README, .env.example (no Docker, by request)
 - [x] Nothing on this machine's postplan setup touched
 
 ## Found along the way
 - [x] WorkOS emulator lets a refresh switch into a non-member org → membership now verified with WorkOS for every user credential (cached 5 min)
 - [x] Emulator requires the API key for device authorize → CLI auth relayed through the server
 - [x] Independent security review (Codex gpt-6.1-sol, high): 4 findings fixed with regression tests (CSRF Origin check, JWT client binding, order-independent webhooks, per-team slugs)
-- [ ] Docker image build not verified (Docker not installed on this machine)
 - [ ] Verify against a real WorkOS staging env (device flow enablement, refresh-switch behaviour)
