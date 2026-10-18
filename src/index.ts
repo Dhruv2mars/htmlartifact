@@ -1,15 +1,16 @@
 import { Hono } from "hono";
-import { registerApi } from "./api.js";
-import { getConfig } from "./config.js";
-import { ensureSchema } from "./db.js";
-import { renderNotFound } from "./render.js";
-import { registerServing } from "./serve.js";
-import { registerWeb } from "./web.js";
-import { registerWebhooks } from "./webhooks.js";
-import FAVICON_SVG from "./assets/favicon.svg";
+import { isHttpError, registerApi } from "./api.ts";
+import { getConfig } from "./config.ts";
+import { ensureSchema } from "./db.ts";
+import { renderNotFound } from "./render.ts";
+import { registerServing } from "./serve.ts";
+import type { AppEnv } from "./types.ts";
+import { registerWeb } from "./web.ts";
+import { registerWebhooks } from "./webhooks.ts";
+import { FAVICON_SVG } from "./favicon.ts";
 
 // htmlartifact on Cloudflare Workers. Bindings: DB (D1), ARTIFACTS (R2).
-const app = new Hono();
+const app = new Hono<AppEnv>();
 
 app.use(async (c, next) => {
   const config = getConfig(c.env);
@@ -32,7 +33,7 @@ registerWeb(app);
 app.notFound((c) => c.html(renderNotFound(), 404));
 
 app.onError((error, c) => {
-  const status = error.status || 500;
+  const status = (isHttpError(error) && error.status) || 500;
   if (status >= 500) console.error(error);
   if (c.req.path.startsWith("/api/")) {
     return c.json({ ok: false, error: status >= 500 ? "Internal server error." : error.message }, status);

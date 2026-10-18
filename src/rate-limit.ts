@@ -1,8 +1,18 @@
+import type { Context, MiddlewareHandler } from "hono";
+import type { AppEnv } from "./types.ts";
+
 // Fixed-window limiter, per Worker isolate. Coarse on purpose: it stops a
 // runaway agent loop. Use Cloudflare rate-limiting rules for real abuse.
-const buckets = new Map();
+const buckets = new Map<string, { count: number; resetAt: number }>();
 
-export function rateLimit({ windowMs, max, keyPrefix, key }) {
+interface RateLimitOptions {
+  windowMs: number;
+  max: number;
+  keyPrefix: string;
+  key: (c: Context<AppEnv>) => string | null | undefined;
+}
+
+export function rateLimit({ windowMs, max, keyPrefix, key }: RateLimitOptions): MiddlewareHandler<AppEnv> {
   return async function limiter(c, next) {
     const now = Date.now();
     const bucketKey = `${keyPrefix}:${key(c) || "anonymous"}`;
@@ -21,4 +31,4 @@ export function rateLimit({ windowMs, max, keyPrefix, key }) {
   };
 }
 
-export const clientIp = (c) => c.req.header("cf-connecting-ip") || "local";
+export const clientIp = <E extends AppEnv>(c: Context<E>): string => c.req.header("cf-connecting-ip") || "local";

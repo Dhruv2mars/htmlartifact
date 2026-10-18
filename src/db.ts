@@ -1,6 +1,8 @@
 // D1 (SQLite) access. The schema is created on first use by each isolate, so
 // a fresh deployment needs no migration step. Times are unix seconds.
 
+import type { Account, AccountRow, WorkspaceRow } from "./types.ts";
+
 export const FLAGS = { largeUploads: "large-uploads" };
 
 const SCHEMA = `
@@ -103,17 +105,17 @@ CREATE TABLE IF NOT EXISTS draft_pages (
 );
 `;
 
-const ready = new WeakMap();
+const ready = new WeakMap<D1Database, Promise<D1Result[]>>();
 
 // Runs the idempotent schema once per isolate and D1 binding.
-export function ensureSchema(db) {
+export function ensureSchema(db: D1Database): Promise<D1Result[]> {
   let promise = ready.get(db);
   if (!promise) {
     const statements = SCHEMA.split(";")
       .map((statement) => statement.trim())
       .filter(Boolean)
       .map((statement) => db.prepare(statement));
-    promise = db.batch(statements).catch((error) => {
+    promise = db.batch(statements).catch((error: unknown) => {
       ready.delete(db);
       throw error;
     });
@@ -122,9 +124,17 @@ export function ensureSchema(db) {
   return promise;
 }
 
-export const now = () => Math.floor(Date.now() / 1000);
+export const now = (): number => Math.floor(Date.now() / 1000);
 
-export async function saveAccount(db, { id, name, email = null, pictureUrl = null }) {
+export async function saveAccount(
+  db: D1Database,
+  {
+    id,
+    name,
+    email = null,
+    pictureUrl = null
+  }: { id: string; name: string; email?: string | null; pictureUrl?: string | null }
+): Promise<void> {
   await db
     .prepare(
       `INSERT INTO accounts (id, name, email, picture_url) VALUES (?, ?, ?, ?)
@@ -135,22 +145,35 @@ export async function saveAccount(db, { id, name, email = null, pictureUrl = nul
     .run();
 }
 
-export async function findAccount(db, id, maxAgeSeconds = null) {
-  const row = await db.prepare("SELECT * FROM accounts WHERE id = ?").bind(id).first();
+export async function findAccount(
+  db: D1Database,
+  id: string,
+  maxAgeSeconds: number | null = null
+): Promise<Account | null> {
+  const row = await db.prepare("SELECT * FROM accounts WHERE id = ?").bind(id).first<AccountRow>();
   if (!row) return null;
   if (maxAgeSeconds !== null && row.updated_at < now() - maxAgeSeconds) return null;
-  return { ...row, flags: JSON.parse(row.flags || "[]") };
+  const flags: string[] = JSON.parse(row.flags || "[]");
+  return { ...row, flags };
 }
 
-export async function findWorkspace(db, organizationId) {
-  return db.prepare("SELECT * FROM workspaces WHERE organization_id = ?").bind(organizationId).first();
+export async function findWorkspace(db: D1Database, organizationId: string): Promise<WorkspaceRow | null> {
+  return db.prepare("SELECT * FROM workspaces WHERE organization_id = ?").bind(organizationId).first<WorkspaceRow>();
 }
 
-export async function findWorkspaceByHandle(db, handle) {
-  return db.prepare("SELECT * FROM workspaces WHERE handle = ?").bind(handle).first();
+export async function findWorkspaceByHandle(db: D1Database, handle: string): Promise<WorkspaceRow | null> {
+  return db.prepare("SELECT * FROM workspaces WHERE handle = ?").bind(handle).first<WorkspaceRow>();
 }
 
-export async function saveWorkspace(db, { organizationId, handle, name, createdBy = null }) {
+export async function saveWorkspace(
+  db: D1Database,
+  {
+    organizationId,
+    handle,
+    name,
+    createdBy = null
+  }: { organizationId: string; handle: string; name: string; createdBy?: string | null }
+): Promise<void> {
   await db
     .prepare(
       `INSERT INTO workspaces (organization_id, handle, name, created_by) VALUES (?, ?, ?, ?)
@@ -160,11 +183,16 @@ export async function saveWorkspace(db, { organizationId, handle, name, createdB
     .run();
 }
 
-export async function hasFreshMembership(db, userId, organizationId, maxAgeSeconds) {
+export async function hasFreshMembership(
+  db: D1Database,
+  userId: string,
+  organizationId: string,
+  maxAgeSeconds: number
+): Promise<{ role: string | null } | null> {
   const row = await db
     .prepare("SELECT role FROM memberships WHERE user_id = ? AND organization_id = ? AND checked_at > ?")
     .bind(userId, organizationId, now() - maxAgeSeconds)
-    .first();
+    .first<{ role: string | null }>();
   return row ? { role: row.role } : null;
 }
 
@@ -172,17 +200,17 @@ export async function hasFreshMembership(db, userId, organizationId, maxAgeSecon
 // removal) bumps the epoch first; a reader that fetched from WorkOS may only
 // write what it saw if the epoch is still the one it started with, so a slow,
 // stale lookup can never overwrite a newer change.
-export async function membershipEpoch(db, userId, organizationId) {
+export async function membershipEpoch(db: D1Database, userId: string, organizationId: string): Promise<number> {
   const row = await db
     .prepare("SELECT epoch FROM membership_epochs WHERE user_id = ? AND organization_id = ?")
     .bind(userId, organizationId)
-    .first();
+    .first<{ epoch: number }>();
   return row?.epoch ?? 0;
 }
 
 // Bumps the epoch and drops the cached membership; returns the new epoch.
-export async function bumpMembershipEpoch(db, userId, organizationId) {
-  const [bumped] = await db.batch([
+export async function bumpMembershipEpoch(db: D1Database, userId: string, organizationId: string): Promise<number> {
+  const [bumped] = await db.batch<{ epoch: number }>([
     db
       .prepare(
         `INSERT INTO membership_epochs (user_id, organization_id, epoch) VALUES (?, ?, 1)
@@ -191,13 +219,22 @@ export async function bumpMembershipEpoch(db, userId, organizationId) {
       .bind(userId, organizationId),
     db.prepare("DELETE FROM memberships WHERE user_id = ? AND organization_id = ?").bind(userId, organizationId)
   ]);
-  return bumped.results[0].epoch;
+  const epoch = bumped?.results[0]?.epoch;
+  if (epoch === undefined) throw new Error("Membership epoch was not returned.");
+  return epoch;
 }
 
 const EPOCH_IS = "COALESCE((SELECT epoch FROM membership_epochs WHERE user_id = ? AND organization_id = ?), 0) = ?";
 
 // Caches a WorkOS answer, only if no change happened since `epoch` was read.
-export async function saveMembership(db, userId, organizationId, active, role, epoch) {
+export async function saveMembership(
+  db: D1Database,
+  userId: string,
+  organizationId: string,
+  active: boolean,
+  role: string | null,
+  epoch: number
+): Promise<void> {
   if (active) {
     await db
       .prepare(
@@ -214,7 +251,13 @@ export async function saveMembership(db, userId, organizationId, active, role, e
 
 // Reconciles the per-workspace revocation to what WorkOS said, only if this
 // is still the newest change signal.
-export async function setRevokedAtEpoch(db, userId, organizationId, revoked, epoch) {
+export async function setRevokedAtEpoch(
+  db: D1Database,
+  userId: string,
+  organizationId: string,
+  revoked: boolean,
+  epoch: number
+): Promise<void> {
   if (revoked) {
     await db
       .prepare(
@@ -230,7 +273,7 @@ export async function setRevokedAtEpoch(db, userId, organizationId, revoked, epo
   }
 }
 
-export async function forgetMembership(db, userId, organizationId) {
+export async function forgetMembership(db: D1Database, userId: string, organizationId: string): Promise<void> {
   await db
     .prepare("DELETE FROM memberships WHERE user_id = ? AND organization_id = ?")
     .bind(userId, organizationId)
@@ -239,7 +282,11 @@ export async function forgetMembership(db, userId, organizationId) {
 
 // subjects: user, API key, or session ids; any revoked one denies. Pass
 // organizationId '*' for the everywhere-revocations.
-export async function isRevoked(db, subjects, organizationId) {
+export async function isRevoked(
+  db: D1Database,
+  subjects: (string | null | undefined)[],
+  organizationId: string
+): Promise<boolean> {
   const list = subjects.filter(Boolean);
   if (!list.length) return false;
   const marks = list.map(() => "?").join(", ");
@@ -252,7 +299,12 @@ export async function isRevoked(db, subjects, organizationId) {
 
 // organizationId '*' revokes everywhere (user deleted, session revoked) and
 // is one-way; per-organization rows follow WorkOS membership.
-export async function setRevoked(db, subject, organizationId, revoked) {
+export async function setRevoked(
+  db: D1Database,
+  subject: string,
+  organizationId: string,
+  revoked: boolean
+): Promise<void> {
   if (revoked) {
     await db.batch([
       db

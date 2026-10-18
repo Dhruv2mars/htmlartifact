@@ -1,4 +1,4 @@
-export function renderNotFound() {
+export function renderNotFound(): string {
   return htmlPage({
     title: "Not found",
     body: `
@@ -10,7 +10,7 @@ export function renderNotFound() {
   });
 }
 
-function htmlPage({ title, body }) {
+function htmlPage({ title, body }: { title: string; body: string }): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -58,7 +58,7 @@ function htmlPage({ title, body }) {
 </html>`;
 }
 
-function escapeHtml(value) {
+function escapeHtml(value: unknown): string {
   return String(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")

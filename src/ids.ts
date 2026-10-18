@@ -6,17 +6,17 @@ const suffix = customAlphabet("0123456789abcdefghjkmnpqrstvwxyz", 4);
 // No 0/O/1/I/L: invite codes are read aloud and retyped.
 const inviteChars = customAlphabet("23456789ABCDEFGHJKMNPQRSTUVWXYZ", 12);
 
-export function newDraftId() {
+export function newDraftId(): string {
   return draftId();
 }
 
-export function newInternalId() {
+export function newInternalId(): string {
   return internalId();
 }
 
 // A workspace's URL handle: its name plus a random suffix, so handles never
 // collide and never reveal whether a name is already taken ("acme-k3x9").
-export function workspaceHandle(name) {
+export function workspaceHandle(name: string): string {
   const base = String(name)
     .toLowerCase()
     .normalize("NFKD")
@@ -28,12 +28,12 @@ export function workspaceHandle(name) {
 }
 
 // 60 bits of randomness, formatted for humans: "HA-7KQ2-MX9P-4TRA".
-export function newInviteCode() {
+export function newInviteCode(): string {
   const raw = inviteChars();
   return `HA-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
 }
 
-export function normalizeInviteCode(value) {
+export function normalizeInviteCode(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const raw = value.toUpperCase().replace(/[^0-9A-Z]/g, "").replace(/^HA/, "");
   return raw.length === 12 ? `HA-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}` : null;

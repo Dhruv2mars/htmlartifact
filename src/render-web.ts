@@ -1,7 +1,23 @@
 // Server-rendered pages: htmlartifact's own UI, never artifact content. The
 // artifact CSP never applies here.
 
-export function renderSignIn({ next }) {
+import type { DraftSummary, DraftWithVersions } from "./drafts.ts";
+import type { MemberViewer, Viewer, WorkspaceRow } from "./types.ts";
+
+// A workspace in the picker.
+export interface WorkspaceChoice {
+  id: string;
+  name: string;
+  current: boolean;
+}
+
+// What the page header shows of the viewer.
+interface HeaderSession {
+  email?: string | null;
+  workspace?: WorkspaceRow | null;
+}
+
+export function renderSignIn({ next }: { next: string }): string {
   const target = `/auth/sign-in?next=${encodeURIComponent(next || "/")}`;
   return webPage({
     title: "Sign in · htmlartifact",
@@ -16,7 +32,15 @@ export function renderSignIn({ next }) {
   });
 }
 
-export function renderAuthError({ title = "Sign-in problem", message, retry = true }) {
+export function renderAuthError({
+  title = "Sign-in problem",
+  message,
+  retry = true
+}: {
+  title?: string;
+  message: string;
+  retry?: boolean;
+}): string {
   return webPage({
     title: `${title} · htmlartifact`,
     body: `
@@ -30,7 +54,7 @@ export function renderAuthError({ title = "Sign-in problem", message, retry = tr
 }
 
 // Everything the current workspace has published, newest first.
-export function renderWorkspace({ session, drafts }) {
+export function renderWorkspace({ session, drafts }: { session: MemberViewer; drafts: DraftSummary[] }): string {
   const name = session.workspace.name;
   return webPage({
     title: `${name} · htmlartifact`,
@@ -49,7 +73,7 @@ export function renderWorkspace({ session, drafts }) {
   });
 }
 
-export function renderMine({ session, drafts }) {
+export function renderMine({ session, drafts }: { session: Viewer; drafts: DraftSummary[] }): string {
   return webPage({
     title: "Mine · htmlartifact",
     header: pageHeader({ session, active: "mine" }),
@@ -66,7 +90,7 @@ export function renderMine({ session, drafts }) {
   });
 }
 
-export function renderDraftDetail({ session, draft, versions }) {
+export function renderDraftDetail({ session, draft, versions }: { session: Viewer } & DraftWithVersions): string {
   const rows = versions
     .map(
       (v) => `
@@ -97,7 +121,15 @@ export function renderDraftDetail({ session, draft, versions }) {
 }
 
 // Signed in, no workspace selected: pick one, create one, or join one.
-export function renderWorkspaces({ session, workspaces, next = null }) {
+export function renderWorkspaces({
+  session,
+  workspaces,
+  next = null
+}: {
+  session: Viewer;
+  workspaces: WorkspaceChoice[];
+  next?: string | null;
+}): string {
   const list = workspaces.length
     ? `<ul class="orgs">${workspaces
         .map(
@@ -130,7 +162,7 @@ export function renderWorkspaces({ session, workspaces, next = null }) {
   });
 }
 
-export function renderJoin({ session, code, workspaceName }) {
+export function renderJoin({ session, code, workspaceName }: { session: Viewer; code: string; workspaceName: string }): string {
   return webPage({
     title: `Join ${workspaceName} · htmlartifact`,
     header: pageHeader({ session, active: "" }),
@@ -147,7 +179,10 @@ export function renderJoin({ session, code, workspaceName }) {
   });
 }
 
-function renderDraftRow(draft, { showAuthor = false } = {}) {
+function renderDraftRow(
+  draft: DraftSummary & { disabled?: boolean },
+  { showAuthor = false }: { showAuthor?: boolean } = {}
+): string {
   // The title is the one-click "open the plan" action (new tab); the internal
   // detail/version-history screen hangs off the separate Details link.
   return `
@@ -165,8 +200,8 @@ function renderDraftRow(draft, { showAuthor = false } = {}) {
   `;
 }
 
-function pageHeader({ session = {}, active }) {
-  const link = (href, key, label) =>
+function pageHeader({ session = {}, active }: { session?: HeaderSession; active: string }): string {
+  const link = (href: string, key: string, label: string) =>
     `<a href="${href}" class="${active === key ? "active" : ""}">${escapeHtml(label)}</a>`;
   const email = session.email
     ? `<span class="muted small pii" tabindex="0" title="Hover to reveal">${escapeHtml(session.email)}</span>`
@@ -186,12 +221,13 @@ function pageHeader({ session = {}, active }) {
   `;
 }
 
-function formatDate(value) {
-  const date = new Date(value);
+function formatDate(value: string | null): string {
+  // new Date(null) is the epoch; `?? 0` keeps that.
+  const date = new Date(value ?? 0);
   return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 16).replace("T", " ");
 }
 
-function webPage({ title, body, header = "" }) {
+function webPage({ title, body, header = "" }: { title: string; body: string; header?: string }): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -256,7 +292,7 @@ function webPage({ title, body, header = "" }) {
 </html>`;
 }
 
-function escapeHtml(value) {
+function escapeHtml(value: unknown): string {
   return String(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")

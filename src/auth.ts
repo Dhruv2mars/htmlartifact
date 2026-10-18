@@ -1,3 +1,5 @@
+import type { User } from "@workos-inc/node";
+import type { Context } from "hono";
 import {
   findAccount,
   findWorkspace,
@@ -7,10 +9,11 @@ import {
   saveAccount,
   saveMembership,
   saveWorkspace
-} from "./db.js";
-import { workspaceHandle } from "./ids.js";
-import { clearSessionCookie, readCookie, SESSION_COOKIE, sessionCookie } from "./web-auth.js";
-import { displayName, validateApiKey, verifyAccessToken, workos } from "./workos.js";
+} from "./db.ts";
+import { workspaceHandle } from "./ids.ts";
+import type { AppEnv, DraftRow, Viewer, WorkspaceRow } from "./types.ts";
+import { clearSessionCookie, readCookie, SESSION_COOKIE, sessionCookie } from "./web-auth.ts";
+import { displayName, validateApiKey, verifyAccessToken, workos, type AccessTokenClaims, type ApiKeyInfo } from "./workos.ts";
 
 // Who is calling. Three credentials resolve to the same viewer shape:
 //   browser → WorkOS sealed-session cookie (AuthKit sign-in)
@@ -25,9 +28,14 @@ import { displayName, validateApiKey, verifyAccessToken, workos } from "./workos
 
 const PROFILE_CACHE_SECONDS = 3600;
 
+// A browser session as authenticate() or refresh() reports it.
+type SessionAuth =
+  | { authenticated: false }
+  | { authenticated: true; user: User; organizationId?: string; sessionId: string; sealedSession?: string };
+
 // Bearer credential → viewer, or null. Never reads cookies, so /api calls
 // cannot be driven cross-site.
-export async function bearerViewer(c) {
+export async function bearerViewer<E extends AppEnv>(c: Context<E>): Promise<Viewer | null> {
   const token = bearerToken(c);
   if (!token) return null;
   return looksLikeJwt(token) ? viewerFromAccessToken(c, token) : viewerFromApiKey(c, token);
@@ -36,7 +44,10 @@ export async function bearerViewer(c) {
 // Browser session → viewer, or null. Refreshes an expired access token and,
 // when `organizationId` names another workspace the user belongs to, moves
 // the session there. Updated cookies are set on the response.
-export async function sessionViewer(c, { organizationId } = {}) {
+export async function sessionViewer<E extends AppEnv>(
+  c: Context<E>,
+  { organizationId }: { organizationId?: string | undefined } = {}
+): Promise<Viewer | null> {
   const sealed = readCookie(c, SESSION_COOKIE);
   if (!sealed) return null;
   const config = c.get("config");
@@ -46,16 +57,16 @@ export async function sessionViewer(c, { organizationId } = {}) {
     cookiePassword: config.cookiePassword
   });
 
-  let auth = await session.authenticate().catch(() => ({ authenticated: false }));
+  let auth: SessionAuth = await session.authenticate().catch(() => ({ authenticated: false as const }));
   const wantsSwitch =
     organizationId &&
     auth.authenticated &&
     auth.organizationId !== organizationId &&
     Boolean(await activeMembership(c, auth.user.id, organizationId));
   if (!auth.authenticated || wantsSwitch) {
-    const refreshed = await session
+    const refreshed: SessionAuth = await session
       .refresh(wantsSwitch ? { organizationId } : undefined)
-      .catch(() => ({ authenticated: false }));
+      .catch(() => ({ authenticated: false as const }));
     if (refreshed.authenticated && refreshed.sealedSession) {
       c.header("Set-Cookie", sessionCookie(refreshed.sealedSession, secure), { append: true });
       auth = refreshed;
@@ -80,7 +91,10 @@ export async function sessionViewer(c, { organizationId } = {}) {
 }
 
 // "member" | "anonymous" | "denied" for reading `draft` (may be null).
-export async function canReadDraft(c, draft) {
+export async function canReadDraft<E extends AppEnv>(
+  c: Context<E>,
+  draft: DraftRow | null
+): Promise<"member" | "anonymous" | "denied"> {
   if (bearerToken(c)) {
     const viewer = await bearerViewer(c);
     if (!viewer) return "anonymous";
@@ -94,7 +108,11 @@ export async function canReadDraft(c, draft) {
 
 // The caller's active membership in organizationId per WorkOS ({ role }), or
 // null. Cached in D1 for membershipCacheSeconds; webhooks clear it.
-export async function activeMembership(c, userId, organizationId) {
+export async function activeMembership<E extends AppEnv>(
+  c: Context<E>,
+  userId: string,
+  organizationId: string
+): Promise<{ role: string | null } | null> {
   const config = c.get("config");
   const cached = await hasFreshMembership(c.env.DB, userId, organizationId, config.workos.membershipCacheSeconds);
   if (cached) return cached;
@@ -112,7 +130,7 @@ export async function activeMembership(c, userId, organizationId) {
 }
 
 // Workspace row for an organization, created from WorkOS on first sight.
-export async function ensureWorkspace(c, organizationId) {
+export async function ensureWorkspace<E extends AppEnv>(c: Context<E>, organizationId: string): Promise<WorkspaceRow | null> {
   const existing = await findWorkspace(c.env.DB, organizationId);
   if (existing) return existing;
   const organization = await workos(c.get("config")).client.organizations.getOrganization(organizationId);
@@ -124,12 +142,12 @@ export async function ensureWorkspace(c, organizationId) {
   return findWorkspace(c.env.DB, organizationId);
 }
 
-export function isSecure(c) {
+export function isSecure<E extends AppEnv>(c: Context<E>): boolean {
   return new URL(c.req.url).protocol === "https:";
 }
 
-async function viewerFromAccessToken(c, token) {
-  let claims;
+async function viewerFromAccessToken<E extends AppEnv>(c: Context<E>, token: string): Promise<Viewer | null> {
+  let claims: AccessTokenClaims;
   try {
     claims = await verifyAccessToken(c.get("config"), token);
   } catch {
@@ -144,12 +162,12 @@ async function viewerFromAccessToken(c, token) {
   });
 }
 
-async function viewerFromApiKey(c, value) {
-  let key;
+async function viewerFromApiKey<E extends AppEnv>(c: Context<E>, value: string): Promise<Viewer | null> {
+  let key: ApiKeyInfo | null;
   try {
     key = await validateApiKey(c.get("config"), value);
   } catch (error) {
-    console.error("WorkOS API key validation failed:", error.message);
+    console.error("WorkOS API key validation failed:", error instanceof Error ? error.message : error);
     return null;
   }
   if (!key?.organizationId) return null;
@@ -166,9 +184,17 @@ async function viewerFromApiKey(c, value) {
   });
 }
 
-async function buildViewer(c, { accountId, organizationId, credentialId, ownedByOrganization = false }) {
+async function buildViewer<E extends AppEnv>(
+  c: Context<E>,
+  {
+    accountId,
+    organizationId,
+    credentialId,
+    ownedByOrganization = false
+  }: { accountId: string; organizationId: string | null; credentialId: string | null; ownedByOrganization?: boolean }
+): Promise<Viewer | null> {
   const db = c.env.DB;
-  let role = null;
+  let role: string | null = null;
   // Deleted users, revoked sessions and revoked keys: no access at all.
   if (await isRevoked(db, [accountId, credentialId], "*")) return null;
   if (organizationId) {
@@ -199,7 +225,7 @@ async function buildViewer(c, { accountId, organizationId, credentialId, ownedBy
   };
 }
 
-async function ensureAccount(c, userId) {
+async function ensureAccount<E extends AppEnv>(c: Context<E>, userId: string): Promise<void> {
   if (await findAccount(c.env.DB, userId, PROFILE_CACHE_SECONDS)) return;
   const user = await workos(c.get("config")).client.userManagement.getUser(userId);
   await saveAccount(c.env.DB, {
@@ -210,11 +236,11 @@ async function ensureAccount(c, userId) {
   });
 }
 
-function bearerToken(c) {
+function bearerToken<E extends AppEnv>(c: Context<E>): string | null {
   const match = (c.req.header("authorization") || "").match(/^Bearer\s+(.+)$/i);
-  return match ? match[1].trim() : null;
+  return match?.[1] ? match[1].trim() : null;
 }
 
-function looksLikeJwt(token) {
+function looksLikeJwt(token: string): boolean {
   return /^eyJ[\w-]*\.[\w-]+\.[\w-]+$/.test(token);
 }
