@@ -209,11 +209,21 @@ export async function refreshInto(stack, tokens, organizationId) {
 }
 
 export async function callApi(stack, token, method, pathname, body) {
-  const response = await fetch(`${stack.baseUrl}${pathname}`, {
-    method,
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined
-  });
+  const send = () =>
+    fetch(`${stack.baseUrl}${pathname}`, {
+      method,
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined
+    });
+  // Locally the app, the ops Worker and test proxies share one SQLite file and
+  // can collide on its lock (a 500); production D1 has no such lock. Reads are
+  // safe to retry.
+  let response = await send();
+  for (let attempt = 1; method === "GET" && response.status === 500 && attempt < 4; attempt += 1) {
+    await response.text();
+    await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+    response = await send();
+  }
   const text = await response.text();
   let json;
   try {

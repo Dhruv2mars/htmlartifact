@@ -115,9 +115,12 @@ async function runCron() {
   assert.equal(response.status, 200, await response.text());
 }
 
-async function eventually(check, message) {
-  for (let i = 0; i < 50; i += 1) {
+// Waits for `check`. `retrigger` (e.g. runCron) runs again every second
+// meanwhile: locally a cron run can abort on the shared SQLite file's lock.
+async function eventually(check, message, retrigger) {
+  for (let i = 0; i < 80; i += 1) {
     if (await check()) return;
+    if (retrigger && i % 10 === 9) await retrigger();
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   assert.fail(message);
@@ -235,10 +238,11 @@ describe("ops Worker cron", () => {
     const restore = await breakWorkos(stack.emulator, "DELETE", `/organizations/${org.id}`);
     try {
       await runCron();
-      await eventually(async () => (await r2Keys(prefix)).length === 0, "R2 prefix purged by the cron");
+      await eventually(async () => (await r2Keys(prefix)).length === 0, "R2 prefix purged by the cron", runCron);
       await eventually(
-        async () => (await rows("SELECT attempts FROM pending_deletions WHERE kind = 'workos_org'"))[0]?.attempts === 1,
-        "failed WorkOS deletion counted"
+        async () => (await rows("SELECT attempts FROM pending_deletions WHERE kind = 'workos_org'"))[0]?.attempts >= 1,
+        "failed WorkOS deletion counted",
+        runCron
       );
       const [failed] = await rows("SELECT attempts, last_error FROM pending_deletions WHERE target = ?", org.id);
       assert.match(failed.last_error, /WorkOS 503/);
@@ -255,7 +259,8 @@ describe("ops Worker cron", () => {
     await runCron();
     await eventually(
       async () => (await count("SELECT COUNT(*) FROM pending_deletions")) === 0,
-      "retry succeeds once WorkOS is back"
+      "retry succeeds once WorkOS is back",
+      runCron
     );
     await assert.rejects(workosApi(stack.emulator, "GET", `/organizations/${org.id}`), /404/);
   });
@@ -272,7 +277,8 @@ describe("ops Worker cron", () => {
     await runCron();
     await eventually(
       async () => (await rows("SELECT source_ip FROM draft_versions WHERE id = ?", old.body.versionId))[0].source_ip === null,
-      "old metadata erased"
+      "old metadata erased",
+      runCron
     );
     const [oldRow] = await rows("SELECT source_ip, user_agent, content_hash FROM draft_versions WHERE id = ?", old.body.versionId);
     assert.equal(oldRow.user_agent, null);
@@ -542,9 +548,9 @@ describe("review round 4", () => {
     await queueDeletion(proxy.env.DB, "r2_prefix", prefix).run();
     assert.throws(() => queueDeletion(proxy.env.DB, "r2_prefix", "orgs/org_x/drafts/d1/versions/short"));
     await runCron();
-    await eventually(async () => (await r2Keys("orgs/org_x/")).length === 1, "upload's objects purged by the cron");
+    await eventually(async () => (await r2Keys("orgs/org_x/")).length === 1, "upload's objects purged by the cron", runCron);
     assert.deepEqual(await r2Keys("orgs/org_x/"), [kept]);
-    await eventually(async () => (await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", prefix)) === 0, "queue row cleared");
+    await eventually(async () => (await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", prefix)) === 0, "queue row cleared", runCron);
     await deleteObject(kept);
   });
 });
@@ -759,7 +765,8 @@ describe("review round 11", () => {
     await runCron();
     await eventually(
       async () => (await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", rejoined.id)) === 0,
-      "the cron deletes the membership once WorkOS is back"
+      "the cron deletes the membership once WorkOS is back",
+      runCron
     );
     assert.equal(
       (await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${bobUser.id}&organization_id=${org.id}`)).data.length,
