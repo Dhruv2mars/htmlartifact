@@ -12,30 +12,36 @@ provably removes its R2 objects (every version).
 - [x] CLI commands for Phase 2/3 endpoints (server side pending): `delete`, `workspace delete --confirm`, `workspace sso`, `workspace directory`
 
 ## Phase 2 — Security
-- [ ] Real deletion: draft delete purges R2 objects for every version/page (+ cron backstop)
-- [ ] Artifact HTML on a cross-site sandbox origin (`htmlartifact-usercontent.pages.dev`)
-- [ ] Workspace deletion (admin): R2 + D1 + WorkOS org
-- [ ] Member offboarding: removal, `user.deleted` PII scrub, admins can delete any artifact
-- [ ] Retention: `source_ip`/`user_agent` erased after 30 days
-- [ ] Tenant-isolation sweep test over every route
+- [x] Real deletion: draft delete purges R2 objects for every version/page (+ cron backstop)
+- [x] Artifact HTML on a cross-site sandbox origin (`htmlartifact-usercontent.pages.dev`), session-bound capabilities
+- [x] Workspace deletion (admin): R2 + D1 + WorkOS org
+- [x] Member offboarding: removal, `user.deleted` PII scrub, admins can delete any artifact
+- [x] Retention: `source_ip`/`user_agent` erased after 30 days
+- [ ] Tenant-isolation sweep test over every route (agent running)
+- [ ] Codex (gpt-6.1-sol, high) security review round 4 of everything since 03c397b (running)
 - [x] SECURITY.md (data handling, incident response, D1 Time Travel backups/restore) — revisit once Phase 2 lands
 
 ## Phase 3 — WorkOS (scoped)
-- [ ] SSO (SAML/OIDC) via Admin Portal link: `workspace sso`
-- [ ] Directory Sync (SCIM) via Admin Portal link: `workspace directory`; dsync deprovisioning revokes access
+- [x] SSO (SAML/OIDC) via Admin Portal link: `workspace sso`
+- [x] Directory Sync (SCIM) via Admin Portal link: `workspace directory`; dsync deprovisioning revokes access (membership webhooks)
 - [ ] MFA on in AuthKit (config only; documented)
 - Dropped by Dhruv: Vault/encryption, Audit Logs, Events API, Radar, extra roles, FGA, domain auto-join, export
 
+## Blocked on Dhruv
+- [ ] Enable R2 in the Cloudflare dashboard
+- [ ] Write WorkOS keys to `~/.config/htmlartifact/workos.env`
+
 ## Phase 4 — Production
 - [x] Pages configs `deploy/app`, `deploy/usercontent`, `deploy/ops`; `scripts/build-pages.ts` (verified with `wrangler pages dev`)
-- [ ] Cloudflare Pages project `htmlartifact` created + deployed (needs wrangler login)
-- [ ] Sandbox Pages project `htmlartifact-usercontent` created + deployed
-- [ ] Ops Worker `src/ops.ts`: cron (R2 delete retries, retention) + rate-limit RPC entrypoint `Ops`
-- [ ] Staging (Pages preview env + staging D1/R2/WorkOS)
-- [ ] Rate limits (Workers rate-limit binding), logs/observability, health checks
+- [x] Cloudflare Pages project `htmlartifact` created (exact subdomain) — deploy blocked on R2
+- [x] Sandbox Pages project `htmlartifact-usercontent` created (exact subdomain) — deploy blocked on R2
+- [x] Ops Worker `src/ops.ts`: cron (R2 delete retries, retention) + rate-limit RPC entrypoint `Ops`
+- [x] Staging config (Pages preview env + staging D1 created; staging R2 blocked on R2)
+- [x] Rate limits (Workers rate-limit binding), logs/observability, deep `/healthz` (D1 + R2)
 - [x] GitHub Actions written: ci.yml, deploy.yml (needs CLOUDFLARE_API_TOKEN secret), release.yml (npm trusted publishing)
-- [ ] package.json scripts: typecheck, build:pages, deploy:all, smoke (CLI: build, typecheck:cli done)
-- [ ] Real WorkOS env: redirect URI, webhooks, MFA, SSO/DSync enabled
+- [x] package.json scripts: typecheck, build:pages, deploy:all, smoke
+- [ ] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts` ready; blocked on `~/.config/htmlartifact/workos.env`), MFA (dashboard)
 - [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
 - [ ] First npm publish locally (claims the unclaimed `htmlartifact` name), then enable npm trusted publishing so release.yml publishes with provenance (no long-lived tokens)
+- [ ] Create R2 buckets (prod + staging), run workos-setup, deploy:all, smoke
 - [ ] Production walkthrough with two real accounts (item 4)
