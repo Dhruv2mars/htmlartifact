@@ -19,7 +19,7 @@
   },
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "bun scripts/deploy.ts",
     "build": "bun build cli/main.ts --target=node --outfile dist/htmlartifact.js",
     "build:binaries": "bun build cli/main.ts --compile --outfile release/htmlartifact",
     "typecheck:cli": "tsc -p cli/tsconfig.json",
@@ -27,7 +27,10 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "prepublishOnly": "bun run build",
-    "dev:local": "node scripts/dev-local.mjs"
+    "dev:local": "node scripts/dev-local.mjs",
+    "build:pages": "bun scripts/build-pages.ts",
+    "deploy:all": "bun scripts/deploy.ts",
+    "smoke": "bun scripts/smoke.ts"
   },
   "engines": {
     "node": ">=20.10"
