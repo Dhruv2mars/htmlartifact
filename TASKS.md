@@ -33,7 +33,8 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
 - [x] Review round 13 (Claude Opus): validator stops at depth limit, caps attributes (linear duplicate check; parse5 pinned 7.3.0), checks declarative shadow roots; IPv6 /64 limits; recently-valid keys skip IP bucket; streamed body size limit; CLI lock/rename hardening — 155/155
 - [x] D1 blob storage (R2 needs a card): `blobs` chunked ≤1 MB, written in the version's atomic batch; R2 when ARTIFACTS bound (reads fall back to D1); deletion clears both; suite runs on both backends; `bun run migrate:r2` (copy → SHA-256 verify → delete from D1; refuses to delete until /healthz says r2); README Storage section
 - [ ] Tomorrow (Dhruv's card): enable R2 + Workers Paid ($5/mo: Free caps CPU at 10 ms/request ≈ uploads > ~150 KB fail with 1102), then README → Storage → Switching to R2
-- [ ] Codex review (final) after 23:28 IST
+- [x] Final Codex review (gpt-6.1-sol): one finding (migration could re-upload HTML of an artifact deleted mid-copy) → fixed: post-upload reference check drops it (queued retry), script refuses to run until the app reads R2; everything else confirmed (157/157 on D1 and on R2)
+- [x] PR #1 opened (ga/production → main); not merged (Dhruv merges)
 - [x] SECURITY.md (data handling, incident response, D1 Time Travel backups/restore) — revisit once Phase 2 lands
 
 ## Phase 3 — WorkOS (scoped)

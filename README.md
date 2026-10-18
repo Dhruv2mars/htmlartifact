@@ -117,10 +117,12 @@ needs a card on the Cloudflare account.
    artifacts go to R2; existing ones are still read from D1. `/healthz` reports
    `"storage": "r2"`.
 3. `bun run migrate:r2` copies every D1 object into R2, downloads it again to
-   compare SHA-256, and deletes it from D1 only after it matches. It refuses to
-   delete anything until `/healthz` reports `"storage": "r2"` (otherwise the
-   app could not read the moved objects), and is safe to re-run.
-   `--dry-run` reports what would move; `--staging` targets staging.
+   compare SHA-256, and deletes it from D1 only after it matches. An object
+   whose artifact was deleted during the copy is removed from R2 again. It
+   refuses to run until `/healthz` reports `"storage": "r2"` (before that, the
+   app could neither read moved objects nor delete their R2 copies), and is
+   safe to re-run. `--dry-run` reports what would move; `--staging` targets
+   staging.
 
 The binding goes in before the migration (not after) so every object is
 readable at every moment: during step 3 the app finds each object in R2 or,
