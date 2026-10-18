@@ -613,10 +613,11 @@ describe("review round 8", () => {
     const minted = await revokeCalls(async () => {
       assert.equal((await callApi(stack, nora, "POST", "/api/workspaces/portal", { intent: "sso" })).status, 403);
     });
-    assert.equal(minted, 1, "the link minted across the demotion was revoked");
+    // (The emulator's own webhook for the demotion may add a revocation.)
+    assert.ok(minted >= 1, "the link minted across the demotion was revoked");
 
     const demoted = await revokeCalls(() => membershipEvent("event_demoted", "organization_membership.updated", membership));
-    assert.equal(demoted, 1, "demotion revokes their portal sessions");
+    assert.ok(demoted >= 1, "demotion revokes their portal sessions");
     assert.equal((await callApi(stack, nora, "POST", "/api/workspaces/portal", { intent: "sso" })).status, 403);
   });
 });
@@ -765,5 +766,89 @@ describe("review round 11", () => {
     await callApi(stack, nora, "POST", "/api/workspaces/invites", {});
     assert.equal((await callApi(stack, nora, "DELETE", "/api/workspaces/invites/ALL")).status, 200);
     assert.deepEqual((await callApi(stack, nora, "GET", "/api/workspaces/invites")).body.invites, []);
+  });
+});
+
+describe("review round 12", () => {
+  test("admins update any artifact; a new org CI key updates an old key's artifact; members can't update a teammate's", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    const bob = await accessToken(stack, "bob@acme.test", "Acme");
+    const acme = await findOrganization(stack.emulator, "Acme");
+    const bobs = await upload(bob, { html: page("Bob's report"), slug: "bob-report" });
+    assert.equal(bobs.status, 201, JSON.stringify(bobs.body));
+    const byAdmin = await upload(alice, { html: page("Bob's report, fixed by an admin"), slug: "bob-report" });
+    assert.equal(byAdmin.status, 200, JSON.stringify(byAdmin.body));
+    assert.equal(byAdmin.body.draftId, bobs.body.draftId);
+
+    const alices = await upload(alice, { html: page("Alice's plan"), slug: "alice-plan" });
+    const byMember = await upload(bob, { html: page("Bob overwriting"), slug: "alice-plan" });
+    assert.equal(byMember.status, 409);
+    assert.equal((await upload(bob, { html: page("Bob overwriting"), draftId: alices.body.draftId })).status, 409);
+
+    const ci = await upload(CI_KEY, { html: page("Nightly"), slug: "nightly" });
+    assert.equal(ci.status, 201, JSON.stringify(ci.body));
+    const rotated = (await workosApi(stack.emulator, "POST", `/organizations/${acme.id}/api_keys`, { name: "Acme CI 2" })).value;
+    const byNewKey = await upload(rotated, { html: page("Nightly, new key"), slug: "nightly" });
+    assert.equal(byNewKey.status, 200, JSON.stringify(byNewKey.body));
+    assert.equal(byNewKey.body.draftId, ci.body.draftId);
+    assert.equal((await upload(rotated, { html: page("Key over Bob"), slug: "bob-report" })).status, 409, "keys can't take over people's artifacts");
+  });
+
+  test("a valid fresh code reclaims a membership whose undo is still queued", async () => {
+    const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    const bobUser = await findUser(stack.emulator, "bob@acme.test");
+    const old = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+    const bob = await signInTokens(stack, "bob@acme.test", "Acme");
+    assert.equal((await callApi(stack, bob.accessToken, "POST", "/api/workspaces/join", { code: old })).status, 200);
+    const bobIn = (await refreshInto(stack, bob, org.id)).accessToken;
+    const [membership] = (
+      await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${bobUser.id}&organization_id=${org.id}`)
+    ).data;
+    const restore = await breakWorkos(stack.emulator, "DELETE", `/user_management/organization_memberships/${membership.id}`);
+    try {
+      await sendWebhook(stack, {
+        id: "event_dashboard_removal_2",
+        event: "organization_membership.deleted",
+        created_at: new Date(Date.now() + 1000).toISOString(),
+        data: { object: "organization_membership", id: "om_dashboard_2", user_id: bobUser.id, organization_id: org.id }
+      }).then((r) => assert.equal(r.status, 200));
+      assert.equal((await callApi(stack, bobIn, "GET", "/api/drafts?scope=workspace")).status, 403);
+
+      // The admin lets Bob back in with a fresh code while WorkOS is still failing deletes.
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+      const fresh = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+      const join = await callApi(stack, bob.accessToken, "POST", "/api/workspaces/join", { code: fresh });
+      assert.equal(join.status, 200, JSON.stringify(join.body));
+      assert.equal(await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", membership.id), 0, "queued delete cancelled");
+      assert.equal((await callApi(stack, bobIn, "GET", "/api/drafts?scope=workspace")).status, 200);
+    } finally {
+      await restore();
+    }
+    await runCron();
+    assert.equal((await callApi(stack, bobIn, "GET", "/api/drafts?scope=workspace")).status, 200, "the cron no longer removes him");
+  });
+
+  test("user.deleted leaves alone workspaces they were removed from earlier", async () => {
+    const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
+    const bobUser = await findUser(stack.emulator, "bob@acme.test");
+    // Bob (in Rejoin Labs through a join) is removed by the admin; later a standing team code is made.
+    assert.equal((await callApi(stack, nora, "DELETE", `/api/workspaces/members/${bobUser.id}`)).status, 200);
+    await eventually(
+      async () => (await count("SELECT COUNT(*) FROM joins WHERE user_id = ? AND undone = 0", bobUser.id)) === 0,
+      "the removal's webhook forgets his join"
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const standing = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+    const r = await sendWebhook(stack, {
+      id: "event_bob_deleted",
+      event: "user.deleted",
+      created_at: new Date().toISOString(),
+      data: { object: "user", id: bobUser.id, email: "bob@acme.test" }
+    });
+    assert.equal(r.status, 200);
+    const live = (await callApi(stack, nora, "GET", "/api/workspaces/invites")).body.invites.map((i) => i.code);
+    assert.ok(live.includes(standing));
+    assert.equal(await count("SELECT COUNT(*) FROM joins WHERE user_id = ?", bobUser.id), 0, "their join rows are gone");
   });
 });

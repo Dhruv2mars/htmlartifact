@@ -80,6 +80,8 @@ async function applyEvent(
             .bind(userId, organizationId, removedId ?? "", at)
             .all<{ membership_id: string }>();
           for (const { membership_id } of results) await undoJoin(c.env, membership_id);
+          // That membership is gone: its join no longer names a workspace they're in.
+          if (removedId) await db.prepare("DELETE FROM joins WHERE membership_id = ? AND undone = 0").bind(removedId).run();
         }
       }
       // Fail safe: bump the epoch and drop the cache first, so if WorkOS
@@ -129,6 +131,7 @@ async function applyEvent(
         .bind(id)
         .all<{ organization_id: string }>();
       for (const { organization_id } of results) await revokeInvitesUpTo(db, organization_id, eventTime(createdAt));
+      await db.prepare("DELETE FROM joins WHERE user_id = ?").bind(id).run();
       await db.batch(scrubUserStatements(db, id));
       return;
     }

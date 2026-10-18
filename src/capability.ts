@@ -37,6 +37,17 @@ export function mintCapability(
 }
 
 export function verifyCapability(secret: string, token: string, now = Math.floor(Date.now() / 1000)): Capability | null {
+  const claims = verifySignedCapability(secret, token);
+  return claims && claims.exp > now ? claims : null;
+}
+
+// Genuine but past its expiry: the viewer just left the page open too long.
+export function capabilityExpired(secret: string, token: string, now = Math.floor(Date.now() / 1000)): boolean {
+  const claims = verifySignedCapability(secret, token);
+  return Boolean(claims && claims.exp <= now);
+}
+
+function verifySignedCapability(secret: string, token: string): Capability | null {
   const [payload, signature, extra] = token.split(".");
   if (!payload || !signature || extra !== undefined) return null;
   const expected = Buffer.from(sign(secret, payload));
@@ -48,8 +59,7 @@ export function verifyCapability(secret: string, token: string, now = Math.floor
   } catch {
     return null;
   }
-  if (!isCapability(claims) || claims.exp <= now) return null;
-  return claims;
+  return isCapability(claims) ? claims : null;
 }
 
 function isCapability(value: unknown): value is Capability {

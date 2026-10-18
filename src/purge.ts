@@ -91,7 +91,9 @@ export async function runDeletion(env: PurgeEnv, kind: DeletionKind, target: str
 /** Retry queued deletions (oldest first). Returns counts for logging. */
 export async function drainPendingDeletions(env: PurgeEnv, max = 100): Promise<{ done: number; failed: number }> {
   const { results } = await env.DB.prepare(
-    "SELECT kind, target FROM pending_deletions ORDER BY created_at LIMIT ?"
+    // Fewest attempts first, so a pile of permanently failing jobs can never
+    // starve newer ones.
+    "SELECT kind, target FROM pending_deletions ORDER BY attempts, created_at LIMIT ?"
   )
     .bind(max)
     .all<{ kind: DeletionKind; target: string }>();
@@ -199,7 +201,17 @@ export async function eraseExpiredRequestMetadata(db: D1Database, now = Math.flo
 export async function undoJoin(env: PurgeEnv, membershipId: string): Promise<void> {
   await env.DB.batch([
     env.DB.prepare("UPDATE joins SET undone = 1 WHERE membership_id = ?").bind(membershipId),
-    queueDeletion(env.DB, "workos_membership", membershipId)
+    queueDeletion(env.DB, "workos_membership", membershipId),
+    // Drop any cached "active" and fence in-flight re-checks (as
+    // bumpMembershipEpoch does), so access ends now even if the delete fails.
+    env.DB.prepare(
+      `INSERT INTO membership_epochs (user_id, organization_id, epoch)
+       SELECT user_id, organization_id, 1 FROM joins WHERE membership_id = ?
+       ON CONFLICT (user_id, organization_id) DO UPDATE SET epoch = epoch + 1`
+    ).bind(membershipId),
+    env.DB.prepare(
+      "DELETE FROM memberships WHERE (user_id, organization_id) IN (SELECT user_id, organization_id FROM joins WHERE membership_id = ?)"
+    ).bind(membershipId)
   ]);
   await runDeletion(env, "workos_membership", membershipId);
 }

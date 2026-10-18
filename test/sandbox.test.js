@@ -190,7 +190,7 @@ describe("sandbox origin", () => {
     assert.equal(new URL(bare.headers.get("location"), root.src).toString(), root.src);
   });
 
-  test("tampered, forged-for-another-workspace, and expired tokens are the same 404", async () => {
+  test("tampered and forged-for-another-workspace tokens are the same 404; a genuine expired one asks for a reload", async () => {
     const { src } = await frameOf(single.publicUrl);
     const url = new URL(src);
     const [, , token] = url.pathname.split("/");
@@ -209,7 +209,6 @@ describe("sandbox origin", () => {
       `${Buffer.from(JSON.stringify({ ...claims, d: multi.draftId })).toString("base64url")}.${signature}`,
       `${payload}.${signature}.extra`,
       payload,
-      signCapability({ ...claims, exp: now - 1 }),
       signCapability({ ...claims, o: other.id }),
       signCapability({ ...claims, v: "not-a-version" })
     ]) {
@@ -219,6 +218,11 @@ describe("sandbox origin", () => {
       bodies.add(response.text);
     }
     assert.equal(bodies.size, 1, "every failure looks the same");
+
+    const expired = await get(onSandbox(`/t/${signCapability({ ...claims, exp: now - 1 })}/`));
+    assert.equal(expired.status, 410);
+    assert.match(expired.text, /Reload the page/);
+    assert.doesNotMatch(expired.text, new RegExp(MARKER));
   });
 
   test("the sandbox serves nothing but capability URLs", async () => {

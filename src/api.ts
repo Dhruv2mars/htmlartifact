@@ -8,7 +8,7 @@ import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspac
 import { draftUrl, slugProblem } from "./public-url.ts";
 import { clientIp, rateLimit } from "./rate-limit.ts";
 import { activeMembership, bearerViewer } from "./auth.ts";
-import { deleteWorkspaceStatements, draftPrefix, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
+import { deleteWorkspaceStatements, draftPrefix, membershipBeingUndone, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
 import { putHtmlObject } from "./storage.ts";
 import {
   isMember,
@@ -80,7 +80,9 @@ const SANDBOX_LIMITS = [
   "workers",
   "forms",
   "iframes, embeds, and objects",
-  "meta refresh"
+  "meta refresh",
+  "file downloads",
+  "plain links to other sites (open them in a new tab with target=\"_blank\")"
 ];
 
 // JSON API used by the CLI (and so by agents). Every route takes a bearer
@@ -438,26 +440,42 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
       await release();
     } else {
       const epoch = await bumpMembershipEpoch(db, viewer.account_id, organizationId);
-      const created = await workos(c.get("config")).client.userManagement.createOrganizationMembership({
-        organizationId,
-        userId: viewer.account_id,
-        roleSlug: "member"
-      });
-      // Which code let them in: a removal processed later undoes joins made
-      // with codes that were already due for revocation (src/webhooks.ts).
-      await db
-        .prepare("INSERT INTO joins (membership_id, user_id, organization_id, code_created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING")
-        .bind(created.id, viewer.account_id, organizationId, reserved.created_at)
-        .run();
-      // A removal revokes codes before it deletes the membership, so a code
-      // revoked while this join ran means someone was removed meanwhile (maybe
-      // this person): undo the join rather than race it.
-      const revoked = await db.prepare("SELECT revoked_at FROM invites WHERE code = ?").bind(code).first<{ revoked_at: number | null }>();
-      if (revoked?.revoked_at) {
-        await undoJoin(c.env, created.id);
-        return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
+      const { userManagement } = workos(c.get("config")).client;
+      // A membership whose undo is still queued (WorkOS was failing deletes)
+      // is taken back by this valid code instead of colliding with it.
+      const live = (
+        await userManagement.listOrganizationMemberships({ userId: viewer.account_id, organizationId, statuses: ["active"], limit: 1 })
+      ).data.find((m) => m.organizationId === organizationId);
+      const reclaimed = live && (await membershipBeingUndone(db, live.id)) ? live : null;
+      if (reclaimed) {
+        await db.prepare("DELETE FROM pending_deletions WHERE kind = 'workos_membership' AND target = ?").bind(reclaimed.id).run();
       }
-      await setRevokedAtEpoch(db, viewer.account_id, organizationId, false, epoch);
+      const membershipId =
+        reclaimed?.id ?? (await userManagement.createOrganizationMembership({ organizationId, userId: viewer.account_id, roleSlug: "member" })).id;
+      try {
+        // Which code let them in: a removal processed later undoes joins made
+        // with codes that were already due for revocation (src/webhooks.ts).
+        await db
+          .prepare(
+            `INSERT INTO joins (membership_id, user_id, organization_id, code_created_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT (membership_id) DO UPDATE SET code_created_at = excluded.code_created_at, undone = 0`
+          )
+          .bind(membershipId, viewer.account_id, organizationId, reserved.created_at)
+          .run();
+        // A removal revokes codes before it deletes the membership, so a code
+        // revoked while this join ran means someone was removed meanwhile (maybe
+        // this person): undo the join rather than race it.
+        const revoked = await db.prepare("SELECT revoked_at FROM invites WHERE code = ?").bind(code).first<{ revoked_at: number | null }>();
+        if (revoked?.revoked_at) {
+          await undoJoin(c.env, membershipId);
+          return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
+        }
+        await setRevokedAtEpoch(db, viewer.account_id, organizationId, false, epoch);
+      } catch (error) {
+        // Never leave a membership behind that no join row accounts for.
+        await undoJoin(c.env, membershipId).catch(() => undefined);
+        throw error;
+      }
     }
   } catch (error) {
     await release();
@@ -505,6 +523,16 @@ function notSignedIn<E extends AppEnv>(c: Context<E>): Response {
   return c.json({ ok: false, error: "Not signed in. Run: htmlartifact login" }, 401);
 }
 
+// Who may publish a new version of an artifact: its author, a workspace
+// admin (so artifacts outlive the people who made them), or, for artifacts
+// published by an organization API key (CI), any organization API key of
+// the workspace (so rotating a CI key doesn't freeze its artifacts).
+function canUpdateDraft(viewer: Viewer, draft: DraftRow): boolean {
+  if (draft.account_id === viewer.account_id || viewer.role === "admin") return true;
+  const organizationKey = viewer.is_api_key && viewer.account_id === viewer.credential_id;
+  return organizationKey && draft.account_id.startsWith("api_key_");
+}
+
 async function requireAdmin(c: Context<MemberEnv>, next: Next): Promise<Response | void> {
   if (c.get("viewer").role !== "admin") {
     return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
@@ -538,7 +566,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
         .bind(viewer.organization_id, slug)
         .first<DraftRow>()
     : null;
-  if (slugDraft && slugDraft.account_id !== viewer.account_id) {
+  if (slugDraft && !canUpdateDraft(viewer, slugDraft)) {
     return c.json({ ok: false, error: `The custom URL "${slug}" belongs to a teammate's artifact.` }, 409);
   }
   if (slugDraft && draftId && slugDraft.id !== draftId) {
@@ -551,13 +579,14 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     slugDraft ||
     (draftId
       ? await db
-          .prepare(
-            "SELECT * FROM drafts WHERE id = ? AND account_id = ? AND organization_id = ? AND deleted_at IS NULL"
-          )
-          .bind(draftId, viewer.account_id, viewer.organization_id)
+          .prepare("SELECT * FROM drafts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL")
+          .bind(draftId, viewer.organization_id)
           .first<DraftRow>()
       : null);
   if (draftId && !existing) return c.json({ ok: false, error: "Artifact not found." }, 404);
+  if (existing && !canUpdateDraft(viewer, existing)) {
+    return c.json({ ok: false, error: "That artifact belongs to a teammate; only they or a workspace admin can update it." }, 409);
+  }
 
   const current = existing?.current_version_id
     ? await db

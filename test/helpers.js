@@ -200,16 +200,24 @@ export async function callApi(stack, token, method, pathname, body) {
   return { status: response.status, body: json };
 }
 
-// Delivers a correctly signed WorkOS webhook, as WorkOS would.
-export function sendWebhook(stack, payload) {
+// Delivers a correctly signed WorkOS webhook, as WorkOS would, including its
+// retries of 5xx answers (locally the app, the ops Worker and the test proxy
+// share one SQLite file and occasionally collide on a lock).
+export async function sendWebhook(stack, payload) {
   const body = JSON.stringify(payload);
-  const t = Date.now();
-  const v1 = createHmac("sha256", WEBHOOK_SECRET).update(`${t}.${body}`).digest("hex");
-  return fetch(`${stack.baseUrl}/webhooks/workos`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "WorkOS-Signature": `t=${t}, v1=${v1}` },
-    body
-  });
+  let response;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+    const t = Date.now();
+    const v1 = createHmac("sha256", WEBHOOK_SECRET).update(`${t}.${body}`).digest("hex");
+    response = await fetch(`${stack.baseUrl}/webhooks/workos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "WorkOS-Signature": `t=${t}, v1=${v1}` },
+      body
+    });
+    if (response.status < 500) return response;
+  }
+  return response;
 }
 
 // A minimal browser: a cookie jar and manual redirects, so a test can sign in
