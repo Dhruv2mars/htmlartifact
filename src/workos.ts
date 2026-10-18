@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { WorkOS } from "@workos-inc/node";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import type { Config } from "./types.ts";
@@ -22,7 +23,8 @@ export interface AccessTokenClaims extends JWTPayload {
 interface ClientEntry {
   client: WorkOS;
   jwks: ReturnType<typeof createRemoteJWKSet>;
-  keyCache: Map<string, { key: ApiKeyInfo | null; expiresAt: number }>;
+  keyCache: Map<string, { key: ApiKeyInfo; expiresAt: number }>; // by keyId()
+  rejectedKeys: Map<string, number>; // keyId() → expiresAt
 }
 
 // One WorkOS client (and JWKS cache) per configuration, reused across
@@ -42,7 +44,8 @@ export function workos(config: Config): ClientEntry {
         port: url.port ? Number(url.port) : undefined
       }),
       jwks: createRemoteJWKSet(new URL(`${config.workos.apiUrl}/sso/jwks/${config.workos.clientId}`)),
-      keyCache: new Map()
+      keyCache: new Map(),
+      rejectedKeys: new Map()
     };
     clients.set(key, entry);
   }
@@ -71,26 +74,73 @@ export async function verifyAccessToken(config: Config, token: string): Promise<
 }
 
 // A WorkOS organization API key (CI) → { id, name, organizationId, userId },
-// or null. Validation is an API call, so results are cached for a minute.
+// or null. Validation is an API call to WorkOS, whose rate limit every tenant
+// shares, so:
+//   - looksLikeApiKey() turns away anything not shaped like a WorkOS secret
+//     key ("sk_...") without a call;
+//   - valid keys are cached for a minute, rejected ones for five, both keyed
+//     by a SHA-256 of the value (raw keys are never kept) and bounded in size;
+//   - callers rate-limit cache misses per IP (src/auth.ts).
+// WorkOS errors (5xx, 429) are thrown and never cached.
 const KEY_CACHE_MS = 60_000;
+const REJECTED_KEY_CACHE_MS = 5 * 60_000;
+const KEY_CACHE_MAX = 10_000;
+const REJECTED_KEY_CACHE_MAX = 10_000;
+
+// WorkOS secret and organization API keys are "sk_" + URL-safe characters.
+export function looksLikeApiKey(value: string): boolean {
+  return /^sk_[A-Za-z0-9_-]{8,256}$/.test(value);
+}
+
+// The cached verdict for `value`: ApiKeyInfo, null (rejected), or undefined
+// when WorkOS has to be asked.
+export function cachedApiKey(config: Config, value: string): ApiKeyInfo | null | undefined {
+  const { keyCache, rejectedKeys } = workos(config);
+  const id = keyId(value);
+  const now = Date.now();
+  const valid = keyCache.get(id);
+  if (valid && valid.expiresAt > now) return valid.key;
+  const rejected = rejectedKeys.get(id);
+  if (rejected && rejected > now) return null;
+  return undefined;
+}
 
 export async function validateApiKey(config: Config, value: string): Promise<ApiKeyInfo | null> {
-  const { client, keyCache } = workos(config);
-  const cached = keyCache.get(value);
-  if (cached && cached.expiresAt > Date.now()) return cached.key;
+  const cached = cachedApiKey(config, value);
+  if (cached !== undefined) return cached;
 
+  const { client, keyCache, rejectedKeys } = workos(config);
   const { apiKey } = await client.apiKeys.createValidation({ value });
-  const key = apiKey
-    ? {
-        id: apiKey.id,
-        name: apiKey.name,
-        organizationId: apiKey.owner.type === "organization" ? apiKey.owner.id : apiKey.owner.organizationId,
-        userId: apiKey.owner.type === "user" ? apiKey.owner.id : null
-      }
-    : null;
-  if (keyCache.size > 10_000) keyCache.clear();
-  keyCache.set(value, { key, expiresAt: Date.now() + KEY_CACHE_MS });
+  const id = keyId(value);
+  if (!apiKey) {
+    remember(rejectedKeys, REJECTED_KEY_CACHE_MAX, id, Date.now() + REJECTED_KEY_CACHE_MS);
+    return null;
+  }
+  const key = {
+    id: apiKey.id,
+    name: apiKey.name,
+    organizationId: apiKey.owner.type === "organization" ? apiKey.owner.id : apiKey.owner.organizationId,
+    userId: apiKey.owner.type === "user" ? apiKey.owner.id : null
+  };
+  rejectedKeys.delete(id);
+  remember(keyCache, KEY_CACHE_MAX, id, { key, expiresAt: Date.now() + KEY_CACHE_MS });
   return key;
+}
+
+// Bounded: at the cap the oldest entry goes (a Map keeps insertion order).
+// Separate maps, so a flood of junk keys cannot evict valid ones.
+function remember<V>(cache: Map<string, V>, max: number, id: string, value: V): void {
+  cache.delete(id);
+  while (cache.size >= max) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  cache.set(id, value);
+}
+
+function keyId(value: string): string {
+  return createHash("sha256").update(value).digest("base64url");
 }
 
 export function displayName(user: {

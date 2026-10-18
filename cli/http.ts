@@ -8,6 +8,8 @@ export interface JsonResult {
   ok: boolean;
   status: number;
   body: Json;
+  // Seconds from a Retry-After header (429, 503), when the server sent one.
+  retryAfter?: number | undefined;
 }
 
 export interface RequestOptions {
@@ -76,8 +78,17 @@ export const postJson = (url: string, body: unknown): Effect.Effect<JsonResult, 
       catch: (error) => new NetworkError({ message: `Could not reach ${originOf(url)}: ${reason(error)}` })
     });
     const json = yield* Effect.promise(() => response.json().then((value) => value as Json, () => ({}) as Json));
-    return { ok: response.ok, status: response.status, body: json };
+    return { ok: response.ok, status: response.status, body: json, retryAfter: retryAfterSeconds(response) };
   });
+
+// Retry-After in seconds (delta-seconds or an HTTP date), or undefined.
+function retryAfterSeconds(response: Response): number | undefined {
+  const value = response.headers.get("retry-after");
+  if (!value) return undefined;
+  if (/^\d+$/.test(value.trim())) return Number(value.trim());
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? undefined : Math.max(0, Math.ceil((at - Date.now()) / 1000));
+}
 
 export function serverErrorMessage(body: Json): string {
   const details = body.errors?.length ? `\n- ${body.errors.join("\n- ")}` : "";

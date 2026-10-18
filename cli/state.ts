@@ -93,6 +93,55 @@ export const saveSession = (apiUrl: string, tokens: Json): Effect.Effect<Session
 
 export const removeCredentials = attempt(() => fs.rmSync(CREDENTIALS_PATH, { force: true }));
 
+// Refresh tokens are single-use: concurrent CLI runs (parallel agent
+// commands) take turns refreshing through this lock file, and each re-reads
+// the credentials once it holds the lock. Best-effort: a lock older than
+// LOCK_STALE_MS is taken over (its holder crashed), and after LOCK_WAIT_MS
+// the run goes ahead without it rather than hang.
+const LOCK_PATH = `${CREDENTIALS_PATH}.lock`;
+const LOCK_WAIT_MS = 15_000;
+const LOCK_STALE_MS = 30_000;
+
+function tryLock(): boolean {
+  try {
+    fs.mkdirSync(path.dirname(LOCK_PATH), { recursive: true, mode: 0o700 });
+    const fd = fs.openSync(LOCK_PATH, "wx", 0o600);
+    fs.writeSync(fd, String(process.pid));
+    fs.closeSync(fd);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+    try {
+      if (Date.now() - fs.statSync(LOCK_PATH).mtimeMs > LOCK_STALE_MS) fs.rmSync(LOCK_PATH, { force: true });
+    } catch {
+      // Released meanwhile: the next try takes it.
+    }
+    return false;
+  }
+}
+
+const acquireLock = Effect.gen(function* () {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (tryLock()) return true;
+    yield* Effect.sleep(50 + Math.floor(Math.random() * 100));
+  }
+  return false;
+});
+
+const releaseLock = (held: boolean) =>
+  Effect.sync(() => {
+    if (!held) return;
+    try {
+      if (fs.readFileSync(LOCK_PATH, "utf8") === String(process.pid)) fs.rmSync(LOCK_PATH, { force: true });
+    } catch {
+      // Already gone.
+    }
+  });
+
+export const withCredentialsLock = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(acquireLock, () => effect, releaseLock);
+
 // Each (API URL, path) binding is its own file, so concurrent uploads and
 // uploads to different APIs never rewrite each other's mappings.
 function draftBindingPath(apiUrl: string, file: string): string {
