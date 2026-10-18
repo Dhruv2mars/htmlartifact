@@ -242,7 +242,11 @@ describe("ops Worker cron", () => {
       );
       const [failed] = await rows("SELECT attempts, last_error FROM pending_deletions WHERE target = ?", org.id);
       assert.match(failed.last_error, /WorkOS 503/);
-      assert.equal(await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", prefix), 0);
+      // The objects go first, the queue row right after.
+      await eventually(
+        async () => (await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", prefix)) === 0,
+        "purged prefix leaves the queue"
+      );
       assert.deepEqual(await r2Keys("orgs/org_cron_test/drafts/zzzzzzzzzzzz/"), [outside], "only the prefix");
     } finally {
       await restore();
@@ -372,7 +376,8 @@ describe("workspace deletion", () => {
     for (const table of ["workspaces", "memberships", "membership_epochs", "revocations"]) {
       assert.equal(await count(`SELECT COUNT(*) FROM ${table} WHERE organization_id = ?`, workspace.id), 0, table);
     }
-    assert.equal(await count("SELECT COUNT(*) FROM pending_deletions"), 0);
+    // R2 and WorkOS cleanup runs after the webhook answers (waitUntil).
+    await eventually(async () => (await count("SELECT COUNT(*) FROM pending_deletions")) === 0, "nothing left queued");
   });
 
   test("an organization deleted in WorkOS directly takes its workspace with it", async () => {
@@ -539,7 +544,7 @@ describe("review round 4", () => {
     await runCron();
     await eventually(async () => (await r2Keys("orgs/org_x/")).length === 1, "upload's objects purged by the cron");
     assert.deepEqual(await r2Keys("orgs/org_x/"), [kept]);
-    assert.equal(await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", prefix), 0);
+    await eventually(async () => (await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", prefix)) === 0, "queue row cleared");
     await deleteObject(kept);
   });
 });
