@@ -19,7 +19,7 @@ enabled = true
 [[d1_databases]]
 binding = "DB"
 database_name = "htmlartifact"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "c1fd2f32-8d99-4229-8e39-b441df855a89"
 
 [[r2_buckets]]
 binding = "ARTIFACTS"
@@ -44,7 +44,7 @@ crons = ["*/15 * * * *"]
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "htmlartifact-staging"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "0c008194-08d1-4289-a7aa-e11d05da04cf"
 
 [[env.staging.r2_buckets]]
 binding = "ARTIFACTS"
