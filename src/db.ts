@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS membership_epochs (
   epoch INTEGER NOT NULL,
   PRIMARY KEY (user_id, organization_id)
 );
+CREATE TABLE IF NOT EXISTS directory_user_emails (
+  organization_id TEXT NOT NULL,
+  directory_user_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  PRIMARY KEY (organization_id, directory_user_id, email)
+);
 CREATE TABLE IF NOT EXISTS revocations (
   subject TEXT NOT NULL,
   organization_id TEXT NOT NULL,

@@ -42,6 +42,8 @@ export const SEED = {
     },
     { name: "Other", memberships: [{ email: "olivia@other.test" }, { email: "max@both.test" }] }
   ],
+  // Acme's SCIM directory still lists Bob as active (deletion tests send it stale events).
+  directories: [{ name: "Acme Okta", organization: "Acme", users: [{ email: "bob@acme.test" }] }],
   apiKeys: [
     { name: "Acme CI", organization: "Acme", value: CI_KEY },
     { name: "Other CI", organization: "Other", value: OTHER_CI_KEY }

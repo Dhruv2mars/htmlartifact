@@ -77,26 +77,17 @@ async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: str
       c.executionCtx.waitUntil(runWorkspaceDeletions(c.env, id));
       return;
     }
-    case "dsync.user.deleted":
-    case "dsync.user.updated": {
+    case "dsync.user.created":
+    case "dsync.user.updated":
+    case "dsync.user.deleted": {
       // SCIM deprovisioning. With AuthKit Directory Provisioning on, WorkOS also
       // removes the membership itself; without it, only these events arrive.
-      // Either way: end the person's membership in the directory's org.
-      if (event === "dsync.user.updated" && field(data, "state") !== "inactive") return;
-      if (!organizationId || (await isWorkspaceDeleted(db, organizationId))) return;
-      const { userManagement } = workos(c.get("config")).client;
-      const email = field(data, "email")?.toLowerCase();
-      if (email) {
-        const users = await userManagement.listUsers({ email, limit: 10 });
-        for (const user of users.data.filter((u) => u.email.toLowerCase() === email)) {
-          const epoch = await bumpMembershipEpoch(db, user.id, organizationId);
-          const page = await userManagement.listOrganizationMemberships({ userId: user.id, organizationId, limit: 10 });
-          for (const membership of page.data.filter((m) => m.organizationId === organizationId)) {
-            await userManagement.deleteOrganizationMembership(membership.id);
-          }
-          await setRevokedAtEpoch(db, user.id, organizationId, true, epoch);
-        }
-      }
+      const directoryUserId = field(data, "id");
+      if (!directoryUserId || !organizationId) return;
+      await syncDirectoryUser(c, directoryUserId, organizationId, [
+        field(data, "email"),
+        field(Reflect.get(data, "previousAttributes") ?? {}, "email")
+      ]);
       return;
     }
     case "user.deleted": {
@@ -123,4 +114,58 @@ async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: str
 function field(data: object, key: string): string | undefined {
   const value: unknown = Reflect.get(data, key);
   return typeof value === "string" ? value : undefined;
+}
+
+// Every address a directory user has had is remembered, so a rename before
+// deactivation cannot hide the account that signed in with the old one.
+// Events may be stale or out of order, so the payload's state is never
+// trusted: the directory user's current state decides. Anyone no longer
+// active (or gone) loses their membership in the directory's workspace only.
+async function syncDirectoryUser(
+  c: Context<AppEnv>,
+  directoryUserId: string,
+  eventOrganizationId: string,
+  eventEmails: (string | undefined)[]
+): Promise<void> {
+  const db = c.env.DB;
+  const { directorySync, userManagement } = workos(c.get("config")).client;
+  const current = await directorySync.getUser(directoryUserId).catch((error: unknown) => {
+    if (Reflect.get(Object(error), "status") === 404) return null;
+    throw error;
+  });
+  const organizationId = current?.organizationId ?? eventOrganizationId;
+  if (await isWorkspaceDeleted(db, organizationId)) return;
+
+  const seen = [...eventEmails, current?.email].filter((e): e is string => Boolean(e)).map((e) => e.toLowerCase());
+  if (seen.length) {
+    await db.batch(
+      seen.map((email) =>
+        db
+          .prepare("INSERT INTO directory_user_emails (organization_id, directory_user_id, email) VALUES (?, ?, ?) ON CONFLICT DO NOTHING")
+          .bind(organizationId, directoryUserId, email)
+      )
+    );
+  }
+  if (current?.state === "active") return;
+
+  const { results } = await db
+    .prepare("SELECT email FROM directory_user_emails WHERE organization_id = ? AND directory_user_id = ?")
+    .bind(organizationId, directoryUserId)
+    .all<{ email: string }>();
+  for (const { email } of results) {
+    const users = await userManagement.listUsers({ email, limit: 10 });
+    for (const user of users.data.filter((u) => u.email.toLowerCase() === email)) {
+      const epoch = await bumpMembershipEpoch(db, user.id, organizationId);
+      const page = await userManagement.listOrganizationMemberships({ userId: user.id, organizationId, limit: 10 });
+      for (const membership of page.data.filter((m) => m.organizationId === organizationId)) {
+        await userManagement.deleteOrganizationMembership(membership.id);
+      }
+      await setRevokedAtEpoch(db, user.id, organizationId, true, epoch);
+    }
+  }
+  // Done with them: the history only bridges renames until deprovisioning.
+  await db
+    .prepare("DELETE FROM directory_user_emails WHERE organization_id = ? AND directory_user_id = ?")
+    .bind(organizationId, directoryUserId)
+    .run();
 }
