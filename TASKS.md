@@ -35,5 +35,5 @@ provably removes its R2 objects (every version).
 - [x] GitHub Actions written: ci.yml, deploy.yml (needs CLOUDFLARE_API_TOKEN secret), release.yml (npm trusted publishing)
 - [ ] package.json scripts: typecheck, typecheck:cli, build:pages, build:cli, deploy:all, smoke
 - [ ] Real WorkOS env: redirect URI, webhooks, MFA, SSO/DSync enabled
-- [ ] `DEFAULT_API_URL` = https://htmlartifact.pages.dev; publish CLI to npm
+- [ ] `DEFAULT_API_URL` = https://htmlartifact.pages.dev; first npm publish locally (claims the unclaimed `htmlartifact` name), then enable npm trusted publishing so release.yml publishes with provenance (no long-lived tokens)
 - [ ] Production walkthrough with two real accounts (item 4)
