@@ -89,6 +89,167 @@ describe("validating large pages", () => {
   });
 });
 
+// Runs validateHtml and returns the result with its wall time and heap growth.
+function timed(html) {
+  const heapBefore = process.memoryUsage().heapUsed;
+  const start = performance.now();
+  const result = validateHtml(html, { maxBytes: ACCOUNT_LIMIT });
+  return { result, ms: performance.now() - start, heapMB: (process.memoryUsage().heapUsed - heapBefore) / MiB };
+}
+
+const codes = (result) => result.issues.map((issue) => issue.code);
+const attrList = (count, from = 0) => Array.from({ length: count }, (_, i) => `a${from + i}=x`).join(" ");
+
+describe("validator limits stop hostile pages fast", () => {
+  // Before the limit stopped parsing, 391 KB of <div> took ~70 s of CPU and
+  // 4 MB of <b> needed over 512 MB of heap.
+  for (const [name, open] of [
+    ["<div>", "<div>"],
+    ["<b>", "<b>"],
+    ["<div> in a <template>", "<div>"]
+  ]) {
+    test(`~4 MB of nested ${name} fails as too-deep in under a second`, () => {
+      const prefix = `<title>t</title>${name.includes("template") ? "<template>" : ""}`;
+      const html = prefix + open.repeat(Math.floor((4_000_000 - prefix.length) / open.length));
+      const { result, ms, heapMB } = timed(html);
+      assert.deepEqual(codes(result), ["too-deep"]);
+      assert.equal(result.ok, false);
+      assert.ok(ms < 1000, `took ${ms.toFixed(0)} ms`);
+      assert.ok(heapMB < 64, `heap grew ${heapMB.toFixed(1)} MB`);
+    });
+  }
+
+  test("nesting up to the limit still validates the whole page", () => {
+    const page = (depth) =>
+      `<title>t</title>${"<div>".repeat(depth)}x${"</div>".repeat(depth)}<iframe></iframe>`;
+    // html and body are levels 1 and 2; text at level 512 is too deep.
+    assert.deepEqual(codes(validateHtml(page(508))), ["blocked-tag"]);
+    assert.deepEqual(codes(validateHtml(page(509))), ["blocked-tag", "too-deep"]);
+    assert.deepEqual(codes(validateHtml(page(600))), ["too-deep"], "parsing stops at the first element past the limit");
+  });
+
+  test("a tag with 40,000 attributes fails fast with too-many-attributes", () => {
+    const html = `<title>t</title>\n<div ${attrList(40_000)}>x</div>`;
+    const { result, ms } = timed(html);
+    assert.equal(result.ok, false);
+    assert.deepEqual(
+      result.issues.map(({ code, message, line, column }) => ({ code, message, line, column })),
+      [{ code: "too-many-attributes", message: "An element has more than 1000 attributes.", line: 2, column: 1 }]
+    );
+    assert.ok(ms < 1000, `took ${ms.toFixed(0)} ms`);
+  });
+
+  test("20,000 <body> tags merging attributes fail fast with too-many-attributes", () => {
+    const html = "<title>t</title>" + Array.from({ length: 20_000 }, (_, i) => `<body a${i}=x>`).join("");
+    const { result, ms } = timed(html);
+    assert.deepEqual(codes(result), ["too-many-attributes"]);
+    assert.ok(ms < 1000, `took ${ms.toFixed(0)} ms`);
+  });
+
+  test("the attribute limit is 1,000 per element, merged tags included", () => {
+    assert.deepEqual(codes(validateHtml(`<title>t</title><div ${attrList(1000)}>`)), []);
+    assert.deepEqual(codes(validateHtml(`<title>t</title><div ${attrList(1001)}>`)), ["too-many-attributes"]);
+    assert.deepEqual(codes(validateHtml(`<title>t</title><div ${attrList(1000)} a0=y a1=z>`)), [], "duplicates do not count");
+    assert.deepEqual(codes(validateHtml(`<title>t</title><body ${attrList(600)}><body ${attrList(400, 600)}>`)), []);
+    assert.deepEqual(
+      codes(validateHtml(`<title>t</title><body ${attrList(600)}><body ${attrList(401, 600)}>`)),
+      ["too-many-attributes"]
+    );
+  });
+
+  // These fail if parse5 changes the tokenizer internals LimitedTokenizer
+  // overrides (package.json pins parse5's exact version for that reason).
+  test("duplicate attributes are dropped in linear time, keeping the first", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const pinned = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).devDependencies.parse5;
+    const installed = JSON.parse(
+      await readFile(new URL("../node_modules/parse5/package.json", import.meta.url), "utf8")
+    ).version;
+    assert.match(pinned, /^\d+\.\d+\.\d+$/, "parse5 must be pinned to an exact version");
+    assert.equal(installed, pinned);
+
+    const first = validateHtml(`<title>t</title>\n<a  href="https://ok.test" href="javascript:x" onclick="fetch(1)">x</a>`);
+    assert.deepEqual(
+      first.issues.map(({ code, line, column }) => ({ code, line, column })),
+      [{ code: "sandbox-network", line: 2, column: 48 }],
+      "the later, unsafe href is a dropped duplicate; the onclick keeps its own location"
+    );
+
+    // 500 tags of 1,000 attributes each: ~2.8 s with parse5's linear scan.
+    const wide = "<title>t</title>" + `<div ${attrList(1000)}></div>`.repeat(500);
+    const { result, ms } = timed(wide);
+    assert.deepEqual(codes(result), []);
+    assert.ok(ms < 1500, `took ${ms.toFixed(0)} ms`);
+  });
+});
+
+describe("declarative shadow roots", () => {
+  test("shadow root content is checked like the rest of the page", () => {
+    const result = validateHtml(
+      `<title>t</title><div><template shadowrootmode="open">\n<meta http-equiv="refresh" content="0;url=https://x.test"><script src="https://x.test/a.js"></script></template></div>`
+    );
+    assert.equal(result.ok, false);
+    assert.deepEqual(
+      result.issues.map(({ code, line, column }) => ({ code, line, column })),
+      [
+        { code: "meta-refresh", line: 2, column: 1 },
+        { code: "external-script", line: 2, column: 59 }
+      ]
+    );
+    assert.equal(result.hasScripts, true);
+  });
+
+  test("the legacy shadowroot attribute and nested shadow roots count too", () => {
+    assert.deepEqual(codes(validateHtml(`<title>t</title><template shadowroot="closed"><iframe></iframe></template>`)), [
+      "blocked-tag"
+    ]);
+    assert.deepEqual(
+      codes(
+        validateHtml(
+          `<title>t</title><template shadowrootmode="open"><p><template shadowrootmode="open"><a href="javascript:x">x</a></template></template>`
+        )
+      ),
+      ["unsafe-url"]
+    );
+  });
+
+  test("ordinary templates, and shadow roots inside them, stay unchecked", () => {
+    const inner = `<meta http-equiv="refresh" content="0"><iframe></iframe><script src="https://x.test/a.js"></script>`;
+    for (const html of [
+      `<title>t</title><template>${inner}</template>`,
+      `<title>t</title><template><template shadowrootmode="open">${inner}</template></template>`
+    ]) {
+      const result = validateHtml(html);
+      assert.deepEqual(result.issues, [], html);
+      assert.equal(result.hasScripts, false);
+    }
+  });
+
+  test("a <title> in a shadow root does not name the page", () => {
+    const result = validateHtml(`<template shadowrootmode="open"><title>Shadow</title></template><title>Real</title>`);
+    assert.equal(result.title, "Real");
+    assert.deepEqual(
+      codes(validateHtml(`<template shadowrootmode="open"><title>Shadow</title></template>`)),
+      ["no-title"]
+    );
+  });
+
+  test("issues in a shadow root sort in document order", () => {
+    const result = validateHtml(
+      `<title>t</title><iframe></iframe><table><template shadowrootmode="open"><form></form></template>x<embed></table>`
+    );
+    // "x" and <embed> are foster-parented before the table; the template stays inside it.
+    assert.deepEqual(
+      result.issues.map(({ message, column }) => ({ message, column })),
+      [
+        { message: "Blocked <iframe> tag.", column: 17 },
+        { message: "Blocked <embed> tag.", column: 98 },
+        { message: "Blocked <form> tag.", column: 73 }
+      ]
+    );
+  });
+});
+
 describe("large uploads through the API", () => {
   let stack;
   let alice;
