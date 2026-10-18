@@ -429,34 +429,69 @@ describe("WorkOS Admin Portal", () => {
 });
 
 describe("review round 4", () => {
-  test("SCIM deprovisioning (WorkOS deactivates the membership) ends access; reactivation restores it", async () => {
+  test("SCIM deprovisioning (WorkOS deactivates the membership) ends every kind of access; reactivation restores it", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
     const bob = await accessToken(stack, "bob@acme.test", "Acme");
     const bobUser = await findUser(stack.emulator, "bob@acme.test");
     const acme = await findOrganization(stack.emulator, "Acme");
-    const [membership] = (
-      await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${bobUser.id}&organization_id=${acme.id}`)
-    ).data;
-    const status = async () => (await callApi(stack, bob, "GET", "/api/drafts?scope=workspace")).status;
+    const membershipsUrl = `/user_management/organization_memberships?user_id=${bobUser.id}&organization_id=${acme.id}`;
+    const [membership] = (await workosApi(stack.emulator, "GET", membershipsUrl)).data;
+    const bobKey = (
+      await workosApi(stack.emulator, "POST", `/user_management/users/${bobUser.id}/api_keys`, { name: "Bob laptop", organization_id: acme.id })
+    ).value;
+    const status = async (token) => (await callApi(stack, token, "GET", "/api/drafts?scope=workspace")).status;
     const updated = (id) =>
       sendWebhook(stack, {
         id,
         event: "organization_membership.updated",
         data: { object: "organization_membership", id: membership.id, user_id: bobUser.id, organization_id: acme.id }
-      }).then((r) => assert.equal(r.status, 200));
-    assert.equal(await status(), 200);
+      });
+    const hooks = async () => (await (await fetch(`${stack.emulator.url}/_emulate/hooks`)).json()).filter((h) => h.path === "/portal/revoke_link");
+    assert.equal(await status(bob), 200);
+    assert.equal(await status(bobKey), 200, "a user-owned API key works while they are a member");
 
     // What AuthKit Directory Provisioning does when the directory removes someone.
     await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${membership.id}/deactivate`);
-    await updated("event_dsync_deactivated");
-    assert.equal(await status(), 403, "access ended");
+
+    // Even with the webhook lost and the membership cache expired, their own API key stops working.
+    await proxy.env.DB.prepare("DELETE FROM memberships WHERE user_id = ?").bind(bobUser.id).run();
+    assert.equal(await status(bobKey), 403, "user-owned key follows its user's membership");
+
+    // The webhook ends access and their Admin Portal sessions (revoke_link must succeed, or WorkOS retries).
+    const [standIn] = await hooks();
+    await fetch(`${stack.emulator.url}/_emulate/hooks/${standIn.id}`, { method: "DELETE" });
+    const restore = await breakWorkos(stack.emulator, "POST", "/portal/revoke_link", 503);
+    assert.equal((await updated("event_dsync_deactivated_1")).status, 500, "portal revocation failure is retried");
+    assert.equal(await status(bob), 403, "access already ended");
+    await restore();
+    await fetch(`${stack.emulator.url}/_emulate/hooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "POST", path: "/portal/revoke_link", status: 200, body: {}, count: 1 })
+    });
+    assert.equal((await updated("event_dsync_deactivated_2")).status, 200);
+    assert.equal((await hooks()).length, 0, "revoke_link was called");
+    await fetch(`${stack.emulator.url}/_emulate/hooks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "POST", path: "/portal/revoke_link", status: 200, body: {} })
+    });
+    assert.equal(await status(bob), 403);
+
+    // An old invite cannot undo it (creating a membership would reactivate it).
+    const invite = await callApi(stack, alice, "POST", "/api/workspaces/invites", {});
+    const join = await callApi(stack, bob, "POST", "/api/workspaces/join", { code: invite.body.code });
+    assert.equal(join.status, 403, JSON.stringify(join.body));
+    assert.equal((await workosApi(stack.emulator, "GET", `${membershipsUrl}&statuses=inactive`)).data[0]?.status, "inactive");
 
     // A stale copy of an earlier "updated" changes nothing: the handler re-checks WorkOS.
-    await updated("event_dsync_stale");
-    assert.equal(await status(), 403);
+    assert.equal((await updated("event_dsync_stale")).status, 200);
+    assert.equal(await status(bob), 403);
 
     await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${membership.id}/reactivate`);
-    await updated("event_dsync_reactivated");
-    assert.equal(await status(), 200, "reactivated in the directory: access back");
+    assert.equal((await updated("event_dsync_reactivated")).status, 200);
+    assert.equal(await status(bob), 200, "reactivated in the directory: access back");
+    assert.equal(await status(bobKey), 200);
   });
 
   test("a request that passed the revocation check cannot restore a deleted user's profile", async () => {

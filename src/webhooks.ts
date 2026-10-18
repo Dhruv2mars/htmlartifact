@@ -3,7 +3,7 @@ import type { Context, Hono } from "hono";
 import { bumpMembershipEpoch, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { deleteWorkspaceStatements, isWorkspaceDeleted, runWorkspaceDeletions, scrubUserStatements } from "./purge.ts";
 import type { AppEnv } from "./types.ts";
-import { workos } from "./workos.ts";
+import { revokePortalLinks, workos } from "./workos.ts";
 
 // WorkOS webhooks close the gap between "removed in WorkOS" and "token
 // expired": a removed member, deleted user, revoked session or deleted API
@@ -64,6 +64,9 @@ async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: str
       });
       const active = page.data.some((m) => m.organizationId === organizationId);
       await setRevokedAtEpoch(db, userId, organizationId, !active, epoch);
+      // Gone or deactivated: end any Admin Portal session they opened too.
+      // A failure returns 500, so WorkOS retries; access already ended above.
+      if (!active) await revokePortalLinks(c.get("config"), organizationId, userId);
       return;
     }
     case "organization.deleted": {

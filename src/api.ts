@@ -21,7 +21,7 @@ import {
   type Viewer,
   type WorkspaceRow
 } from "./types.ts";
-import { displayName, workos } from "./workos.ts";
+import { displayName, portalLink, revokePortalLinks, workos } from "./workos.ts";
 
 // A request body, before validation: any field may hold anything.
 type JsonBody = Record<string, unknown>;
@@ -253,6 +253,9 @@ export function registerApi(app: Hono<AppEnv>): void {
     });
     const [membership] = page.data;
     if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
+    // Portal sessions outlive AuthKit sessions: end them first (a failure
+    // here changes nothing, so the admin can simply retry).
+    await revokePortalLinks(c.get("config"), viewer.organization_id, userId);
     const epoch = await bumpMembershipEpoch(c.env.DB, userId, viewer.organization_id);
     await client.userManagement.deleteOrganizationMembership(membership.id);
     await setRevokedAtEpoch(c.env.DB, userId, viewer.organization_id, true, epoch);
@@ -298,11 +301,8 @@ export function registerApi(app: Hono<AppEnv>): void {
     if (intent === "dsync" && !c.get("config").workos.directoryProvisioning) {
       return c.json({ ok: false, error: "Directory Sync isn't available yet. Contact support to enable it." }, 409);
     }
-    const { link } = await workos(c.get("config")).client.adminPortal.generateLink({
-      organization: viewer.organization_id,
-      intent
-    });
-    return c.json({ ok: true, url: link });
+    const url = await portalLink(c.get("config"), viewer.organization_id, intent, viewer.account_id);
+    return c.json({ ok: true, url });
   });
 
   // ---- Artifacts
@@ -364,6 +364,23 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
   let alreadyMember: boolean;
   try {
     alreadyMember = Boolean(await activeMembership(c, viewer.account_id, organizationId));
+    // A deactivated membership (the company's directory, or WorkOS, offboarded
+    // them) must not come back through an old invite: creating a membership
+    // reactivates an inactive one. Only the directory or an admin restores it.
+    const inactive = alreadyMember
+      ? null
+      : (
+          await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
+            userId: viewer.account_id,
+            organizationId,
+            statuses: ["inactive"],
+            limit: 1
+          })
+        ).data.find((m) => m.organizationId === organizationId);
+    if (inactive) {
+      await release();
+      return { status: 403, body: { ok: false, error: "Your access to this workspace was removed. Ask your IT admin." } };
+    }
     if (alreadyMember) {
       await release();
     } else {

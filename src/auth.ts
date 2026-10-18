@@ -206,9 +206,14 @@ async function viewerFromApiKey<E extends AppEnv>(c: Context<E>, value: string):
   } else if (!(await findAccount(c.env.DB, key.id, PROFILE_CACHE_SECONDS))) {
     await saveAccount(c.env.DB, { id: key.id, name: `${key.name} (API key)` });
   }
+  // A user-owned key acts for its user, so it stops working in a workspace
+  // they have left or been deactivated in (WorkOS revokes keys when a
+  // membership is deleted, not when it is deactivated). Keys keep no role.
+  const organizationId =
+    key.userId && !(await activeMembership(c, key.userId, key.organizationId)) ? null : key.organizationId;
   return buildViewer(c, {
     accountId: key.userId || key.id,
-    organizationId: key.organizationId,
+    organizationId,
     credentialId: key.id,
     ownedByOrganization: true
   });

@@ -102,3 +102,31 @@ export function displayName(user: {
   const name = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
   return name || user.email || user.id;
 }
+
+async function workosPost(config: Config, path: string, body: object): Promise<Record<string, unknown>> {
+  const response = await fetch(`${config.workos.apiUrl}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${config.workos.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) throw new Error(`WorkOS ${path} -> ${response.status}`);
+  const text = await response.text();
+  return text ? (JSON.parse(text) as Record<string, unknown>) : {};
+}
+
+// An Admin Portal link tied to the admin who asked, so it (and any portal
+// session opened from it) can be revoked when they leave.
+export async function portalLink(config: Config, organizationId: string, intent: string, userId: string): Promise<string> {
+  const { link } = await workosPost(config, "/portal/generate_link", {
+    organization: organizationId,
+    intent,
+    external_user_id: userId
+  });
+  if (typeof link !== "string") throw new Error("WorkOS returned no portal link");
+  return link;
+}
+
+// Ends every Admin Portal link and session `userId` has for this organization.
+export async function revokePortalLinks(config: Config, organizationId: string, userId: string): Promise<void> {
+  await workosPost(config, "/portal/revoke_link", { organization: organizationId, external_user_id: userId });
+}

@@ -42,6 +42,8 @@ export const SEED = {
     },
     { name: "Other", memberships: [{ email: "olivia@other.test" }, { email: "max@both.test" }] }
   ],
+  // The emulator has no Admin Portal revocation endpoint; stand in for it.
+  errorHooks: [{ method: "POST", path: "/portal/revoke_link", status: 200, body: {} }],
   apiKeys: [
     { name: "Acme CI", organization: "Acme", value: CI_KEY },
     { name: "Other CI", organization: "Other", value: OTHER_CI_KEY }

@@ -118,6 +118,12 @@ those artifacts will 404.
   Directory setup links are refused until WorkOS has enabled Directory
   Provisioning for the environment (`HTMLARTIFACT_DIRECTORY_PROVISIONING=on`),
   so a directory can never sync without offboarding.
+- **Offboarding is complete:** a deactivated or removed member also loses
+  their user-owned API keys (checked against their live membership), any
+  Admin Portal session they opened (portal links carry their user ID and are
+  revoked via `POST /portal/revoke_link`), and cannot rejoin through an old
+  invite (an inactive membership is never reactivated by an invite; only the
+  directory or WorkOS restores it).
 - **MFA:** enabled in AuthKit for password sign-ins.
 
 ## Incident response
