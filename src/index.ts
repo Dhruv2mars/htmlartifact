@@ -26,7 +26,17 @@ function baseApp(): Hono<AppEnv> {
     if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
   });
 
-  app.get("/healthz", (c) => c.json({ ok: true }));
+  // Deep health: config loaded (middleware above), D1 reachable with the
+  // schema in place, R2 reachable. 503 names the failing store, nothing more.
+  app.get("/healthz", async (c) => {
+    const probe = (run: () => Promise<unknown>) => run().then(() => true, () => false);
+    const checks = {
+      d1: await probe(() => c.env.DB.prepare("SELECT 1 FROM drafts LIMIT 1").all()),
+      r2: await probe(() => c.env.ARTIFACTS.head("healthz"))
+    };
+    const ok = checks.d1 && checks.r2;
+    return c.json({ ok, checks }, ok ? 200 : 503);
+  });
   app.get("/favicon.svg", (c) => c.body(FAVICON_SVG, 200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" }));
 
   app.notFound((c) => c.html(renderNotFound(), 404));

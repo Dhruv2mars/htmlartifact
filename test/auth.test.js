@@ -381,6 +381,12 @@ describe("revocation", () => {
 });
 
 describe("web app", () => {
+  test("/healthz checks D1 and R2", async () => {
+    const response = await fetch(`${stack.baseUrl}/healthz`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, checks: { d1: true, r2: true } });
+  });
+
   test("open redirects through sign-in are refused", async () => {
     const response = await fetch(`${stack.baseUrl}/auth/sign-in?next=${encodeURIComponent("https://evil.example/")}`, {
       redirect: "manual"
