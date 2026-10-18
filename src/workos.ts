@@ -103,12 +103,18 @@ export function displayName(user: {
   return name || user.email || user.id;
 }
 
-async function workosPost(config: Config, path: string, body: object): Promise<Record<string, unknown>> {
+async function workosPost(
+  config: Config,
+  path: string,
+  body: object,
+  { okStatuses = [] as number[] } = {}
+): Promise<Record<string, unknown>> {
   const response = await fetch(`${config.workos.apiUrl}${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.workos.apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
+  if (okStatuses.includes(response.status)) return {};
   if (!response.ok) throw new Error(`WorkOS ${path} -> ${response.status}`);
   const text = await response.text();
   return text ? (JSON.parse(text) as Record<string, unknown>) : {};
@@ -128,5 +134,6 @@ export async function portalLink(config: Config, organizationId: string, intent:
 
 // Ends every Admin Portal link and session `userId` has for this organization.
 export async function revokePortalLinks(config: Config, organizationId: string, userId: string): Promise<void> {
-  await workosPost(config, "/portal/revoke_link", { organization: organizationId, external_user_id: userId });
+  // 404: the organization is gone, so there is nothing left to revoke.
+  await workosPost(config, "/portal/revoke_link", { organization: organizationId, external_user_id: userId }, { okStatuses: [404] });
 }
