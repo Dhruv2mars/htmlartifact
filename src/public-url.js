@@ -36,10 +36,17 @@ export function draftUrl(origin, draft, workspaceHandle) {
     : `${origin}/d/${draft.id}`;
 }
 
-// Post-sign-in destinations: same-site relative paths only, never an open
-// redirect.
+// Post-sign-in destinations: a same-site path only, never an open redirect.
+// Resolved against a fixed base and re-serialized, so tricks like "/\t/evil"
+// or "/\\evil" (which browsers normalize to "//evil") cannot escape.
 export function safeNext(value) {
-  if (typeof value !== "string") return "/";
-  if (value.startsWith("/") && !value.startsWith("//") && !value.includes("\\")) return value;
-  return "/";
+  if (typeof value !== "string" || !value.startsWith("/") || /[\u0000-\u0020\u007f\\]/.test(value)) return "/";
+  try {
+    const base = "https://htmlartifact.invalid";
+    const url = new URL(value, base);
+    if (url.origin !== base) return "/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
 }

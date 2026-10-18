@@ -1,4 +1,4 @@
-import { forgetMembership, setRevoked } from "./db.js";
+import { bumpMembershipEpoch, setRevoked, setRevokedAtEpoch } from "./db.js";
 import { workos } from "./workos.js";
 
 // WorkOS webhooks close the gap between "removed in WorkOS" and "token
@@ -32,7 +32,8 @@ export function registerWebhooks(app) {
 }
 
 // WorkOS does not guarantee delivery order, so membership events are never
-// applied from the payload: they trigger a re-check of the current state.
+// applied from the payload: they trigger a re-check of the current state,
+// and only the newest re-check may write (membership epochs, src/db.js).
 // Revocations of sessions, keys and users are one-way and order-safe.
 async function applyEvent(c, { event, data = {} }) {
   const db = c.env.DB;
@@ -44,9 +45,10 @@ async function applyEvent(c, { event, data = {} }) {
     case "organization_membership.updated":
     case "organization_membership.deleted": {
       if (!userId || !organizationId) return;
-      // Fail safe: forget the cached membership first, so if WorkOS cannot
-      // be reached below, the next request re-checks live.
-      await forgetMembership(db, userId, organizationId);
+      // Fail safe: bump the epoch and drop the cache first, so if WorkOS
+      // cannot be reached below, the next request re-checks live; and a slower
+      // handler that started earlier can no longer write its stale answer.
+      const epoch = await bumpMembershipEpoch(db, userId, organizationId);
       const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
         userId,
         organizationId,
@@ -54,7 +56,7 @@ async function applyEvent(c, { event, data = {} }) {
         limit: 1
       });
       const active = page.data.some((m) => m.organizationId === organizationId);
-      await setRevoked(db, userId, organizationId, !active);
+      await setRevokedAtEpoch(db, userId, organizationId, !active, epoch);
       return;
     }
     case "user.deleted":

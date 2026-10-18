@@ -22,7 +22,7 @@ let acme; // the artifact alice published in Acme: upload receipt
 
 before(async () => {
   stack = await startStack();
-  const alice = await accessToken(stack, "alice@acme.test");
+  const alice = await accessToken(stack, "alice@acme.test", "Acme");
   const result = await callApi(stack, alice, "POST", "/api/uploads", { html: page("Acme plan"), slug: "acme-plan" });
   assert.equal(result.status, 201, JSON.stringify(result.body));
   acme = result.body;
@@ -107,8 +107,22 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     assert.equal((await callApi(stack, olivia, "POST", "/api/workspaces/join", { code: single.body.code })).status, 404);
   });
 
+  test("concurrent joins can never exceed an invite's use limit", async () => {
+    const single = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", { maxUses: 1 });
+    const joiners = await Promise.all(
+      ["alice@acme.test", "bob@acme.test", "olivia@other.test"].map((email) => accessToken(stack, email, "Acme").catch(() => accessToken(stack, email, "Other")))
+    );
+    const results = await Promise.all(
+      joiners.map((token) => callApi(stack, token, "POST", "/api/workspaces/join", { code: single.body.code }))
+    );
+    assert.equal(results.filter((r) => r.status === 200).length, 1, JSON.stringify(results.map((r) => r.status)));
+    const members = await callApi(stack, nora.accessToken, "GET", "/api/workspaces/members");
+    const outsiders = ["alice@acme.test", "bob@acme.test", "olivia@other.test"];
+    assert.equal(members.body.members.filter((m) => outsiders.includes(m.email)).length, 1);
+  });
+
   test("only admins can invite", async () => {
-    const bob = await accessToken(stack, "bob@acme.test");
+    const bob = await accessToken(stack, "bob@acme.test", "Acme");
     assert.equal((await callApi(stack, bob, "POST", "/api/workspaces/invites", {})).status, 403);
   });
 
@@ -159,7 +173,7 @@ describe("publishing", () => {
   });
 
   test("a token issued to another WorkOS application is refused", async () => {
-    const foreign = await accessToken(stack, "alice@acme.test", null, { clientId: "client_unrelated_app" });
+    const foreign = await accessToken(stack, "alice@acme.test", "Acme", { clientId: "client_unrelated_app" });
     assert.equal((await upload(foreign, { html: page("x") })).status, 401);
     assert.equal((await read(acme.publicUrl, foreign)).status, 401);
   });
@@ -171,7 +185,7 @@ describe("publishing", () => {
   });
 
   test("identical content is a no-op; new content is a new version at the same URL", async () => {
-    const alice = await accessToken(stack, "alice@acme.test");
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
     const same = await upload(alice, { html: page("Acme plan"), slug: "acme-plan" });
     assert.equal(same.body.unchanged, true);
     assert.equal(same.body.versionNumber, 1);
@@ -180,6 +194,21 @@ describe("publishing", () => {
     assert.equal(next.body.draftId, acme.draftId);
     assert.match((await read(`${acme.publicUrl}/v/1`, alice)).text, /Acme plan</);
     assert.match((await read(acme.publicUrl, alice)).text, /Acme plan v2/);
+  });
+
+  test("concurrent uploads never roll the artifact back to an older version", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    const first = await upload(alice, { html: page("Race v0"), slug: "race" });
+    const results = await Promise.all([
+      upload(alice, { html: page("Race v0"), slug: "race" }), // a blind retry of the current content
+      ...[1, 2, 3, 4, 5].map((n) => upload(alice, { html: page(`Race v${n}`), slug: "race" }))
+    ]);
+    for (const r of results) assert.ok([200, 201, 409].includes(r.status), JSON.stringify(r.body));
+    const won = results.filter((r) => r.status < 300 && !r.body.unchanged);
+    const newest = won.reduce((a, b) => (b.body.versionNumber > a.body.versionNumber ? b : a), first);
+    const served = await read(first.body.publicUrl, alice);
+    assert.equal(served.headers.get("x-htmlartifact-draft-version"), String(newest.body.versionNumber));
+    assert.match(served.text, new RegExp(newest.body.title.replace(/ /g, " ")));
   });
 
   test("a CI organization API key publishes into its own workspace", async () => {
@@ -200,7 +229,7 @@ describe("publishing", () => {
   });
 
   test("multi-page uploads serve each page", async () => {
-    const alice = await accessToken(stack, "alice@acme.test");
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
     const result = await upload(alice, {
       files: [
         { path: "index.html", html: page("Index", '<a href="details.html">details</a>') },
@@ -212,7 +241,7 @@ describe("publishing", () => {
   });
 
   test("invalid HTML is rejected with line-level issues", async () => {
-    const alice = await accessToken(stack, "alice@acme.test");
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
     const result = await upload(alice, {
       html: `<!doctype html><title>x</title><script src="https://x.test/a.js"></script>`
     });
@@ -237,7 +266,7 @@ describe("reading", () => {
   });
 
   test("members read by token and in the browser, under a strict CSP", async () => {
-    const bob = await accessToken(stack, "bob@acme.test");
+    const bob = await accessToken(stack, "bob@acme.test", "Acme");
     const byToken = await read(acme.publicUrl, bob);
     assert.equal(byToken.status, 200);
     assert.match(byToken.headers.get("content-security-policy"), /default-src 'none'/);
@@ -287,7 +316,7 @@ describe("reading", () => {
 
 describe("revocation", () => {
   test("removing a member in WorkOS revokes their still-valid token (webhook)", async () => {
-    const token = await accessToken(stack, "bob@acme.test");
+    const token = await accessToken(stack, "bob@acme.test", "Acme");
     assert.equal((await read(acme.publicUrl, token)).status, 200);
     const org = await findOrganization(stack.emulator, "Acme");
     const bob = await findUser(stack.emulator, "bob@acme.test");
@@ -361,6 +390,13 @@ describe("web app", () => {
       Buffer.from(decodeURIComponent(cookie.split(";")[0].split("=")[1]).split(".")[0], "base64url").toString()
     );
     assert.equal(payload.next, "/");
+
+    for (const trick of ["/\t/evil.example", "/\\evil.example", "//evil.example", "/%0a/evil.example", "https://evil.example"]) {
+      const r = await fetch(`${stack.baseUrl}/auth/sign-in?next=${encodeURIComponent(trick)}`, { redirect: "manual" });
+      const c = r.headers.getSetCookie().find((x) => x.startsWith("htmlartifact_auth_state="));
+      const p = JSON.parse(Buffer.from(decodeURIComponent(c.split(";")[0].split("=")[1]).split(".")[0], "base64url").toString());
+      assert.ok(p.next === "/" || (p.next.startsWith("/") && !p.next.startsWith("//") && !/evil/.test(new URL(p.next, "https://x.test").host)), `${JSON.stringify(trick)} → ${p.next}`);
+    }
   });
 
   test("form posts from another origin are refused (CSRF)", async () => {

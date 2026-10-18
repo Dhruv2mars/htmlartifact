@@ -1,5 +1,5 @@
 import { sha256 } from "./crypto.js";
-import { FLAGS, findWorkspace, saveWorkspace, setRevoked } from "./db.js";
+import { FLAGS, bumpMembershipEpoch, findWorkspace, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.js";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.js";
 import { formatBytes, validateUpload } from "./html-policy.js";
 import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.js";
@@ -188,8 +188,9 @@ export function registerApi(app) {
       limit: 1
     });
     if (!page.data.length) return c.json({ ok: false, error: "Not a member." }, 404);
+    const epoch = await bumpMembershipEpoch(c.env.DB, userId, viewer.organization_id);
     await client.userManagement.deleteOrganizationMembership(page.data[0].id);
-    await setRevoked(c.env.DB, userId, viewer.organization_id, true);
+    await setRevokedAtEpoch(c.env.DB, userId, viewer.organization_id, true, epoch);
     return c.json({ ok: true });
   });
 
@@ -222,38 +223,52 @@ export function registerApi(app) {
 }
 
 // Shared by POST /api/workspaces/join and the browser /join/<code> page.
+// A use is reserved atomically before WorkOS is touched, so concurrent joins
+// can never exceed max_uses; it is released if nobody new was admitted.
 export async function joinWithCode(c, viewer, rawCode) {
+  const db = c.env.DB;
   const code = normalizeInviteCode(rawCode);
-  const invite = code
-    ? await c.env.DB.prepare(
-        `SELECT * FROM invites WHERE code = ? AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses`
-      )
+  const reserved = code
+    ? await db
+        .prepare(
+          `UPDATE invites SET uses = uses + 1
+           WHERE code = ? AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses
+           RETURNING organization_id`
+        )
         .bind(code)
         .first()
     : null;
-  if (!invite) {
+  if (!reserved) {
     return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
   }
+  const organizationId = reserved.organization_id;
+  const release = () => db.prepare("UPDATE invites SET uses = uses - 1 WHERE code = ? AND uses > 0").bind(code).run();
 
-  const { client } = workos(c.get("config"));
-  const existing = await activeMembership(c, viewer.account_id, invite.organization_id);
-  if (!existing) {
-    await client.userManagement.createOrganizationMembership({
-      organizationId: invite.organization_id,
-      userId: viewer.account_id,
-      roleSlug: "member"
-    });
-    await setRevoked(c.env.DB, viewer.account_id, invite.organization_id, false);
-    // Count the use only when it admitted someone new.
-    await c.env.DB.prepare("UPDATE invites SET uses = uses + 1 WHERE code = ?").bind(code).run();
+  let alreadyMember;
+  try {
+    alreadyMember = Boolean(await activeMembership(c, viewer.account_id, organizationId));
+    if (alreadyMember) {
+      await release();
+    } else {
+      const epoch = await bumpMembershipEpoch(db, viewer.account_id, organizationId);
+      await workos(c.get("config")).client.userManagement.createOrganizationMembership({
+        organizationId,
+        userId: viewer.account_id,
+        roleSlug: "member"
+      });
+      await setRevokedAtEpoch(db, viewer.account_id, organizationId, false, epoch);
+    }
+  } catch (error) {
+    await release();
+    throw error;
   }
-  const workspace = await findWorkspace(c.env.DB, invite.organization_id);
+  const workspace = await findWorkspace(db, organizationId);
   return {
     status: 200,
     body: {
       ok: true,
-      alreadyMember: Boolean(existing),
-      workspace: { id: invite.organization_id, name: workspace?.name, handle: workspace?.handle }
+      alreadyMember,
+      workspace: { id: organizationId, name: workspace?.name, handle: workspace?.handle }
     }
   };
 }
@@ -347,6 +362,7 @@ async function handleUpload(c) {
   // Re-sending identical content (a blind retry) keeps the current version.
   const unchanged = current?.content_hash === validation.contentHash;
   const id = existing?.id || newDraftId();
+  const observedVersionId = existing?.current_version_id ?? null;
   const title = validation.title || existing?.title || filename || "Untitled";
   const cleanDescription = cleanText(description, 1000);
   let versionId = current?.id;
@@ -384,8 +400,9 @@ async function handleUpload(c) {
           )
       );
     }
-    // The version number is computed inside the INSERT, and UNIQUE
-    // (draft_id, version_number) turns a concurrent duplicate into an error.
+    // The version number is computed inside the INSERT, and the row is only
+    // written if the artifact's current version is still the one this upload
+    // started from (compare-and-swap; see the final UPDATE).
     statements.push(
       db
         .prepare(
@@ -393,8 +410,9 @@ async function handleUpload(c) {
              id, draft_id, version_number, object_key, content_hash, file_size, page_count,
              has_inline_script, created_by, credential_id, source_ip, user_agent, cli_version,
              git_branch, git_commit_sha, git_commit_subject, git_dirty, original_filename, ci_run_url)
-           VALUES (?, ?, (SELECT COALESCE(MAX(version_number), 0) + 1 FROM draft_versions WHERE draft_id = ?),
-                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           SELECT ?, ?, (SELECT COALESCE(MAX(version_number), 0) + 1 FROM draft_versions WHERE draft_id = ?),
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE (SELECT current_version_id FROM drafts WHERE id = ?) IS ?`
         )
         .bind(
           versionId,
@@ -415,7 +433,9 @@ async function handleUpload(c) {
           cleanText(metadata.gitCommitSubject),
           typeof metadata.gitDirty === "boolean" ? Number(metadata.gitDirty) : null,
           cleanText(filename),
-          cleanText(metadata.ciRunUrl)
+          cleanText(metadata.ciRunUrl),
+          id,
+          observedVersionId
         )
     );
     for (const page of extraPages) {
@@ -423,9 +443,9 @@ async function handleUpload(c) {
         db
           .prepare(
             `INSERT INTO draft_pages (draft_version_id, path, object_key, content_hash, file_size, title, has_inline_script)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`
+             SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM draft_versions WHERE id = ?)`
           )
-          .bind(versionId, page.path, pageKey(page), sha256(page.html), page.bytes, page.title, page.hasScripts ? 1 : 0)
+          .bind(versionId, page.path, pageKey(page), sha256(page.html), page.bytes, page.title, page.hasScripts ? 1 : 0, versionId)
       );
     }
   }
@@ -437,7 +457,7 @@ async function handleUpload(c) {
         `UPDATE drafts SET current_version_id = ?, title = ?, description = COALESCE(?, description),
            repo_org = COALESCE(?, repo_org), repo_name = COALESCE(?, repo_name), repo_host = COALESCE(?, repo_host),
            slug = COALESCE(?, slug), updated_at = CASE WHEN ? THEN updated_at ELSE unixepoch() END
-         WHERE id = ?`
+         WHERE id = ? AND current_version_id IS ?`
       )
       .bind(
         versionId,
@@ -448,12 +468,18 @@ async function handleUpload(c) {
         cleanText(metadata.repoHost),
         slug,
         unchanged ? 1 : 0,
-        id
+        id,
+        observedVersionId
       )
   );
 
   try {
-    await db.batch(statements);
+    const results = await db.batch(statements);
+    // Another upload to this artifact landed after we read it: nothing of
+    // ours became current. Safe to retry.
+    if (!results.at(-1).meta.changes) {
+      return c.json({ ok: false, error: "Another upload to this artifact landed at the same moment. Retry." }, 409);
+    }
   } catch (error) {
     if (/UNIQUE constraint failed: drafts\.organization_id, drafts\.slug/.test(error.message)) {
       return c.json({ ok: false, error: "That custom URL was just taken. Pick another." }, 409);

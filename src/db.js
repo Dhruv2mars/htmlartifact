@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS memberships (
   checked_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, organization_id)
 );
+CREATE TABLE IF NOT EXISTS membership_epochs (
+  user_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  epoch INTEGER NOT NULL,
+  PRIMARY KEY (user_id, organization_id)
+);
 CREATE TABLE IF NOT EXISTS revocations (
   subject TEXT NOT NULL,
   organization_id TEXT NOT NULL,
@@ -162,17 +168,65 @@ export async function hasFreshMembership(db, userId, organizationId, maxAgeSecon
   return row ? { role: row.role } : null;
 }
 
-export async function saveMembership(db, userId, organizationId, active, role = null) {
+// Membership state is versioned. Every change signal (webhook, join,
+// removal) bumps the epoch first; a reader that fetched from WorkOS may only
+// write what it saw if the epoch is still the one it started with, so a slow,
+// stale lookup can never overwrite a newer change.
+export async function membershipEpoch(db, userId, organizationId) {
+  const row = await db
+    .prepare("SELECT epoch FROM membership_epochs WHERE user_id = ? AND organization_id = ?")
+    .bind(userId, organizationId)
+    .first();
+  return row?.epoch ?? 0;
+}
+
+// Bumps the epoch and drops the cached membership; returns the new epoch.
+export async function bumpMembershipEpoch(db, userId, organizationId) {
+  const [bumped] = await db.batch([
+    db
+      .prepare(
+        `INSERT INTO membership_epochs (user_id, organization_id, epoch) VALUES (?, ?, 1)
+         ON CONFLICT (user_id, organization_id) DO UPDATE SET epoch = epoch + 1 RETURNING epoch`
+      )
+      .bind(userId, organizationId),
+    db.prepare("DELETE FROM memberships WHERE user_id = ? AND organization_id = ?").bind(userId, organizationId)
+  ]);
+  return bumped.results[0].epoch;
+}
+
+const EPOCH_IS = "COALESCE((SELECT epoch FROM membership_epochs WHERE user_id = ? AND organization_id = ?), 0) = ?";
+
+// Caches a WorkOS answer, only if no change happened since `epoch` was read.
+export async function saveMembership(db, userId, organizationId, active, role, epoch) {
   if (active) {
     await db
       .prepare(
-        `INSERT INTO memberships (user_id, organization_id, role, checked_at) VALUES (?, ?, ?, ?)
+        `INSERT INTO memberships (user_id, organization_id, role, checked_at)
+         SELECT ?, ?, ?, ? WHERE ${EPOCH_IS}
          ON CONFLICT (user_id, organization_id) DO UPDATE SET role = excluded.role, checked_at = excluded.checked_at`
       )
-      .bind(userId, organizationId, role, now())
+      .bind(userId, organizationId, role, now(), userId, organizationId, epoch)
       .run();
   } else {
     await forgetMembership(db, userId, organizationId);
+  }
+}
+
+// Reconciles the per-workspace revocation to what WorkOS said, only if this
+// is still the newest change signal.
+export async function setRevokedAtEpoch(db, userId, organizationId, revoked, epoch) {
+  if (revoked) {
+    await db
+      .prepare(
+        `INSERT INTO revocations (subject, organization_id) SELECT ?, ? WHERE ${EPOCH_IS} ON CONFLICT DO NOTHING`
+      )
+      .bind(userId, organizationId, userId, organizationId, epoch)
+      .run();
+  } else {
+    await db
+      .prepare(`DELETE FROM revocations WHERE subject = ? AND organization_id = ? AND ${EPOCH_IS}`)
+      .bind(userId, organizationId, userId, organizationId, epoch)
+      .run();
   }
 }
 

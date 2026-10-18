@@ -3,6 +3,7 @@ import {
   findWorkspace,
   hasFreshMembership,
   isRevoked,
+  membershipEpoch,
   saveAccount,
   saveMembership,
   saveWorkspace
@@ -97,6 +98,7 @@ export async function activeMembership(c, userId, organizationId) {
   const config = c.get("config");
   const cached = await hasFreshMembership(c.env.DB, userId, organizationId, config.workos.membershipCacheSeconds);
   if (cached) return cached;
+  const epoch = await membershipEpoch(c.env.DB, userId, organizationId);
   const page = await workos(config).client.userManagement.listOrganizationMemberships({
     userId,
     organizationId,
@@ -105,7 +107,7 @@ export async function activeMembership(c, userId, organizationId) {
   });
   const membership = page.data.find((m) => m.organizationId === organizationId && m.status === "active");
   const role = membership?.role?.slug || null;
-  await saveMembership(c.env.DB, userId, organizationId, Boolean(membership), role);
+  await saveMembership(c.env.DB, userId, organizationId, Boolean(membership), role, epoch);
   return membership ? { role } : null;
 }
 
