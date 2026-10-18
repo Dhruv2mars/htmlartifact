@@ -8,7 +8,8 @@ provably removes its R2 objects (every version).
 ## Phase 1 — TypeScript
 - [x] `src/html-policy.ts` (shared by server + CLI), `tsconfig.json`
 - [ ] Server → strict TypeScript (Hono), `bun run typecheck` clean, 37 tests green
-- [ ] CLI → TypeScript + Effect, built with `bun build --target=node` → `dist/htmlartifact.js`
+- [x] CLI → TypeScript + Effect, built with `bun build --target=node` → `dist/htmlartifact.js`
+- [x] CLI commands for Phase 2/3 endpoints (server side pending): `delete`, `workspace delete --confirm`, `workspace sso`, `workspace directory`
 
 ## Phase 2 — Security
 - [ ] Real deletion: draft delete purges R2 objects for every version/page (+ cron backstop)
@@ -33,7 +34,8 @@ provably removes its R2 objects (every version).
 - [ ] Staging (Pages preview env + staging D1/R2/WorkOS)
 - [ ] Rate limits (Workers rate-limit binding), logs/observability, health checks
 - [x] GitHub Actions written: ci.yml, deploy.yml (needs CLOUDFLARE_API_TOKEN secret), release.yml (npm trusted publishing)
-- [ ] package.json scripts: typecheck, typecheck:cli, build:pages, build:cli, deploy:all, smoke
+- [ ] package.json scripts: typecheck, build:pages, deploy:all, smoke (CLI: build, typecheck:cli done)
 - [ ] Real WorkOS env: redirect URI, webhooks, MFA, SSO/DSync enabled
-- [ ] `DEFAULT_API_URL` = https://htmlartifact.pages.dev; first npm publish locally (claims the unclaimed `htmlartifact` name), then enable npm trusted publishing so release.yml publishes with provenance (no long-lived tokens)
+- [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
+- [ ] First npm publish locally (claims the unclaimed `htmlartifact` name), then enable npm trusted publishing so release.yml publishes with provenance (no long-lived tokens)
 - [ ] Production walkthrough with two real accounts (item 4)

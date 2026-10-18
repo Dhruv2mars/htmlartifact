@@ -38,6 +38,9 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace |
 | `read <url>` | Download an artifact with your sign-in (how agents read links) |
 | `list [--all]` | Your artifacts, or the whole workspace's |
+| `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
+| `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |
+| `workspace sso` / `directory` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC) or SCIM directory (admins) |
 | `check <path>` | Validate against the rules without publishing |
 
 Every command takes `--json` for agents. In CI, set `HTMLARTIFACT_TOKEN` to a
@@ -70,15 +73,17 @@ No servers to run. htmlartifact is one Cloudflare Worker:
 | Artifact HTML | Cloudflare R2 |
 | Artifact index, invites, caches | Cloudflare D1 (schema created automatically) |
 | Accounts, sign-up, workspaces (organizations), SSO | [WorkOS](https://workos.com) AuthKit |
-| CLI | Node.js, published to npm, run with `npx` |
+| CLI | TypeScript + [Effect](https://effect.website), bundled by Bun for Node.js ≥ 20.10, published to npm, run with `npx` |
 
 ## Development
 
 ```sh
 bun install
 bun run dev:local   # WorkOS emulator + Worker at http://localhost:8787, fully offline
-HTMLARTIFACT_API_URL=http://localhost:8787 node bin/htmlartifact.js login
-bun run test        # 35 tests: real Worker (workerd) + official WorkOS emulator
+bun run build       # CLI (TypeScript + Effect, cli/) → dist/htmlartifact.js
+HTMLARTIFACT_API_URL=http://localhost:8787 node dist/htmlartifact.js login
+bun run typecheck:cli
+bun run test        # builds the CLI, then 38 tests: real Worker (workerd) + official WorkOS emulator
 ```
 
 `dev:local` seeds `alice@`, `bob@` and `carol@example.com`. Sign in with any of
@@ -101,8 +106,9 @@ as Alice.
    - Run `wrangler secret put` for `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
      `WORKOS_WEBHOOK_SECRET` and `HTMLARTIFACT_COOKIE_PASSWORD` (32+ chars).
    - Run `bun run deploy`.
-3. Set `DEFAULT_API_URL` in `bin/htmlartifact.js` to the deployed URL and
-   publish the CLI to npm.
+3. The CLI defaults to `https://htmlartifact.pages.dev` (`DEFAULT_API_URL` in
+   `cli/env.ts`). Publish it to npm; `prepublishOnly` builds the bundle, so
+   the package has no runtime dependencies.
 
 ## Credits
 
