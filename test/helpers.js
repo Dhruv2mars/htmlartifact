@@ -1,6 +1,7 @@
 import { createEmulator } from "@workos/emulate";
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { unstable_dev } from "wrangler";
@@ -14,6 +15,7 @@ export const CI_KEY = "sk_test_acme_ci_key";
 export const OTHER_CI_KEY = "sk_test_other_ci_key";
 export const PASSWORD = "correct-horse-battery";
 export const CLIENT_ID = "client_htmlartifact_test";
+export const COOKIE_PASSWORD = `${"x".repeat(32)}-test-cookie-password`;
 
 export const SEED = {
   roles: [
@@ -46,12 +48,30 @@ export const SEED = {
   ]
 };
 
-export async function startStack() {
+// A free local TCP port, so URLs can be configured before the Worker starts.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+// With `sandbox`, the app is http://127.0.0.1:<port> and the sandbox origin
+// is http://localhost:<port>: the same Worker, routed by request host.
+export async function startStack({ sandbox = false } = {}) {
   const emulator = await createEmulator({ port: 0, requestsPerMinute: 100_000, seed: SEED });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-test-"));
+  const port = sandbox ? await freePort() : undefined;
+  const sandboxUrl = sandbox ? `http://localhost:${port}` : null;
   const worker = await unstable_dev(new URL("../src/index.ts", import.meta.url).pathname, {
     config: new URL("../wrangler.toml", import.meta.url).pathname,
     ip: "127.0.0.1",
+    ...(port ? { port } : {}),
     persistTo: path.join(tmp, "state"),
     logLevel: "warn",
     vars: {
@@ -59,7 +79,10 @@ export async function startStack() {
       WORKOS_API_KEY: emulator.apiKey || "sk_test_default",
       WORKOS_CLIENT_ID: CLIENT_ID,
       WORKOS_WEBHOOK_SECRET: WEBHOOK_SECRET,
-      HTMLARTIFACT_COOKIE_PASSWORD: `${"x".repeat(32)}-test-cookie-password`
+      HTMLARTIFACT_COOKIE_PASSWORD: COOKIE_PASSWORD,
+      ...(sandbox
+        ? { HTMLARTIFACT_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, HTMLARTIFACT_SANDBOX_ORIGIN: sandboxUrl }
+        : {})
     },
     experimental: { disableExperimentalWarning: true }
   });
@@ -74,6 +97,7 @@ export async function startStack() {
 
   return {
     baseUrl,
+    sandboxUrl,
     emulator,
     tmp,
     async stop() {

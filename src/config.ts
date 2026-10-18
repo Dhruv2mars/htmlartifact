@@ -24,9 +24,16 @@ export function getConfig(env: Env): Config {
     throw new Error("HTMLARTIFACT_COOKIE_PASSWORD must be at least 32 characters.");
   }
 
+  const publicBaseUrl = trimSlash(env.HTMLARTIFACT_PUBLIC_BASE_URL) || null;
+  const sandboxOrigin = parseSandboxOrigin(env.HTMLARTIFACT_SANDBOX_ORIGIN, publicBaseUrl);
+
   const config: Config = {
     // Optional: the public origin. Defaults to the origin of each request.
-    publicBaseUrl: trimSlash(env.HTMLARTIFACT_PUBLIC_BASE_URL) || null,
+    publicBaseUrl,
+    // Optional: the cross-site origin that serves artifact HTML (see
+    // src/sandbox.ts). Unset (local dev): the app serves artifacts itself,
+    // under the CSP sandbox.
+    sandboxOrigin,
     cookiePassword,
     limits: {
       accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 4 * 1024 * 1024),
@@ -52,6 +59,28 @@ export function getConfig(env: Env): Config {
 
   cache.set(env, config);
   return config;
+}
+
+// The sandbox origin must be a bare origin (scheme://host[:port]) distinct
+// from the app's, and needs the app's origin pinned: the sandbox only lets
+// that origin frame artifacts.
+function parseSandboxOrigin(value: string | undefined, publicBaseUrl: string | null): string | null {
+  const raw = trimSlash(value);
+  if (!raw) return null;
+  let origin: string;
+  try {
+    origin = new URL(raw).origin;
+  } catch {
+    throw new Error("HTMLARTIFACT_SANDBOX_ORIGIN must be an origin like https://htmlartifact-usercontent.pages.dev.");
+  }
+  if (origin !== raw) {
+    throw new Error("HTMLARTIFACT_SANDBOX_ORIGIN must be an origin like https://htmlartifact-usercontent.pages.dev.");
+  }
+  if (!publicBaseUrl) throw new Error("HTMLARTIFACT_SANDBOX_ORIGIN requires HTMLARTIFACT_PUBLIC_BASE_URL.");
+  if (new URL(publicBaseUrl).origin === origin) {
+    throw new Error("HTMLARTIFACT_SANDBOX_ORIGIN must differ from HTMLARTIFACT_PUBLIC_BASE_URL.");
+  }
+  return origin;
 }
 
 function trimSlash(value: string | undefined): string | undefined {

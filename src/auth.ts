@@ -95,15 +95,34 @@ export async function canReadDraft<E extends AppEnv>(
   c: Context<E>,
   draft: DraftRow | null
 ): Promise<"member" | "anonymous" | "denied"> {
-  if (bearerToken(c)) {
-    const viewer = await bearerViewer(c);
-    if (!viewer) return "anonymous";
-    return draft && viewer.organization_id === draft.organization_id ? "member" : "denied";
-  }
-  if (!readCookie(c, SESSION_COOKIE)) return "anonymous";
-  const viewer = await sessionViewer(c, { organizationId: draft?.organization_id });
-  if (!viewer) return "anonymous";
-  return draft && viewer.organization_id === draft.organization_id ? "member" : "denied";
+  return (await draftAccess(c, draft)).access;
+}
+
+// canReadDraft, plus who asked and how: `bearer` is true for CLI tokens and
+// API keys, false for browser sessions.
+export async function draftAccess<E extends AppEnv>(
+  c: Context<E>,
+  draft: DraftRow | null
+): Promise<{ access: "member" | "anonymous" | "denied"; viewer: Viewer | null; bearer: boolean }> {
+  const bearer = Boolean(bearerToken(c));
+  let viewer: Viewer | null = null;
+  if (bearer) viewer = await bearerViewer(c);
+  else if (readCookie(c, SESSION_COOKIE)) viewer = await sessionViewer(c, { organizationId: draft?.organization_id });
+  if (!viewer) return { access: "anonymous", viewer, bearer };
+  const access = draft && viewer.organization_id === draft.organization_id ? "member" : "denied";
+  return { access, viewer, bearer };
+}
+
+// For a sandbox capability (src/sandbox.ts): is userId still allowed into
+// organizationId? The user-level checks buildViewer makes, minus the session
+// (a capability carries no session id): not deleted or revoked everywhere,
+// not removed from this workspace, and still an active member per WorkOS
+// (cached for membershipCacheSeconds; membership webhooks clear the cache).
+export async function userStillMember<E extends AppEnv>(c: Context<E>, userId: string, organizationId: string): Promise<boolean> {
+  const db = c.env.DB;
+  if (await isRevoked(db, [userId], "*")) return false;
+  if (await isRevoked(db, [userId], organizationId)) return false;
+  return Boolean(await activeMembership(c, userId, organizationId));
 }
 
 // The caller's active membership in organizationId per WorkOS ({ role }), or
