@@ -14,6 +14,7 @@ import {
   findOrganization,
   findUser,
   page,
+  sendWebhook,
   startStack,
   workosApi
 } from "./helpers.js";
@@ -263,6 +264,21 @@ describe("capabilities stop working when access ends", () => {
     const after = await get(src);
     assert.equal(after.status, 404);
     assert.equal(after.text, await notFoundBody());
+  });
+
+  test("a revoked session", async () => {
+    const tab = new Browser(stack);
+    await tab.signIn("bob@acme.test", { workspace: "Acme" });
+    const { src } = await frameOf(single.publicUrl, tab);
+    const { s } = claimsOf(src);
+    assert.ok(s, "capability names the session");
+    assert.equal((await get(src)).status, 200);
+    const revoked = await sendWebhook(stack, { id: "event_revoke", event: "session.revoked", data: { id: s } });
+    assert.equal(revoked.status, 200);
+    assert.equal((await get(src)).status, 404);
+    // Bob's other session is unaffected.
+    const { src: other } = await frameOf(single.publicUrl);
+    assert.equal((await get(other)).status, 200);
   });
 
   test("a member removed from the workspace", async () => {

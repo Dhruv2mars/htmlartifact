@@ -46,7 +46,7 @@ async function serveCapability(c: Context<AppEnv>, token: string): Promise<Respo
     .bind(claims.v, draft.id)
     .first<VersionRow>();
   if (!version) return notFound(c);
-  if (!(await userStillMember(c, claims.u, claims.o))) return notFound(c);
+  if (!(await userStillMember(c, claims.u, claims.o, claims.s))) return notFound(c);
 
   const resolved = await resolvePage(c, version, segments);
   if (!resolved) return notFound(c);

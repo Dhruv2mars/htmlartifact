@@ -62,7 +62,8 @@ async function serve(c: Context<AppEnv>, ref: DraftRef) {
     d: draft.id,
     v: version.id,
     o: draft.organization_id,
-    u: viewer.account_id
+    u: viewer.account_id,
+    s: viewer.credential_id
   });
   // "/t/<token>/" is the artifact root on the sandbox, so relative links
   // between pages resolve there exactly as they do here.

@@ -14,6 +14,8 @@ export interface Capability {
   o: string;
   /** viewer: WorkOS user id */
   u: string;
+  /** viewer's credential (WorkOS session or API key id), so revoking it ends the capability too */
+  s: string | null;
   /** expiry, unix seconds */
   exp: number;
 }
@@ -58,6 +60,7 @@ function isCapability(value: unknown): value is Capability {
     typeof c.v === "string" &&
     typeof c.o === "string" &&
     typeof c.u === "string" &&
+    (typeof c.s === "string" || c.s === null) &&
     typeof c.exp === "number" &&
     Number.isFinite(c.exp)
   );

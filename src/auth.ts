@@ -114,14 +114,19 @@ export async function draftAccess<E extends AppEnv>(
 }
 
 // For a sandbox capability (src/sandbox.ts): is userId still allowed into
-// organizationId? The user-level checks buildViewer makes, minus the session
-// (a capability carries no session id): not deleted or revoked everywhere,
-// not removed from this workspace, and still an active member per WorkOS
-// (cached for membershipCacheSeconds; membership webhooks clear the cache).
-export async function userStillMember<E extends AppEnv>(c: Context<E>, userId: string, organizationId: string): Promise<boolean> {
+// organizationId? The checks buildViewer makes: user and credential (session
+// or API key) not revoked everywhere or in this workspace, and still an active
+// member per WorkOS (cached for membershipCacheSeconds; membership webhooks
+// clear the cache).
+export async function userStillMember<E extends AppEnv>(
+  c: Context<E>,
+  userId: string,
+  organizationId: string,
+  credentialId: string | null
+): Promise<boolean> {
   const db = c.env.DB;
-  if (await isRevoked(db, [userId], "*")) return false;
-  if (await isRevoked(db, [userId], organizationId)) return false;
+  if (await isRevoked(db, [userId, credentialId], "*")) return false;
+  if (await isRevoked(db, [userId, credentialId], organizationId)) return false;
   return Boolean(await activeMembership(c, userId, organizationId));
 }
 
