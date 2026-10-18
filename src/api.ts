@@ -1,7 +1,7 @@
 import type { Context, Hono, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { sha256 } from "./crypto.ts";
-import { FLAGS, bumpMembershipEpoch, findWorkspace, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { FLAGS, bumpMembershipEpoch, findWorkspace, isRemoved, saveWorkspace, setRemovedAtEpoch, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 import { formatBytes, validateUpload, type Issue, type PageInput } from "./html-policy.ts";
 import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
@@ -259,6 +259,23 @@ export function registerApi(app: Hono<AppEnv>): void {
     const epoch = await bumpMembershipEpoch(c.env.DB, userId, viewer.organization_id);
     await client.userManagement.deleteOrganizationMembership(membership.id);
     await setRevokedAtEpoch(c.env.DB, userId, viewer.organization_id, true, epoch);
+    await setRemovedAtEpoch(c.env.DB, userId, viewer.organization_id, true, epoch);
+    return c.json({ ok: true });
+  });
+
+  // Lets someone who was removed rejoin through an invite (admins only).
+  // Always answers ok, so it cannot be used to probe which emails have accounts.
+  app.post("/api/workspaces/members/reinstate", requireMember, requireAdmin, perUser("reinstate", 30), async (c) => {
+    const viewer = c.get("viewer");
+    const body = await readJson(c, 16 * 1024);
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!email.includes("@")) return c.json({ ok: false, error: "email is required." }, 422);
+    const users = await workos(c.get("config")).client.userManagement.listUsers({ email, limit: 10 });
+    for (const user of users.data.filter((u) => u.email.toLowerCase() === email)) {
+      await c.env.DB.prepare("DELETE FROM removed_members WHERE user_id = ? AND organization_id = ?")
+        .bind(user.id, viewer.organization_id)
+        .run();
+    }
     return c.json({ ok: true });
   });
 
@@ -301,7 +318,22 @@ export function registerApi(app: Hono<AppEnv>): void {
     if (intent === "dsync" && !c.get("config").workos.directoryProvisioning) {
       return c.json({ ok: false, error: "Directory Sync isn't available yet. Contact support to enable it." }, 409);
     }
-    const url = await portalLink(c.get("config"), viewer.organization_id, intent, viewer.account_id);
+    const config = c.get("config");
+    const url = await portalLink(config, viewer.organization_id, intent, viewer.account_id);
+    // The admin check above may be from cache or from before this request's
+    // body arrived. Re-check live now that the link exists: if they were
+    // offboarded or demoted meanwhile, revoke it. (Any later change revokes
+    // it through the membership webhook.)
+    const live = await workos(config).client.userManagement.listOrganizationMemberships({
+      userId: viewer.account_id,
+      organizationId: viewer.organization_id,
+      statuses: ["active"],
+      limit: 1
+    });
+    if (live.data.find((m) => m.organizationId === viewer.organization_id)?.role?.slug !== "admin") {
+      await revokePortalLinks(config, viewer.organization_id, viewer.account_id);
+      return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
+    }
     return c.json({ ok: true, url });
   });
 
@@ -380,6 +412,13 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
     if (inactive) {
       await release();
       return { status: 403, body: { ok: false, error: "Your access to this workspace was removed. Ask your IT admin." } };
+    }
+    if (!alreadyMember && (await isRemoved(db, viewer.account_id, organizationId))) {
+      await release();
+      return {
+        status: 403,
+        body: { ok: false, error: "You were removed from this workspace. Ask an admin to run `htmlartifact workspace reinstate <your email>`, then join again." }
+      };
     }
     if (alreadyMember) {
       await release();

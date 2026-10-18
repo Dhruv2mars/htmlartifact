@@ -1,6 +1,6 @@
 import type { Event } from "@workos-inc/node";
 import type { Context, Hono } from "hono";
-import { bumpMembershipEpoch, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { bumpMembershipEpoch, setRemovedAtEpoch, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { deleteWorkspaceStatements, isWorkspaceDeleted, runWorkspaceDeletions, scrubUserStatements } from "./purge.ts";
 import type { AppEnv } from "./types.ts";
 import { revokePortalLinks, workos } from "./workos.ts";
@@ -62,11 +62,18 @@ async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: str
         statuses: ["active"],
         limit: 1
       });
-      const active = page.data.some((m) => m.organizationId === organizationId);
+      const membership = page.data.find((m) => m.organizationId === organizationId);
+      const active = Boolean(membership);
       await setRevokedAtEpoch(db, userId, organizationId, !active, epoch);
-      // Gone or deactivated: end any Admin Portal session they opened too.
+      // Removed or deactivated (including a deleted pending membership): an
+      // old invite must not bring them back. Active again (the directory
+      // reactivated them): the block lifts.
+      if (active || event !== "organization_membership.created") {
+        await setRemovedAtEpoch(db, userId, organizationId, !active, epoch);
+      }
+      // No longer an active admin: end any Admin Portal session they opened.
       // A failure returns 500, so WorkOS retries; access already ended above.
-      if (!active) await revokePortalLinks(c.get("config"), organizationId, userId);
+      if (membership?.role?.slug !== "admin") await revokePortalLinks(c.get("config"), organizationId, userId);
       return;
     }
     case "organization.deleted": {

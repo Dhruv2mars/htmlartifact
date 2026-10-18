@@ -525,3 +525,88 @@ describe("review round 4", () => {
     await proxy.env.ARTIFACTS.delete(kept);
   });
 });
+
+describe("review round 8", () => {
+  const hooksUrl = () => `${stack.emulator.url}/_emulate/hooks`;
+  const addHook = (hook) =>
+    fetch(hooksUrl(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(hook) });
+  // Counts calls to the Admin Portal revocation endpoint while `fn` runs.
+  async function revokeCalls(fn) {
+    const hooks = async () => (await (await fetch(hooksUrl())).json()).filter((h) => h.path === "/portal/revoke_link");
+    for (const hook of await hooks()) await fetch(`${hooksUrl()}/${hook.id}`, { method: "DELETE" });
+    await addHook({ method: "POST", path: "/portal/revoke_link", status: 200, body: {}, count: 1000 });
+    try {
+      await fn();
+      const [left] = await hooks();
+      return 1000 - (left?.count ?? 0);
+    } finally {
+      for (const hook of await hooks()) await fetch(`${hooksUrl()}/${hook.id}`, { method: "DELETE" });
+      await addHook({ method: "POST", path: "/portal/revoke_link", status: 200, body: {} });
+    }
+  }
+  const membershipEvent = (id, event, membership) =>
+    sendWebhook(stack, {
+      id,
+      event,
+      data: { object: "organization_membership", id: membership.id, user_id: membership.user_id, organization_id: membership.organization_id }
+    }).then((r) => assert.equal(r.status, 200));
+
+  test("removed people can't rejoin with an old invite until an admin reinstates them (in that workspace only)", async () => {
+    const nora = await signInTokens(stack, "nora@new.test");
+    const created = await callApi(stack, nora.accessToken, "POST", "/api/workspaces", { name: "Rejoin Labs" });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const noraAdmin = (await refreshInto(stack, nora, created.body.workspace.id)).accessToken;
+    const invite = await callApi(stack, noraAdmin, "POST", "/api/workspaces/invites", {});
+    const sam = await signInTokens(stack, "sam@new.test");
+    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 200);
+    const samUser = await findUser(stack.emulator, "sam@new.test");
+    assert.equal((await callApi(stack, noraAdmin, "DELETE", `/api/workspaces/members/${samUser.id}`)).status, 200);
+
+    const rejoin = await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code });
+    assert.equal(rejoin.status, 403);
+    assert.match(rejoin.body.error, /workspace reinstate/);
+
+    // Another workspace's admin can't lift it.
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    assert.equal((await callApi(stack, alice, "POST", "/api/workspaces/members/reinstate", { email: "sam@new.test" })).status, 200);
+    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 403);
+
+    assert.equal((await callApi(stack, noraAdmin, "POST", "/api/workspaces/members/reinstate", { email: "SAM@new.test" })).status, 200);
+    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 200);
+  });
+
+  test("a deleted pending membership (directory deprovisioning) also blocks invite rejoin", async () => {
+    const nora = await signInTokens(stack, "nora@new.test", "Rejoin Labs");
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    const sam = await signInTokens(stack, "sam@new.test", "Rejoin Labs");
+    const samUser = await findUser(stack.emulator, "sam@new.test");
+    const [membership] = (
+      await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${samUser.id}&organization_id=${org.id}`)
+    ).data;
+    await workosApi(stack.emulator, "DELETE", `/user_management/organization_memberships/${membership.id}`);
+    await membershipEvent("event_pending_deleted", "organization_membership.deleted", membership);
+    const invite = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", {});
+    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 403);
+  });
+
+  test("a demoted admin loses Admin Portal sessions; a demotion not yet seen by the cache is caught when minting a link", async () => {
+    const nora = await accessToken(stack, "nora@new.test", "Rejoin Labs");
+    const noraUser = await findUser(stack.emulator, "nora@new.test");
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    const [membership] = (
+      await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${noraUser.id}&organization_id=${org.id}`)
+    ).data;
+    assert.equal((await callApi(stack, nora, "POST", "/api/workspaces/portal", { intent: "sso" })).status, 200);
+
+    // Demoted in WorkOS, webhook not yet delivered: the cached role still says admin.
+    await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${membership.id}`, { role_slug: "member" });
+    const minted = await revokeCalls(async () => {
+      assert.equal((await callApi(stack, nora, "POST", "/api/workspaces/portal", { intent: "sso" })).status, 403);
+    });
+    assert.equal(minted, 1, "the link minted across the demotion was revoked");
+
+    const demoted = await revokeCalls(() => membershipEvent("event_demoted", "organization_membership.updated", membership));
+    assert.equal(demoted, 1, "demotion revokes their portal sessions");
+    assert.equal((await callApi(stack, nora, "POST", "/api/workspaces/portal", { intent: "sso" })).status, 403);
+  });
+});

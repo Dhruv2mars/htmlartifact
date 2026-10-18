@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS membership_epochs (
   epoch INTEGER NOT NULL,
   PRIMARY KEY (user_id, organization_id)
 );
+CREATE TABLE IF NOT EXISTS removed_members (
+  user_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (user_id, organization_id)
+);
 CREATE TABLE IF NOT EXISTS revocations (
   subject TEXT NOT NULL,
   organization_id TEXT NOT NULL,
@@ -330,4 +336,29 @@ export async function setRevoked(
       .bind(subject, organizationId)
       .run();
   }
+}
+
+// Someone removed from a workspace (by an admin, the directory, or WorkOS)
+// cannot rejoin through an invite code until an admin reinstates them.
+// Written and cleared under the same membership epoch as revocations.
+export async function setRemovedAtEpoch(
+  db: D1Database,
+  userId: string,
+  organizationId: string,
+  removed: boolean,
+  epoch: number
+): Promise<void> {
+  const sql = removed
+    ? `INSERT INTO removed_members (user_id, organization_id) SELECT ?, ? WHERE ${EPOCH_IS} ON CONFLICT DO NOTHING`
+    : `DELETE FROM removed_members WHERE user_id = ? AND organization_id = ? AND ${EPOCH_IS}`;
+  await db.prepare(sql).bind(userId, organizationId, userId, organizationId, epoch).run();
+}
+
+export async function isRemoved(db: D1Database, userId: string, organizationId: string): Promise<boolean> {
+  return Boolean(
+    await db
+      .prepare("SELECT 1 FROM removed_members WHERE user_id = ? AND organization_id = ?")
+      .bind(userId, organizationId)
+      .first()
+  );
 }

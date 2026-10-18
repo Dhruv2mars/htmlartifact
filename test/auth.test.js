@@ -118,7 +118,11 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     assert.equal(results.filter((r) => r.status === 200).length, 1, JSON.stringify(results.map((r) => r.status)));
     const members = await callApi(stack, nora.accessToken, "GET", "/api/workspaces/members");
     const outsiders = ["alice@acme.test", "bob@acme.test", "olivia@other.test"];
-    assert.equal(members.body.members.filter((m) => outsiders.includes(m.email)).length, 1);
+    const winners = members.body.members.filter((m) => outsiders.includes(m.email));
+    assert.equal(winners.length, 1);
+    // Later tests rely on these people's original memberships only.
+    const removed = await callApi(stack, nora.accessToken, "DELETE", `/api/workspaces/members/${winners[0].id}`);
+    assert.equal(removed.status, 200);
   });
 
   test("only admins can invite", async () => {
@@ -144,6 +148,8 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     const browser = new Browser(stack);
     const landed = await browser.signIn("bob@acme.test", { next: link });
     assert.equal(landed.status, 404, "bob is in Acme, not Nora Labs");
+    // Sam was removed earlier: an admin lets him back in before he can rejoin.
+    assert.equal((await callApi(stack, nora.accessToken, "POST", "/api/workspaces/members/reinstate", { email: "sam@new.test" })).status, 200);
     const fresh = new Browser(stack);
     const page1 = await fresh.signIn("sam@new.test", { next: link });
     assert.match(page1.finalUrl, /\/workspaces\?next=/);

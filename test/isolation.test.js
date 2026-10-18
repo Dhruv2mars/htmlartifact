@@ -435,6 +435,25 @@ const ROUTES = {
       }
     }
   },
+  "POST /api/workspaces/members/reinstate": {
+    kind: "resource",
+    why: "takes an email; reinstates only in the caller's workspace (side effect checked in deletion.test.js)",
+    async run(key) {
+      for (const actor of apiActors()) {
+        const res = await call(actor, "POST", "/api/workspaces/members/reinstate", {
+          email: "bob@acme.test",
+          organization_id: A.org.id
+        });
+        const label = `${key} as ${actor.name}`;
+        if (actor.token === B.nora) {
+          assert.equal(res.status, 200, res.text);
+          assert.deepEqual(res.json, { ok: true });
+        } else {
+          assertDenied(label, res);
+        }
+      }
+    }
+  },
   "DELETE /api/workspaces/current": {
     kind: "resource",
     why: "deletes only the caller's workspace; confirming with A's name or id must not delete A",

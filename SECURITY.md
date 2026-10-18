@@ -122,8 +122,11 @@ those artifacts will 404.
   their user-owned API keys (checked against their live membership), any
   Admin Portal session they opened (portal links carry their user ID and are
   revoked via `POST /portal/revoke_link`), and cannot rejoin through an old
-  invite (an inactive membership is never reactivated by an invite; only the
-  directory or WorkOS restores it).
+  invite: anyone removed (by an admin, the directory, or WorkOS, including a
+  deleted pending membership) is blocked from invite joins until an admin runs
+  `htmlartifact workspace reinstate <email>`, and an inactive membership is
+  never reactivated by an invite. Admin Portal sessions also end when an admin
+  is demoted, and a link minted while a removal or demotion lands is revoked.
 - **MFA:** enabled in AuthKit for password sign-ins.
 
 ## Incident response
