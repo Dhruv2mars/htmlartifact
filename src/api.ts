@@ -516,7 +516,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const viewer = c.get("viewer");
   const db = c.env.DB;
   const capabilities = uploadCapabilities(viewer, c.get("config"));
-  const body = await readJson<UploadBody, MemberEnv>(c, capabilities.maxBytes * 6 + 1024 * 1024);
+  const body = await readJson<UploadBody, MemberEnv>(c, uploadBodyLimit(capabilities.maxBytes));
   const { filename, metadata = {}, draftId, description } = body;
   const validation = validateUpload(requestPages(body), capabilities);
   if (!validation.ok) {
@@ -762,7 +762,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
 async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
   const viewer = c.get("viewer");
   const capabilities = uploadCapabilities(viewer, c.get("config"));
-  const body = await readJson(c, capabilities.maxBytes * 6 + 1024 * 1024);
+  const body = await readJson(c, uploadBodyLimit(capabilities.maxBytes));
   const report: CheckReport = {
     ok: true,
     account: { id: viewer.account_id, name: viewer.account_name },
@@ -815,6 +815,20 @@ function uploadCapabilities(viewer: Viewer, config: Config): { maxBytes: number;
     maxBytes: viewer.flags.includes(FLAGS.largeUploads) ? limits.largeBytes : limits.accountBytes,
     maxPages: limits.maxPages
   };
+}
+
+// The largest upload or check body worth reading. Bodies carry the HTML as
+// JSON strings, and the CLI encodes them with JSON.stringify, which writes
+// non-ASCII as raw UTF-8 (no growth) and escapes only `"`, `\`, and control
+// characters. Every escape but one is two characters for one byte (\" \\ \n
+// \r \t \b \f; lone surrogates count as 3 UTF-8 bytes and escape to 6), so
+// HTML within maxBytes encodes to at most 2 × maxBytes. Only raw C0 control
+// characters (\u00XX, 6 for 1) exceed that, and real HTML has none. 64 KiB
+// covers the rest of the body: up to 50 page paths of 200 characters, slug,
+// filename, description (1000 characters), and metadata. Anything larger
+// cannot pass validateUpload, so it is refused before it is read into memory.
+function uploadBodyLimit(maxBytes: number): number {
+  return maxBytes * 2 + 64 * 1024;
 }
 
 // An upload is one document (`html`) or a folder of pages (`files`).
