@@ -12,6 +12,7 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 HTMLARTIFACT_PUBLIC_BASE_URL = "https://htmlartifact.pages.dev"
 HTMLARTIFACT_SANDBOX_ORIGIN = "https://htmlartifact-usercontent.pages.dev"
+HTMLARTIFACT_SERVE = "sandbox"
 
 [[d1_databases]]
 binding = "DB"
@@ -31,6 +32,7 @@ entrypoint = "Ops"
 [env.preview.vars]
 HTMLARTIFACT_PUBLIC_BASE_URL = "https://staging.htmlartifact.pages.dev"
 HTMLARTIFACT_SANDBOX_ORIGIN = "https://staging.htmlartifact-usercontent.pages.dev"
+HTMLARTIFACT_SERVE = "sandbox"
 
 [[env.preview.d1_databases]]
 binding = "DB"

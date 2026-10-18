@@ -61,7 +61,10 @@ export default {
     } catch {
       // Misconfigured: the app's middleware reports it.
     }
-    const target = isSandboxRequest(new URL(request.url), sandboxOrigin) ? sandbox : app;
+    // The usercontent deployment never serves the app, on any of its hosts
+    // (including Pages preview aliases the host check cannot know about).
+    const sandboxOnly = env.HTMLARTIFACT_SERVE === "sandbox";
+    const target = sandboxOnly || isSandboxRequest(new URL(request.url), sandboxOrigin) ? sandbox : app;
     return target.fetch(request, env, ctx);
   }
 } satisfies ExportedHandler<Env>;

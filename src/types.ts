@@ -9,6 +9,8 @@ export interface Env {
   ARTIFACTS: R2Bucket;
   HTMLARTIFACT_PUBLIC_BASE_URL?: string;
   HTMLARTIFACT_SANDBOX_ORIGIN?: string;
+  /** "sandbox" on the usercontent deployment: every host it answers serves only the sandbox. */
+  HTMLARTIFACT_SERVE?: string;
   HTMLARTIFACT_COOKIE_PASSWORD?: string;
   HTMLARTIFACT_MEMBERSHIP_CACHE_SECONDS?: string;
   HTMLARTIFACT_INVITE_TTL_DAYS?: string;
