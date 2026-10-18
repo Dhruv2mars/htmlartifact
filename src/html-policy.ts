@@ -1,8 +1,84 @@
 import { createHash } from "node:crypto";
 import * as parse5 from "parse5";
 
+export type IssueLevel = "error" | "warning";
+
+export interface Issue {
+  level: IssueLevel;
+  code: string;
+  message: string;
+  fix?: string;
+  line?: number;
+  column?: number;
+  count: number;
+  path?: string;
+}
+
+export interface HtmlValidation {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  issues: Issue[];
+  title: string | null;
+  hasScripts: boolean;
+  bytes: number;
+  stats: { hasInlineScript: boolean; externalImageHosts: string[] };
+}
+
+export interface PageInput {
+  path?: unknown;
+  html?: unknown;
+}
+
+export interface ValidatedPage extends HtmlValidation {
+  path: string;
+  html: string;
+}
+
+export interface UploadValidation {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  issues: Issue[];
+  pages: ValidatedPage[];
+  totalBytes: number;
+  hasScripts: boolean;
+  title: string | null;
+  contentHash: string | null;
+}
+
+export interface UploadLimits {
+  maxBytes?: number;
+  maxPages?: number;
+}
+
+// parse5's tree, as far as the policy reads it.
+interface Node {
+  nodeName: string;
+  tagName?: string;
+  value?: string;
+  attrs?: { name: string; value: string }[];
+  childNodes?: Node[];
+  sourceCodeLocation?: Location | null;
+}
+
+interface Position {
+  startLine: number;
+  startCol: number;
+}
+
+interface Location extends Position {
+  attrs?: Record<string, Position>;
+}
+
+interface IssueOptions {
+  node?: Node;
+  attr?: string;
+  fix?: string;
+}
+
 const EMBED_FIX = "Link to the page instead of embedding it.";
-const BLOCKED_TAGS = new Map([
+const BLOCKED_TAGS = new Map<string, string>([
   ["form", "Forms cannot submit on htmlartifact. Use inputs without a <form> wrapper."],
   ["iframe", EMBED_FIX],
   ["object", EMBED_FIX],
@@ -85,7 +161,7 @@ const EMBED_SRC_TAGS = new Set(["img", "video", "audio", "source", "track"]);
 // Browser APIs that fail inside the scripted-draft sandbox (opaque origin,
 // connect-src 'none', no allow-modals). Reported as warnings so agents learn
 // before a reader finds a broken page.
-const SANDBOX_APIS = [
+const SANDBOX_APIS: { code: string; pattern: RegExp; message: string; fix: string }[] = [
   {
     code: "sandbox-storage",
     pattern: /\b(localStorage|sessionStorage|indexedDB)\b/,
@@ -142,7 +218,7 @@ const MAX_DEPTH = 512;
 // Validates one HTML document. Returns string errors/warnings for display and
 // structured `issues` ({ level, code, message, fix, line, column, count }) for
 // tools. `hasScripts` means the page contains code the browser would run.
-export function validateHtml(html, options = {}) {
+export function validateHtml(html: unknown, options: { maxBytes?: number } = {}): HtmlValidation {
   const maxBytes = options.maxBytes ?? Infinity;
   const issues = createIssueList();
 
@@ -156,22 +232,22 @@ export function validateHtml(html, options = {}) {
     issues.error("too-large", sizeMessage(bytes, maxBytes));
   }
 
-  let document;
+  let document: Node;
   try {
     // scriptingEnabled: false so <noscript> children parse as real elements:
     // a reader without JavaScript sees them, so the policy must see them too.
-    document = parse5.parse(html, { scriptingEnabled: false, sourceCodeLocationInfo: true });
+    document = parse5.parse(html, { scriptingEnabled: false, sourceCodeLocationInfo: true }) as unknown as Node;
   } catch {
     issues.error("parse-failed", "HTML document could not be parsed.");
     return result({ issues, title: null, hasScripts: false, bytes, externalImageHosts: [] });
   }
 
-  let title = null;
+  let title: string | null = null;
   let hasScripts = false;
-  const externalImageHosts = new Set();
-  const scriptSources = [];
+  const externalImageHosts = new Set<string>();
+  const scriptSources: { node: Node; attr?: string; text: string }[] = [];
 
-  function visit(node) {
+  function visit(node: Node) {
     if (node.tagName) {
       const tagName = node.tagName.toLowerCase();
       const attributes = new Map(
@@ -224,11 +300,11 @@ export function validateHtml(html, options = {}) {
       if (EMBED_SRC_TAGS.has(tagName)) {
         // srcset candidates are "url descriptor" pairs separated by ", ". Data
         // URLs contain a comma with no space after it, so they stay whole.
-        const references = [
-          ...["src", "poster"].map((name) => [name, attributes.get(name)]),
+        const references: [string, string | undefined][] = [
+          ...["src", "poster"].map((name): [string, string | undefined] => [name, attributes.get(name)]),
           ...(attributes.get("srcset") || "")
             .split(/,\s+/)
-            .map((candidate) => ["srcset", candidate.trim().split(/\s+/)[0]])
+            .map((candidate): [string, string | undefined] => ["srcset", candidate.trim().split(/\s+/)[0]])
         ];
         for (const [name, value] of references) {
           if (value && isLocalReference(value)) {
@@ -289,9 +365,9 @@ export function validateHtml(html, options = {}) {
   }
 
   let tooDeep = false;
-  const stack = [{ node: document, depth: 0 }];
+  const stack: { node: Node; depth: number }[] = [{ node: document, depth: 0 }];
   while (stack.length) {
-    const { node, depth } = stack.pop();
+    const { node, depth } = stack.pop()!;
     visit(node);
     if (depth >= MAX_DEPTH) {
       tooDeep = true;
@@ -299,7 +375,7 @@ export function validateHtml(html, options = {}) {
     }
     const children = node.childNodes || [];
     for (let i = children.length - 1; i >= 0; i--) {
-      stack.push({ node: children[i], depth: depth + 1 });
+      stack.push({ node: children[i]!, depth: depth + 1 });
     }
   }
   if (tooDeep) {
@@ -329,9 +405,12 @@ export function validateHtml(html, options = {}) {
 // Validates a whole upload: one page, or a folder of pages that link to each
 // other by relative path. Enforces the caller's limits and capabilities, so
 // /api/uploads and the /api/check preflight always agree.
-export function validateUpload(pages, { maxBytes = Infinity, maxPages = Infinity } = {}) {
-  const issues = [];
-  const results = [];
+export function validateUpload(
+  pages: PageInput[] | unknown,
+  { maxBytes = Infinity, maxPages = Infinity }: UploadLimits = {}
+): UploadValidation {
+  const issues: Issue[] = [];
+  const results: ValidatedPage[] = [];
   const multiPage = Array.isArray(pages) && pages.length > 1;
 
   if (!Array.isArray(pages) || pages.length === 0) {
@@ -343,12 +422,12 @@ export function validateUpload(pages, { maxBytes = Infinity, maxPages = Infinity
     issues.push(uploadIssue("too-many-pages", `Upload has ${pages.length} pages; the limit is ${maxPages}.`));
   }
 
-  const seen = new Set();
-  for (const page of pages) {
+  const seen = new Set<string>();
+  for (const page of pages as PageInput[]) {
     const path = page?.path;
     const pathProblem = pagePathProblem(path);
-    if (pathProblem) {
-      issues.push(uploadIssue("page-path", pathProblem));
+    if (pathProblem || typeof path !== "string") {
+      issues.push(uploadIssue("page-path", pathProblem ?? "Page path is missing."));
       continue;
     }
     if (seen.has(path)) {
@@ -358,7 +437,7 @@ export function validateUpload(pages, { maxBytes = Infinity, maxPages = Infinity
     seen.add(path);
 
     const validation = validateHtml(page.html);
-    results.push({ path, html: page.html, ...validation });
+    results.push({ path, html: page.html as string, ...validation });
     issues.push(...validation.issues.map((issue) => (multiPage ? { path, ...issue } : issue)));
   }
 
@@ -382,7 +461,7 @@ export function validateUpload(pages, { maxBytes = Infinity, maxPages = Infinity
 
 // The single-line form of an issue, used for human output and for the
 // `errors`/`warnings` string arrays older CLIs print.
-export function formatIssue(issue) {
+export function formatIssue(issue: Issue): string {
   const location = issue.line ? `line ${issue.line}:${issue.column}` : null;
   const where = [issue.path, location].filter(Boolean).join(" ");
   const count = issue.count > 1 ? ` (${issue.count} places)` : "";
@@ -390,13 +469,13 @@ export function formatIssue(issue) {
   return `${where ? `${where}: ` : ""}${issue.message}${count}${fix}`;
 }
 
-export function formatBytes(bytes) {
+export function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${+(bytes / (1024 * 1024)).toFixed(1)} MiB`;
   if (bytes >= 1024) return `${+(bytes / 1024).toFixed(1)} KiB`;
   return `${bytes} bytes`;
 }
 
-function pagePathProblem(path) {
+function pagePathProblem(path: unknown): string | null {
   if (typeof path !== "string" || !path) return "Page path is missing.";
   const segments = path.split("/");
   if (path.length > MAX_PAGE_PATH_LENGTH || segments.length > MAX_PAGE_PATH_SEGMENTS) {
@@ -405,22 +484,32 @@ function pagePathProblem(path) {
   if (!path.endsWith(".html") || !segments.every((segment) => PAGE_SEGMENT_PATTERN.test(segment))) {
     return `Page path "${path}" must be a relative .html path of letters, numbers, ".", "_", and "-".`;
   }
-  const root = segments[0].replace(/\.html$/, "");
+  const root = segments[0]!.replace(/\.html$/, "");
   if (RESERVED_PAGE_ROOTS.has(root.toLowerCase())) {
     return `Page path "${path}" uses the reserved name "${root}".`;
   }
   return null;
 }
 
-function sizeMessage(bytes, maxBytes) {
+function sizeMessage(bytes: number, maxBytes: number): string {
   return `HTML is ${bytes} bytes (${formatBytes(bytes)}); the limit for this upload is ${maxBytes} bytes (${formatBytes(maxBytes)}).`;
 }
 
-function uploadIssue(code, message, { fix } = {}) {
+function uploadIssue(code: string, message: string, { fix }: { fix?: string } = {}): Issue {
   return { level: "error", code, message, ...(fix ? { fix } : {}), count: 1 };
 }
 
-function uploadResult({ issues, pages, totalBytes, hasScripts }) {
+function uploadResult({
+  issues,
+  pages,
+  totalBytes,
+  hasScripts
+}: {
+  issues: Issue[];
+  pages: ValidatedPage[];
+  totalBytes: number;
+  hasScripts: boolean;
+}): UploadValidation {
   const index = pages.find((page) => page.path === "index.html") || pages[0];
   const ok = !issues.some((issue) => issue.level === "error");
   return {
@@ -439,8 +528,8 @@ function uploadResult({ issues, pages, totalBytes, hasScripts }) {
 
 // One page hashes its bytes, so the value matches versions stored before
 // multi-page uploads. A folder hashes its sorted path/hash manifest.
-function uploadContentHash(pages) {
-  if (pages.length === 1) return sha256(pages[0].html);
+function uploadContentHash(pages: ValidatedPage[]): string {
+  if (pages.length === 1) return sha256(pages[0]!.html);
   const manifest = pages
     .map((page) => `${page.path}\0${sha256(page.html)}`)
     .sort()
@@ -448,15 +537,15 @@ function uploadContentHash(pages) {
   return sha256(manifest);
 }
 
-function sha256(value) {
+function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
 // Collects issues, merging repeats of the same problem into one entry with a
 // count and the first location, so 500 identical findings stay readable.
 function createIssueList() {
-  const byKey = new Map();
-  function add(level, code, message, { node, attr, fix } = {}) {
+  const byKey = new Map<string, Issue>();
+  function add(level: IssueLevel, code: string, message: string, { node, attr, fix }: IssueOptions = {}) {
     const key = `${level}\0${code}\0${message}`;
     const existing = byKey.get(key);
     if (existing) {
@@ -475,13 +564,25 @@ function createIssueList() {
     });
   }
   return {
-    error: (...args) => add("error", ...args),
-    warning: (...args) => add("warning", ...args),
+    error: (code: string, message: string, options?: IssueOptions) => add("error", code, message, options),
+    warning: (code: string, message: string, options?: IssueOptions) => add("warning", code, message, options),
     list: () => [...byKey.values()]
   };
 }
 
-function result({ issues, title, hasScripts, bytes, externalImageHosts }) {
+function result({
+  issues,
+  title,
+  hasScripts,
+  bytes,
+  externalImageHosts
+}: {
+  issues: ReturnType<typeof createIssueList>;
+  title: string | null;
+  hasScripts: boolean;
+  bytes: number;
+  externalImageHosts: string[];
+}): HtmlValidation {
   const list = issues.list();
   return {
     ok: !list.some((issue) => issue.level === "error"),
@@ -497,7 +598,7 @@ function result({ issues, title, hasScripts, bytes, externalImageHosts }) {
 
 // True for paths that point at the author's machine or the draft's own host,
 // where htmlartifact serves nothing but HTML pages.
-function isLocalReference(value) {
+function isLocalReference(value: unknown): boolean {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw || raw.startsWith("#")) return false;
   return !/^(https?:|data:|blob:|\/\/)/.test(raw);
@@ -505,7 +606,7 @@ function isLocalReference(value) {
 
 // Returns the lowercased host of an absolute http(s) (or protocol-relative) URL,
 // or null for relative paths, data: URIs, and anything unparseable.
-function externalHost(value) {
+function externalHost(value: unknown): string | null {
   const raw = String(value || "").trim();
   if (!raw) return null;
   const candidate = raw.startsWith("//") ? `https:${raw}` : raw;
@@ -520,7 +621,7 @@ function externalHost(value) {
   return null;
 }
 
-function collectText(node) {
+function collectText(node: Node): string {
   let value = "";
   for (const child of node.childNodes || []) {
     if (child.nodeName === "#text") value += child.value || "";

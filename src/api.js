@@ -1,7 +1,7 @@
 import { sha256 } from "./crypto.js";
 import { FLAGS, bumpMembershipEpoch, findWorkspace, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.js";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.js";
-import { formatBytes, validateUpload } from "./html-policy.js";
+import { formatBytes, validateUpload } from "./html-policy.ts";
 import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.js";
 import { draftUrl, slugProblem } from "./public-url.js";
 import { clientIp, rateLimit } from "./rate-limit.js";

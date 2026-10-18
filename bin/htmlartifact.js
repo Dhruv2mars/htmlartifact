@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
-import { formatBytes, formatIssue, validateUpload } from "../src/html-policy.js";
+import { formatBytes, formatIssue, validateUpload } from "../src/html-policy.ts";
 
 import pkg from "../package.json" with { type: "json" };
 

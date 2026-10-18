@@ -1,32 +1,37 @@
-# htmlartifact — checklist
+# htmlartifact — GA checklist
 
-Done = through the CLI alone (as an agent would): sign up/in → create a
-workspace → invite → others join → publish → every member can open the
-artifact, and nobody outside the workspace can. Verified by tests against the
-real Worker runtime + the official WorkOS emulator, and by hand in a browser.
+**Done =** in production at https://htmlartifact.pages.dev, two real accounts
+walk the CLI flow end to end (sign up → create workspace → invite → join →
+publish → member opens artifact → outsider blocked), and deleting an artifact
+provably removes its R2 objects (every version).
 
-## Done
-- [x] Start from postplan 0.0.5 (MIT), rename to htmlartifact, public repo
-- [x] Use Postplan for real (CLI, publish, browser, sign-in, list) to learn the workflow
-- [x] Serverless: one Cloudflare Worker (Hono) + R2 + D1; no servers, no Docker
-- [x] WorkOS AuthKit for accounts, sign-up and workspaces (organizations)
-- [x] CLI sign-in through the browser (device flow, relayed by the Worker)
-- [x] `workspace create | invite | join | list | switch | members | remove`
-- [x] Invite codes: admin-only, expiring, use-limited; also `/join/<code>` links
-- [x] Artifacts belong to a workspace; only members can open them (browser, token, CI key)
-- [x] Membership checked with WorkOS; webhooks revoke immediately; order-independent
-- [x] CSRF origin check, JWT bound to our client, open-redirect guard, strict CSP
-- [x] Browser: sign in, workspace feed, mine, version history, join, switch
-- [x] Non-member opening a link → join → lands back on the link
-- [x] `bun run dev:local`: fully offline stack (emulator + Worker)
-- [x] 35 tests (API, browser flows, CLI end-to-end, revocation, security)
-- [x] Walked the flow by hand in a browser (Alice publishes via CLI; Bob signs in, joins, opens it)
-- [x] Skills removed for now
+## Phase 1 — TypeScript
+- [x] `src/html-policy.ts` (shared by server + CLI), `tsconfig.json`
+- [ ] Server → strict TypeScript (Hono), `bun run typecheck` clean, 37 tests green
+- [ ] CLI → TypeScript + Effect, built with `bun build --target=node` → `dist/htmlartifact.js`
 
-## Later (by request)
-- [ ] Create the WorkOS account; set up a real environment
-- [ ] Verify against real WorkOS (device flow, refresh-into-org, webhooks)
-- [ ] Deploy the Worker (D1, R2, secrets) and pick the domain
-- [ ] Set `DEFAULT_API_URL`, publish the CLI to npm so `npx htmlartifact` works
-- [ ] Optional: serve artifacts from a separate domain for extra isolation (Postplan uses per-artifact subdomains)
-- [ ] Optional: CI API keys from the CLI (`workspace keys create`), SSO setup links
+## Phase 2 — Security
+- [ ] Real deletion: draft delete purges R2 objects for every version/page (+ cron backstop)
+- [ ] Artifact HTML on a cross-site sandbox origin (`htmlartifact-usercontent.pages.dev`)
+- [ ] Workspace deletion (admin): R2 + D1 + WorkOS org
+- [ ] Member offboarding: removal, `user.deleted` PII scrub, admins can delete any artifact
+- [ ] Retention: `source_ip`/`user_agent` erased after 30 days
+- [ ] Tenant-isolation sweep test over every route
+- [ ] SECURITY.md (data handling, incident response, D1 Time Travel backups/restore)
+
+## Phase 3 — WorkOS (scoped)
+- [ ] SSO (SAML/OIDC) via Admin Portal link: `workspace sso`
+- [ ] Directory Sync (SCIM) via Admin Portal link: `workspace directory`; dsync deprovisioning revokes access
+- [ ] MFA on in AuthKit (config only; documented)
+- Dropped by Dhruv: Vault/encryption, Audit Logs, Events API, Radar, extra roles, FGA, domain auto-join, export
+
+## Phase 4 — Production
+- [ ] Cloudflare Pages project `htmlartifact` (advanced mode `_worker.js`, D1 + R2 bindings)
+- [ ] Sandbox Pages project `htmlartifact-usercontent`
+- [ ] Cron Worker for scheduled jobs (Pages has no cron triggers)
+- [ ] Staging (Pages preview env + staging D1/R2/WorkOS)
+- [ ] Rate limits (Workers rate-limit binding), logs/observability, health checks
+- [ ] GitHub Actions: tests, deploy, npm publish with provenance
+- [ ] Real WorkOS env: redirect URI, webhooks, MFA, SSO/DSync enabled
+- [ ] `DEFAULT_API_URL` = https://htmlartifact.pages.dev; publish CLI to npm
+- [ ] Production walkthrough with two real accounts (item 4)
