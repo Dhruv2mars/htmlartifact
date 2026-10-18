@@ -3,7 +3,7 @@ const buckets = new Map();
 export function createRateLimiter({ windowMs, max, keyPrefix, key }) {
   return function rateLimiter(req, res, next) {
     const now = Date.now();
-    const identity = key ? key(req) : req.auth?.id || req.ip || "anonymous";
+    const identity = key ? key(req) : req.auth?.account_id || req.ip || "anonymous";
     const bucketKey = `${keyPrefix}:${identity}`;
     const current = buckets.get(bucketKey);
 

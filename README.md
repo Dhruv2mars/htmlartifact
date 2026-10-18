@@ -1,171 +1,156 @@
-# Postplan
+# htmlartifact
 
-Postplan is a small service and CLI for publishing static HTML drafts from agents.
+Publish HTML artifacts from coding agents (plans, specs, reviews, reports, UI
+mocks) to your team. **Only members of your team can open them.** Everyone
+else gets a sign-in page or a 404.
 
-## CLI
-
-Upload a draft:
-
-```sh
-npx postplan upload ./plan.html
-```
-
-Attach an optional stable description (a short label shown in your dashboard and `postplan list`). Re-running with `--description` updates it; omitting it leaves the existing one untouched:
-
-```sh
-npx postplan upload ./plan.html --description "Q3 warehouse migration plan"
-```
-
-Upload a folder of linked pages (it needs an `index.html`; pages link to each other with relative paths such as `href="details.html"`). Folder uploads need sign-in:
+- **Teams are WorkOS organizations.** Sign-in is [WorkOS AuthKit](https://workos.com/authkit),
+  so SSO, SCIM provisioning, MFA and domain capture come from WorkOS.
+- **Agents publish with a CLI** and a bundled set of default skills, so Claude
+  Code, Codex, or any agent that reads `~/.agents/skills` knows how to write,
+  publish and read artifacts.
+- **Self-hosted.** It needs Node, Postgres, and a disk or any S3-compatible bucket.
 
 ```sh
-npx postplan auth login
-npx postplan upload ./report/
+htmlartifact upload plan.html
+# URL: https://artifacts.acme.com/d/k3j9x0a1b2c4
+# Team: Acme (visible to its members only)
 ```
 
-Publish at a custom URL (`https://q3-plan.postplan.dev`). The slug is the draft's identity: uploading with the same slug from any machine updates the same draft, and a free slug creates a new one. Add `--draft <draft-id>` to move an existing draft to the slug (its old slug, if any, is freed). `--new` cannot be combined with `--draft` or `--slug`. Custom URLs need the `custom-urls` account flag:
+## For teammates
 
 ```sh
-npx postplan upload ./plan.html --slug q3-plan
-npx postplan upload ./plan.html --draft abc123def456 --slug q3-plan
+curl -fsSL https://<your-server>/install.sh | sh   # CLI + default skills
+htmlartifact login                                  # browser sign-in, works over SSH
 ```
 
-Add `--json` to get a machine-readable receipt: draft ID, slug, version, URL, raw URL, immutable version URL (built from the draft ID, so it survives slug changes), content hash, account, pages, and the exact `updateCommand`. Uploading identical content again returns the current version instead of creating a new one, so retries are safe.
+| Command | What it does |
+|---|---|
+| `htmlartifact upload <file-or-folder>` | Publish, or publish a new version of the same path |
+| `htmlartifact check <path>` | Validate against the server's rules without publishing |
+| `htmlartifact read <url>` | Download an artifact using your sign-in (agents use this) |
+| `htmlartifact list [--all]` | Your artifacts, or the whole team's |
+| `htmlartifact org list` / `org switch <team>` | See or change the team you publish to |
+| `htmlartifact whoami` / `logout` | Check or clear your sign-in |
 
-Check readiness and validate a page without publishing anything. With no path it only reports the account, limits, and capabilities; with a path it also returns every issue with its line, column, and a short fix. `--slug` also reports whether a custom URL is free:
+In CI, set `HTMLARTIFACT_API_URL` and `HTMLARTIFACT_TOKEN` (a team API key that
+an admin creates on the **Team** page) instead of logging in.
+
+## Default skills
+
+`skills/` ships with the server, and `install.sh` installs all of them:
+
+| Skill | Purpose |
+|---|---|
+| `htmlartifact` | Publish, update and list artifacts; handle failures |
+| `htmlartifact-read` | Open an artifact link someone shared |
+| `htmlartifact-design` | How to write an artifact a teammate can actually use |
+
+Add a folder named `htmlartifact-<name>/SKILL.md` to ship another skill to
+everyone on the next install.
+
+## How access works
+
+| Who | Credential | Checked on every request |
+|---|---|---|
+| Browser | AuthKit sign-in, WorkOS sealed-session cookie | Session valid, user is an **active member** of the artifact's organization |
+| CLI | WorkOS access token from the device flow (refresh token kept in `~/.htmlartifact`, mode 600) | JWT signature (WorkOS JWKS), then the same membership check |
+| CI | WorkOS organization API key | Key valid in WorkOS; its owning org must own the artifact |
+
+- **Membership is confirmed with WorkOS**, never taken from a token claim
+  alone. The result is cached for `HTMLARTIFACT_MEMBERSHIP_CACHE_SECONDS`
+  (default 300).
+- **WorkOS webhooks revoke access immediately.** When a member is removed, a
+  user is deleted, or a session or key is revoked, the next request is denied,
+  even if the token hasn't expired yet.
+- **Other teams get the same 404 as a missing artifact**, so artifact URLs
+  reveal nothing to outsiders.
+- **People in several teams switch automatically** when they open a link to
+  another team they belong to.
+- **Artifact HTML runs under a strict CSP.** Scripted pages run in an
+  opaque-origin sandbox with no network or storage access, so they can't
+  read the session cookie.
+- **Nothing is anonymous.** Uploads and reads always need a credential.
+
+## Self-hosting
+
+### 1. WorkOS (free up to 1M monthly active users)
+
+1. Create a WorkOS environment, and enable **AuthKit** under User Management.
+2. **Redirects:**
+   - Callback URI: `https://<your-server>/auth/callback`
+   - Sign-out redirect: `https://<your-server>`
+3. **Roles:** keep `admin` and `member`. Optional: add a permission such as
+   `artifacts:publish` and set `HTMLARTIFACT_PUBLISH_PERMISSION` to it. Members
+   without that permission can read but not publish.
+4. **Webhooks** (recommended): add an endpoint at `https://<your-server>/webhooks/workos`
+   with these events:
+   - `organization_membership.created`, `organization_membership.updated`, `organization_membership.deleted`
+   - `user.deleted`
+   - `session.revoked`
+   - `api_key.revoked`
+
+   Put its secret in `WORKOS_WEBHOOK_SECRET`.
+5. Optional:
+   - **Audit Logs:** register `artifact.published` and `artifact.deleted`,
+     then set `HTMLARTIFACT_AUDIT_LOGS=true`.
+   - **API Keys:** enable it for CI publishing.
+
+Team admins set up SSO, directory sync and domain verification themselves:
+**Team → Single sign-on and provisioning** opens the WorkOS Admin Portal.
+
+### 2. Run it
 
 ```sh
-npx postplan check
-npx postplan check ./plan.html --slug q3-plan --json
+cp .env.example .env    # fill in WorkOS keys, a cookie password, the public URL
+docker compose up -d    # app + Postgres, artifacts stored on a volume
 ```
 
-If the API cannot be reached, `check` falls back to the bundled markup validator and says so (`"offline": true`).
-
-The CLI defaults to `https://postplan.dev`. Use `--api-url http://localhost:3000` for a local or custom deployment.
-
-API keys are optional for private/admin flows. Log in interactively (opens a browser page that mints a key you paste back — works over SSH, no localhost redirect):
+Without Docker, you need Node 20.10+, Postgres, and [Bun](https://bun.sh) to
+build the CLI bundle:
 
 ```sh
-npx postplan auth login
+bun install && bun run build:cli && bun run start
 ```
 
-Or set a key directly:
+### Configuration
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `HTMLARTIFACT_PUBLIC_BASE_URL` | yes | Public origin, e.g. `https://artifacts.acme.com`. Use `https://*.artifacts.acme.com` to give each artifact its own subdomain (needs wildcard DNS + TLS) |
+| `HTMLARTIFACT_COOKIE_PASSWORD` | yes | 32+ random characters; encrypts the session cookie |
+| `WORKOS_API_KEY`, `WORKOS_CLIENT_ID` | yes | From the WorkOS dashboard |
+| `DATABASE_URL` | yes | Postgres connection string |
+| `HTMLARTIFACT_STORAGE_DIR` | one of | Store artifacts on disk |
+| `AWS_S3_BUCKET_NAME`, `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | one of | Or any S3-compatible bucket (AWS, R2, MinIO) |
+| `WORKOS_WEBHOOK_SECRET` | no | Enables instant revocation |
+| `HTMLARTIFACT_PUBLISH_PERMISSION` | no | WorkOS permission required to publish |
+| `HTMLARTIFACT_ALLOW_TEAM_CREATION` | no | `false` stops signed-in users from creating new teams |
+| `HTMLARTIFACT_AUDIT_LOGS` | no | `true` sends publish/delete events to WorkOS Audit Logs |
+| `HTMLARTIFACT_MEMBERSHIP_CACHE_SECONDS` | no | How long a confirmed membership is trusted (default 300) |
+| `HTMLARTIFACT_TRUST_PROXY` | no | Express `trust proxy` setting (default: private networks) |
+| `HTMLARTIFACT_CLIENT_IP_HEADER` | no | A trusted single-IP header, e.g. `cf-connecting-ip` |
+| `MAX_ACCOUNT_HTML_BYTES`, `MAX_PAGES_PER_UPLOAD` | no | Upload limits (4 MiB, 50 pages) |
+
+## Development
 
 ```sh
-npx postplan auth set <api-key>
+bun install
+TEST_DATABASE_URL=postgres://postgres@localhost:5432/postgres bun run test
 ```
 
-List the drafts published to your account (requires an API key). Each row shows the auto-linked git repo, latest version, total version count, and last-updated time:
+The tests run the real app against the official
+[WorkOS emulator](https://github.com/workos/emulate), a real Postgres and disk
+storage. They cover sign-in, cross-team isolation, org switching, webhook
+revocation, team admin, CI keys and the CLI end to end.
 
-```sh
-npx postplan list
-```
+## Credits
 
-The CLI stores optional credentials and draft mappings in `~/.postplan`. A mapping ties an absolute file path and API URL to a draft, so re-uploading the same path updates the same draft. Each mapping is its own file under `~/.postplan/drafts/`, so concurrent uploads cannot overwrite each other's; mappings saved by older CLIs in `~/.postplan/drafts.json` are still read. A corrupt state file is moved aside, not silently reset.
+htmlartifact started from the MIT-licensed npm release of
+[Postplan](https://www.npmjs.com/package/postplan) 0.0.5 by t3dotgg: its
+HTML validator, artifact serving and CLI. The auth, team model, and skills are
+new. See `NOTICE`.
 
-## Environment
+## License
 
-Required service variables:
-
-- `DATABASE_URL`
-- `POSTPLAN_BOOTSTRAP_API_KEY`
-- `AWS_ENDPOINT_URL`
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_S3_BUCKET_NAME`
-- `AWS_DEFAULT_REGION`
-
-Optional service variables:
-
-- `POSTPLAN_PUBLIC_BASE_URL` - set to a normal base URL for `/d/<draft-id>` URLs, or a wildcard URL such as `https://*.postplan.dev` for draft subdomains.
-- `POSTPLAN_SESSION_SECRET` - together with `POSTPLAN_PUBLIC_BASE_URL`, enables web sign-in (the dashboard and `/cli/auth`). If either is absent, those routes return 503 and uploads/serving are unaffected.
-- `SHOO_BASE_URL` - identity broker for web sign-in (default `https://shoo.dev`).
-- `MAX_HTML_BYTES` - anonymous upload limit (default 512 KiB).
-- `MAX_ACCOUNT_HTML_BYTES` - signed-in upload limit (default 4 MiB).
-- `MAX_LARGE_HTML_BYTES` - limit for accounts with the `large-uploads` flag (default 16 MiB).
-- `MAX_PAGES_PER_UPLOAD` - pages per signed-in folder upload (default 50).
-- `UPLOAD_IP_RATE_LIMIT_WINDOW_MS`
-- `UPLOAD_IP_RATE_LIMIT_MAX`
-- `UPLOAD_RATE_LIMIT_WINDOW_MS`
-- `UPLOAD_RATE_LIMIT_MAX`
-
-Uploads are public by default. Bearer API keys are still used for admin endpoints and authenticated ownership flows. An upload that presents a key the server rejects fails with 401 instead of falling back to an anonymous upload. The bootstrap key is inserted into Postgres on startup if present.
-
-Size limits apply to the HTML of one upload (all pages combined) and depend on who uploads: anonymous, signed-in, or signed-in with the `large-uploads` flag.
-
-## Account flags
-
-`accounts.flags` holds per-account features:
-
-- `large-uploads` - raises the upload limit to `MAX_LARGE_HTML_BYTES`.
-- `custom-urls` - allows `--slug` custom URLs.
-
-Set them with SQL:
-
-```sql
-UPDATE accounts SET flags = ARRAY['large-uploads', 'custom-urls']
-WHERE id IN (SELECT account_id FROM identities WHERE email = 'someone@example.com');
-```
-
-`postplan whoami` and `postplan check` show an account's flags.
-
-## Dashboard & web sign-in
-
-With `POSTPLAN_SESSION_SECRET` set, `/dashboard` lists the signed-in account's drafts (grouped by git repo, with descriptions and version history) and `/cli/auth` mints API keys for `postplan auth login`. Sign-in is delegated to [shoo](https://github.com/pingdotgg/shoo) — postplan is auto-registered as a client by its origin, exchanges the OAuth code server-side (PKCE S256), verifies the ES256 `id_token` against shoo's JWKS, and keys accounts off the stable `pairwise_sub` claim (stored in the `identities` table). Postplan then runs its own 30-day HMAC-signed session cookie; it never sees Google credentials. Dashboard pages are apex-domain only — draft subdomains cannot serve them.
-
-Sign-in requests shoo's `pii` consent, so each user approves sharing their email, name, and profile picture once. Those claims are stored on `identities` and overwritten from the token at every login — removing your picture or email at Google clears it here too (only the stable `pii_subject` identifier is retained across logins). The header shows the avatar and email. To find the email behind an upload, join `draft_versions.created_by_api_key_id → api_keys.account_id → identities.email` — nothing is denormalized onto version rows. Declining consent denies the sign-in.
-
-An uploaded draft is attributed to whichever account's API key published it (anonymous uploads still work and stay public, but are not attributed to any account). `GET /api/drafts` returns the authenticated account's drafts — newest first, with each draft's description, auto-linked git repo, latest version number, and total version count — which is what `postplan list` and the dashboard read.
-
-Each uploaded version also records provenance and audit metadata: the client IP (from Railway's `X-Real-IP`), the Railway request id (`X-Railway-Request-Id`, for correlating with network logs), git branch/commit/subject and whether the working tree was dirty, CI run URL and actor when published from CI, and content signals derived at upload time (whether the HTML contains inline script, and which external hosts its images load from). Git and CI values are self-reported by the client and are used for display and audit only — never for authorization.
-
-Authenticated uploads may contain inline JavaScript: classic or `type="module"` `<script>` blocks and inline event-handler attributes such as `onclick`. Anonymous uploads containing JavaScript are rejected. Data blocks such as `<script type="application/json">` never run, so they are allowed in any upload. External script sources, JavaScript URLs, forms, iframes/embeds, and meta-refresh redirects are rejected at upload time. `<link>` is allowed for https stylesheets, icons, and preconnects.
-
-Run `postplan auth login` before uploading a scripted draft so the CLI sends an account API key.
-
-## Serving
-
-Every draft URL serves the exact uploaded HTML, byte for byte, to every client — browsers, `curl`, agent fetch tools, and HTTP libraries alike. There is no browser detection, no wrapper page, and no consent interstitial: a draft URL is just its HTML, so an agent that fetches one always gets the content a user uploaded. Responses carry `X-Postplan-Draft-Id` and `X-Postplan-Draft-Version` headers.
-
-Responses also set a Content-Security-Policy. The CSP never changes the bytes a client reads, so it does not gate content for `curl` or agents in any way. Script-free drafts keep `script-src 'none'`. Scripted drafts use `sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox` without `allow-same-origin`, so their inline code can update the document but runs with an opaque origin and cannot read Postplan cookies or storage. Links with `target="_blank"` can open new tabs, and destination pages do not inherit the draft's sandbox restrictions. Use `rel="noopener noreferrer"` on external links. External scripts, fetch/XHR, workers, frames, objects, and forms remain blocked in the draft.
-
-Images, video, audio, and fonts may load from any https or data: URL, and stylesheets from any https URL, so assets hosted elsewhere embed directly. Postplan itself hosts only HTML.
-
-The upload API returns both `publicUrl` and `rawUrl`, and the CLI prints the raw URL as `Raw HTML`. With wildcard draft domains the raw URL uses the stable apex form (`https://postplan.dev/d/<draft-id>/raw`). The `/raw` suffix is an alias kept for the API and CLI; it serves the same bytes as the canonical URL:
-
-- `https://<draft-id>.postplan.dev/` (or `/raw`)
-- `https://<draft-id>.postplan.dev/v/<n>/raw`
-- `https://postplan.dev/d/<draft-id>/raw`
-- `https://postplan.dev/d/<draft-id>/v/<n>/raw`
-
-A custom URL slug works anywhere a draft ID does (`https://q3-plan.postplan.dev/`, `https://postplan.dev/d/q3-plan/raw`). Deleting a draft frees its slug.
-
-Pages of a multi-page draft are served below the draft root, by file name or clean URL: `/details.html` and `/details` serve `details.html`, and `/docs/` serves `docs/index.html`. `/v/<n>/details` pins a version. Bare directory URLs such as `/docs` or `/d/<draft-id>` redirect to add a trailing slash, so relative links between pages resolve. Page paths cannot start with `v`, `raw`, `api`, or `healthz`.
-
-## Railway Provisioning
-
-After `railway login` succeeds, provision and deploy the first-pass stack:
-
-```sh
-chmod +x scripts/provision-railway.sh
-scripts/provision-railway.sh
-```
-
-The script creates a Railway project, app service, Postgres service, object storage bucket, service variables, Railway domain, and first deployment. It stores the generated bootstrap API key under `~/.postplan/deployments/`.
-
-Verify the deployed service:
-
-```sh
-POSTPLAN_URL=https://your-railway-domain \
-POSTPLAN_API_KEY=your-bootstrap-or-cli-key \
-scripts/verify-deployment.sh
-```
-
-Create a named key from the bootstrap key:
-
-```sh
-curl -X POST "$POSTPLAN_URL/api/api-keys" \
-  -H "Authorization: Bearer $POSTPLAN_BOOTSTRAP_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"local-cli"}'
-```
+MIT

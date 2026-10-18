@@ -2,15 +2,15 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
 import { formatBytes, formatIssue, validateUpload } from "../src/html-policy.js";
 
-// Single source of truth for the version: package.json. CI bumps it on every
-// merge to main, so a hardcoded copy here would immediately drift.
-const { version: VERSION } = createRequire(import.meta.url)("../package.json");
+import pkg from "../package.json" with { type: "json" };
+
+// Single source of truth for the version: package.json (inlined in the bundle).
+const VERSION = pkg.version;
 // A server's /install.sh replaces this placeholder with its own URL, so an
 // installed CLI already knows where its workspace lives.
 const BAKED_API_URL = "__HTMLARTIFACT_API_URL__";
@@ -175,9 +175,9 @@ program
   .command("upload")
   .argument("<path>", "HTML file, or a folder of .html pages with an index.html")
   .option("--slug <name>", "Publish at a custom URL; the same slug always updates the same draft. With --draft, renames that draft")
-  .option("--draft <draft-id>", "Update a specific draft")
-  .option("--new", "Always create a new draft")
-  .option("--description <text>", "Set a short description for the draft")
+  .option("--draft <draft-id>", "Update a specific artifact (by ID)")
+  .option("--new", "Always create a new artifact")
+  .option("--description <text>", "Set a short description for the artifact")
   .option("--json", "Print the publication receipt as JSON")
   .option("--api-url <url>", "The htmlartifact server")
   .description("Publish an artifact, or a new version of one.")
@@ -274,7 +274,7 @@ program
         latestVersionNumber: receipt.versionNumber
       });
     } catch (error) {
-      console.error(`Warning: published, but could not save the local draft mapping: ${error.message}`);
+      console.error(`Warning: published, but could not save the local path mapping: ${error.message}`);
     }
   });
 
@@ -324,7 +324,7 @@ program
     const scope = options.all ? "?scope=workspace" : "";
     const { ok, body } = await requestJson(`${apiUrl}/api/drafts${scope}`, { apiKey });
     if (!ok) {
-      throw new CliError(body.error || "Failed to list drafts.");
+      throw new CliError(body.error || "Failed to list artifacts.");
     }
 
     const drafts = body.drafts || [];
@@ -339,7 +339,7 @@ program
       return;
     }
 
-    console.log(`Drafts (${drafts.length})\n`);
+    console.log(`Artifacts (${drafts.length})\n`);
     for (const draft of drafts) {
       const repo = draft.repoOrg && draft.repoName ? `${draft.repoOrg}/${draft.repoName}` : "no repo";
       const version = draft.latestVersionNumber ? `v${draft.latestVersionNumber}` : "no versions";
@@ -622,8 +622,8 @@ function offlineReport(source, error) {
 
 function printReceipt(receipt) {
   const headline = {
-    created: "Uploaded draft",
-    updated: "Updated draft",
+    created: "Published",
+    updated: "Published a new version",
     unchanged: `Unchanged: this content is already version ${receipt.versionNumber}`
   }[receipt.action];
   console.log(headline);

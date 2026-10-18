@@ -50,9 +50,10 @@ function homeUrl() {
   return getHomeUrl({ publicBaseUrl: config.publicBaseUrl, requestBaseUrl: "" });
 }
 
-// POSIX sh. Writes only htmlartifact* paths: the CLI into
-// $HTMLARTIFACT_BIN_DIR (default ~/.local/bin) and each skill into every
-// agent skills folder that exists (~/.agents, ~/.claude, ~/.codex).
+// POSIX sh. Writes only htmlartifact* paths: the CLI bundle into
+// ~/.local/share/htmlartifact, a launcher into $HTMLARTIFACT_BIN_DIR (default
+// ~/.local/bin), and each skill into every agent skills folder that exists
+// (~/.agents, ~/.claude, ~/.codex).
 function installScript(url, skills) {
   return `#!/bin/sh
 # htmlartifact installer for ${url}
@@ -68,11 +69,11 @@ fetch() {
   if command -v curl >/dev/null 2>&1; then curl -fsSL "$1" -o "$2"; else wget -qO "$2" "$1"; fi
 }
 
-mkdir -p "$BIN_DIR"
-tmp="$BIN_DIR/.htmlartifact.$$"
-fetch "$URL/cli/htmlartifact.mjs" "$tmp"
-{ echo '#!/usr/bin/env node'; cat "$tmp"; } > "$BIN_DIR/htmlartifact"
-rm -f "$tmp"
+LIB_DIR="\${XDG_DATA_HOME:-$HOME/.local/share}/htmlartifact"
+mkdir -p "$BIN_DIR" "$LIB_DIR"
+fetch "$URL/cli/htmlartifact.mjs" "$LIB_DIR/htmlartifact.mjs.tmp"
+mv "$LIB_DIR/htmlartifact.mjs.tmp" "$LIB_DIR/htmlartifact.mjs"
+printf '#!/bin/sh\nexec node "%s/htmlartifact.mjs" "$@"\n' "$LIB_DIR" > "$BIN_DIR/htmlartifact"
 chmod 755 "$BIN_DIR/htmlartifact"
 echo "Installed CLI: $BIN_DIR/htmlartifact"
 

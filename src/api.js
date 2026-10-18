@@ -50,7 +50,7 @@ export function createApp() {
     windowMs: Number(process.env.UPLOAD_RATE_LIMIT_WINDOW_MS || 60_000),
     max: Number(process.env.UPLOAD_RATE_LIMIT_MAX || 30),
     keyPrefix: "upload-key",
-    key: (req) => req.auth?.id || clientIp(req) || "anonymous"
+    key: (req) => req.auth?.account_id || clientIp(req) || "anonymous"
   });
 
   app.use(noStoreHeaders);
