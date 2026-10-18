@@ -109,14 +109,15 @@ those artifacts will 404.
   Admin Portal link to connect the company's identity provider;
   `workspace domains` verifies the email domain that routes people to it.
 - **Directory Sync (SCIM):** `htmlartifact workspace directory` gives an
-  Admin Portal link to connect the directory. On every `dsync.user.*` event
-  the app re-reads the directory user from WorkOS (events can be stale or out
-  of order); if they are no longer active, or gone, it deletes the WorkOS
-  membership of every account that signed in with any address that directory
-  user has had (so a rename before deactivation doesn't hide anyone), in that
-  workspace only, and revokes it locally. Access ends on their next request. This works whether or not AuthKit
-  Directory Provisioning is enabled (with it on, WorkOS also removes the
-  membership itself).
+  Admin Portal link to connect the directory. Offboarding uses WorkOS AuthKit
+  Directory Provisioning: WorkOS links directory users to accounts, and when
+  the directory removes someone it deactivates their membership and revokes
+  their sessions. The `organization_membership.updated` webhook makes the app
+  re-check the membership live (never trusting the payload, so stale or
+  out-of-order events are harmless), and access ends on their next request.
+  Directory setup links are refused until WorkOS has enabled Directory
+  Provisioning for the environment (`HTMLARTIFACT_DIRECTORY_PROVISIONING=on`),
+  so a directory can never sync without offboarding.
 - **MFA:** enabled in AuthKit for password sign-ins.
 
 ## Incident response

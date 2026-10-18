@@ -42,8 +42,6 @@ export const SEED = {
     },
     { name: "Other", memberships: [{ email: "olivia@other.test" }, { email: "max@both.test" }] }
   ],
-  // Acme's SCIM directory still lists Bob as active (deletion tests send it stale events).
-  directories: [{ name: "Acme Okta", organization: "Acme", users: [{ email: "bob@acme.test" }] }],
   apiKeys: [
     { name: "Acme CI", organization: "Acme", value: CI_KEY },
     { name: "Other CI", organization: "Other", value: OTHER_CI_KEY }
@@ -65,7 +63,7 @@ function freePort() {
 
 // With `sandbox`, the app is http://127.0.0.1:<port> and the sandbox origin
 // is http://localhost:<port>: the same Worker, routed by request host.
-export async function startStack({ sandbox = false } = {}) {
+export async function startStack({ sandbox = false, directoryProvisioning = false } = {}) {
   const emulator = await createEmulator({ port: 0, requestsPerMinute: 100_000, seed: SEED });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-test-"));
   const port = sandbox ? await freePort() : undefined;
@@ -82,6 +80,7 @@ export async function startStack({ sandbox = false } = {}) {
       WORKOS_CLIENT_ID: CLIENT_ID,
       WORKOS_WEBHOOK_SECRET: WEBHOOK_SECRET,
       HTMLARTIFACT_COOKIE_PASSWORD: COOKIE_PASSWORD,
+      ...(directoryProvisioning ? { HTMLARTIFACT_DIRECTORY_PROVISIONING: "on" } : {}),
       ...(sandbox
         ? { HTMLARTIFACT_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, HTMLARTIFACT_SANDBOX_ORIGIN: sandboxUrl }
         : {})

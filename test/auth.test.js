@@ -427,3 +427,13 @@ describe("web app", () => {
     }
   });
 });
+
+describe("Directory Sync", () => {
+  test("setup links are refused until AuthKit Directory Provisioning is enabled (deprovisioning depends on it)", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    const dsync = await callApi(stack, alice, "POST", "/api/workspaces/portal", { intent: "dsync" });
+    assert.equal(dsync.status, 409);
+    assert.match(dsync.body.error, /Directory Sync isn't available yet/);
+    assert.equal((await callApi(stack, alice, "POST", "/api/workspaces/portal", { intent: "sso" })).status, 200);
+  });
+});

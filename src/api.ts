@@ -291,6 +291,13 @@ export function registerApi(app: Hono<AppEnv>): void {
     if (intent !== "sso" && intent !== "dsync" && intent !== "domain_verification") {
       return c.json({ ok: false, error: 'intent must be "sso", "dsync", or "domain_verification".' }, 422);
     }
+    // Deprovisioning relies on AuthKit Directory Provisioning: WorkOS links
+    // directory users to accounts and deactivates the membership (and revokes
+    // sessions) when the directory removes someone; the membership webhook
+    // ends access here. Without it a directory would sync but never offboard.
+    if (intent === "dsync" && !c.get("config").workos.directoryProvisioning) {
+      return c.json({ ok: false, error: "Directory Sync isn't available yet. Contact support to enable it." }, 409);
+    }
     const { link } = await workos(c.get("config")).client.adminPortal.generateLink({
       organization: viewer.organization_id,
       intent

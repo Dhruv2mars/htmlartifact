@@ -29,7 +29,7 @@ let proxy; // getPlatformProxy: env.ARTIFACTS / env.DB on the Worker's local sta
 let ops; // the ops Worker (deploy/ops/wrangler.toml), with test-triggerable cron
 
 before(async () => {
-  stack = await startStack();
+  stack = await startStack({ directoryProvisioning: true });
   const state = path.join(stack.tmp, "state");
   proxy = await getPlatformProxy({
     configPath: new URL("../wrangler.toml", import.meta.url).pathname,
@@ -429,45 +429,34 @@ describe("WorkOS Admin Portal", () => {
 });
 
 describe("review round 4", () => {
-  test("SCIM deprovisioning follows the directory's current state, across renames, in that workspace only", async () => {
+  test("SCIM deprovisioning (WorkOS deactivates the membership) ends access; reactivation restores it", async () => {
     const bob = await accessToken(stack, "bob@acme.test", "Acme");
     const bobUser = await findUser(stack.emulator, "bob@acme.test");
     const acme = await findOrganization(stack.emulator, "Acme");
-    const other = await findOrganization(stack.emulator, "Other");
-    const memberships = async () =>
-      (await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${bobUser.id}&organization_id=${acme.id}`)).data;
-    const canRead = async () => (await callApi(stack, bob, "GET", "/api/drafts?scope=workspace")).status === 200;
-    const [listed] = (await workosApi(stack.emulator, "GET", "/directory_users?email=bob%40acme.test")).data;
-    const directoryUser = (id, organizationId, extra) => ({
-      object: "directory_user",
-      id,
-      directory_id: listed.directory_id,
-      organization_id: organizationId,
-      ...extra
-    });
-    const send = (id, event, data) => sendWebhook(stack, { id, event, data }).then((r) => assert.equal(r.status, 200));
-    assert.ok(await canRead());
+    const [membership] = (
+      await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${bobUser.id}&organization_id=${acme.id}`)
+    ).data;
+    const status = async () => (await callApi(stack, bob, "GET", "/api/drafts?scope=workspace")).status;
+    const updated = (id) =>
+      sendWebhook(stack, {
+        id,
+        event: "organization_membership.updated",
+        data: { object: "organization_membership", id: membership.id, user_id: bobUser.id, organization_id: acme.id }
+      }).then((r) => assert.equal(r.status, 200));
+    assert.equal(await status(), 200);
 
-    // A stale "inactive" for the directory user WorkOS still lists as active: no effect.
-    await send("event_ds_1", "dsync.user.updated", directoryUser(listed.id, acme.id, { email: "bob@acme.test", state: "inactive" }));
-    // Someone else's directory deprovisioning the same address: no effect on Acme.
-    await send("event_ds_2", "dsync.user.created", directoryUser("directory_user_o", other.id, { email: "bob@acme.test", state: "active" }));
-    await send("event_ds_3", "dsync.user.deleted", directoryUser("directory_user_o", other.id, { email: "BOB@acme.test", state: "inactive" }));
-    assert.ok(await canRead());
-    assert.equal((await memberships()).length, 1);
+    // What AuthKit Directory Provisioning does when the directory removes someone.
+    await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${membership.id}/deactivate`);
+    await updated("event_dsync_deactivated");
+    assert.equal(await status(), 403, "access ended");
 
-    // Created as bob@, renamed to robert@, then removed (gone from WorkOS):
-    // the account that signed in as bob@ loses Acme.
-    await send("event_ds_4", "dsync.user.created", directoryUser("directory_user_r", acme.id, { email: "bob@acme.test", state: "active" }));
-    await send(
-      "event_ds_5",
-      "dsync.user.updated",
-      directoryUser("directory_user_r", acme.id, { email: "robert@acme.test", state: "active", previous_attributes: { email: "bob@acme.test" } })
-    );
-    await send("event_ds_6", "dsync.user.deleted", directoryUser("directory_user_r", acme.id, { email: "robert@acme.test", state: "inactive" }));
-    assert.equal((await memberships()).length, 0, "WorkOS membership removed");
-    assert.equal((await callApi(stack, bob, "GET", "/api/drafts?scope=workspace")).status, 403, "access ended");
-    assert.equal(await count("SELECT COUNT(*) FROM directory_user_emails WHERE directory_user_id = 'directory_user_r'"), 0);
+    // A stale copy of an earlier "updated" changes nothing: the handler re-checks WorkOS.
+    await updated("event_dsync_stale");
+    assert.equal(await status(), 403);
+
+    await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${membership.id}/reactivate`);
+    await updated("event_dsync_reactivated");
+    assert.equal(await status(), 200, "reactivated in the directory: access back");
   });
 
   test("a request that passed the revocation check cannot restore a deleted user's profile", async () => {
