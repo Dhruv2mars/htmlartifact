@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { html as spec, parse, type Token, type TreeAdapter, type TreeAdapterTypeMap } from "parse5";
+import {
+  ErrorCodes,
+  html as spec,
+  Parser,
+  Tokenizer,
+  type ParserOptions,
+  type Token,
+  type TreeAdapter,
+  type TreeAdapterTypeMap
+} from "parse5";
 
 export type IssueLevel = "error" | "warning";
 
@@ -61,6 +70,7 @@ interface WalkNode {
   namespaceURI: spec.NS;
   attrs: Token.Attribute[];
   parent: WalkNode | null;
+  host: WalkNode | null; // a template content fragment's <template>
   depth: number; // the document is 0
   seq: number; // order of first placement
   index: number; // position among its siblings (see attach)
@@ -68,11 +78,13 @@ interface WalkNode {
   insertedBefore: number;
   attached: boolean; // in the document or a template's content
   pending: WalkNode[] | null; // children added before this node was attached
-  inert: boolean; // <template> content: inert, and never checked
+  inert: boolean; // <template> content (not a shadow root): inert, never checked
+  shadow: boolean; // in a declarative shadow root, outside the document tree
   visited: boolean;
   location: Token.ElementLocation | null;
   sinks: TextSink[] | null; // <script>/<title> ancestors collecting their text
   content: WalkNode | null; // a <template>'s content fragment
+  attrNames: Set<string> | null; // names in attrs, once attributes are merged in
   mode: spec.DOCUMENT_MODE;
 }
 
@@ -96,6 +108,7 @@ interface Location extends Position {
 
 interface IssueOptions {
   node?: WalkNode;
+  at?: Position | null; // a location for issues without a node
   attr?: string;
   fix?: string;
 }
@@ -238,6 +251,62 @@ const MAX_PAGE_PATH_SEGMENTS = 6;
 // stack (~2000+ levels).
 const MAX_DEPTH = 512;
 
+// Far above any real element. Bounds the tokenizer's duplicate-attribute
+// checks and the attribute merging of repeated <html>/<body> tags.
+const MAX_ATTRIBUTES = 1000;
+
+// Thrown to stop parsing a page that already fails: parse5 keeps every open
+// element and its scope checks walk that stack, so a page nested thousands
+// deep costs quadratic CPU and memory if parsing went on.
+class TooDeep extends Error {}
+class TooManyAttributes extends Error {
+  at: Position | null;
+  constructor(at: Position | null) {
+    super("too many attributes");
+    this.at = at;
+  }
+}
+
+// parse5's tokenizer drops duplicate attributes with a linear scan of the
+// tag's attributes per attribute, quadratic in attributes per tag. This keeps
+// a set of the names per tag instead and caps their number. It overrides a
+// protected method of parse5's tokenizer, so package.json pins parse5's exact
+// version and the tests fail loudly if the override stops taking effect.
+class LimitedTokenizer extends Tokenizer {
+  private namesOf: Token.TagToken | null = null;
+  private names = new Set<string>();
+
+  protected override _leaveAttrName(): void {
+    const token = this.currentToken as Token.TagToken;
+    if (token !== this.namesOf) {
+      this.namesOf = token;
+      this.names = new Set(token.attrs.map((attr) => attr.name));
+    }
+    const name = this.currentAttr.name;
+    if (this.names.has(name)) {
+      this._err(ErrorCodes.duplicateAttribute);
+      return;
+    }
+    if (token.attrs.length >= MAX_ATTRIBUTES) throw new TooManyAttributes(token.location);
+    this.names.add(name);
+    token.attrs.push(this.currentAttr);
+    if (token.location && this.currentLocation) {
+      (token.location.attrs ??= Object.create(null) as Record<string, Token.Location>)[name] = this.currentLocation;
+      this._leaveAttrValue();
+    }
+  }
+}
+if (typeof (Tokenizer.prototype as unknown as Record<string, unknown>)._leaveAttrName !== "function") {
+  throw new Error("parse5's Tokenizer no longer has _leaveAttrName; update LimitedTokenizer.");
+}
+
+class LimitedParser extends Parser<WalkMap> {
+  constructor(options: ParserOptions<WalkMap>) {
+    super(options);
+    this.tokenizer = new LimitedTokenizer(this.options, this);
+  }
+}
+
 // Validates one HTML document. Returns string errors/warnings for display and
 // structured `issues` ({ level, code, message, fix, line, column, count }) for
 // tools. `hasScripts` means the page contains code the browser would run.
@@ -273,6 +342,7 @@ export function validateHtml(html: unknown, options: { maxBytes?: number } = {})
 
   let hasScripts = false;
   let tooDeep = false;
+  let tooManyAttributes: TooManyAttributes | null = null;
   const externalImageHosts = new Set<string>();
   // The first <title> in document order with text names the page. Titles
   // after one that already has text cannot win, so they are not collected.
@@ -365,7 +435,8 @@ export function validateHtml(html: unknown, options: { maxBytes?: number } = {})
       if (host) externalImageHosts.add(host);
     }
 
-    if (tagName === "title" && !(firstTitleWithText && order(firstTitleWithText, node) < 0)) {
+    // A <title> in a shadow root does not name the document.
+    if (tagName === "title" && !node.shadow && !(firstTitleWithText && order(firstTitleWithText, node) < 0)) {
       const sink = { text: "", title: node };
       titles.push({ node, sink });
       collectInto(node, sink);
@@ -438,17 +509,27 @@ export function validateHtml(html: unknown, options: { maxBytes?: number } = {})
       child.attached = true;
       child.seq = placed++;
       child.inert = parent.inert;
+      child.shadow = parent.shadow;
       child.sinks = parent.sinks;
     }
-    if (!child.inert) {
-      child.depth = parent.depth + 1;
-      if (child.depth >= MAX_DEPTH) tooDeep = true;
-      // Each element is checked once, where it is first placed. Elements
-      // below MAX_DEPTH are not checked: the page already fails as too deep.
-      if (child.tagName && !child.visited && child.depth <= MAX_DEPTH) {
-        child.visited = true;
-        checkElement(child);
-      }
+    // Depth counts through template content, inert or not: the parser
+    // keeps those open elements too.
+    child.depth = parent.depth + 1;
+    if (child.depth >= MAX_DEPTH) tooDeep = true;
+    if (child.depth > MAX_DEPTH) throw new TooDeep();
+    // Each element is checked once, where it is first placed.
+    if (!child.inert && child.tagName && !child.visited) {
+      child.visited = true;
+      checkElement(child);
+    }
+    // A <template shadowrootmode> is a declarative shadow root: browsers
+    // render its content, so it is checked like the rest of the page.
+    const content = child.content;
+    if (content) {
+      content.host = child;
+      content.depth = child.depth;
+      content.inert = child.inert || !isShadowRoot(child);
+      content.shadow = child.shadow || !content.inert;
     }
     const pending = child.pending;
     child.pending = null;
@@ -458,9 +539,8 @@ export function validateHtml(html: unknown, options: { maxBytes?: number } = {})
   }
 
   function addText(parent: WalkNode, text: string) {
-    if (parent.inert) return;
     if (parent.depth + 1 >= MAX_DEPTH) tooDeep = true;
-    if (!parent.sinks) return;
+    if (parent.inert || !parent.sinks) return;
     for (const sink of parent.sinks) {
       sink.text += text;
       if (sink.title && /\S/.test(text) && !(firstTitleWithText && order(firstTitleWithText, sink.title) <= 0)) {
@@ -478,11 +558,13 @@ export function validateHtml(html: unknown, options: { maxBytes?: number } = {})
   try {
     // scriptingEnabled: false so <noscript> children parse as real elements:
     // a reader without JavaScript sees them, so the policy must see them too.
-    parse(html, { scriptingEnabled: false, sourceCodeLocationInfo: true, treeAdapter: adapter });
-  } catch {
-    const failed = createIssueList();
-    failed.error("parse-failed", "HTML document could not be parsed.");
-    return result({ issues: failed, title: null, hasScripts: false, bytes, externalImageHosts: [] });
+    LimitedParser.parse(html, { scriptingEnabled: false, sourceCodeLocationInfo: true, treeAdapter: adapter });
+  } catch (error) {
+    // A page past a limit stops parsing at the first element over it. Issues
+    // later in the page go unreported; the page fails anyway.
+    if (error instanceof TooDeep) tooDeep = true;
+    else if (error instanceof TooManyAttributes) tooManyAttributes = error;
+    else return parseFailed(bytes);
   }
 
   // Elements were checked in insertion order; report in document order.
@@ -490,6 +572,13 @@ export function validateHtml(html: unknown, options: { maxBytes?: number } = {})
 
   if (tooDeep) {
     issues.error("too-deep", `HTML is nested more than ${MAX_DEPTH} levels deep.`);
+  }
+
+  if (tooManyAttributes) {
+    issues.error("too-many-attributes", `An element has more than ${MAX_ATTRIBUTES} attributes.`, {
+      at: tooManyAttributes.at,
+      fix: 'Use fewer attributes; put data in a <script type="application/json"> block instead.'
+    });
   }
 
   for (const api of SANDBOX_APIS) {
@@ -538,6 +627,7 @@ function walkAdapter(hooks: {
     namespaceURI,
     attrs,
     parent: null,
+    host: null,
     depth: 0,
     seq: 0,
     index: 0,
@@ -546,10 +636,12 @@ function walkAdapter(hooks: {
     attached: root,
     pending: null,
     inert: false,
+    shadow: false,
     visited: false,
     location: null,
     sinks: null,
     content: null,
+    attrNames: null,
     mode: spec.DOCUMENT_MODE.NO_QUIRKS
   });
   const none: WalkNode[] = [];
@@ -562,7 +654,9 @@ function walkAdapter(hooks: {
     appendChild: (parent, child) => hooks.attach(parent, child, null),
     insertBefore: (parent, child, before) => hooks.attach(parent, child, before),
     setTemplateContent: (template, content) => {
-      content.inert = true;
+      // Settled when the template is placed (see place).
+      content.inert = !isShadowRoot(template);
+      content.shadow = !content.inert;
       template.content = content;
     },
     getTemplateContent: (template) => template.content!,
@@ -577,8 +671,14 @@ function walkAdapter(hooks: {
     insertText: (parent, text) => hooks.addText(parent, text),
     insertTextBefore: (parent, text) => hooks.addText(parent, text),
     adoptAttributes: (recipient, attrs) => {
-      const present = new Set(recipient.attrs.map((attr) => attr.name));
+      // The name set persists, so each repeated <body> tag costs only its own
+      // attributes.
+      const present = (recipient.attrNames ??= new Set(recipient.attrs.map((attr) => attr.name)));
       const added = attrs.filter((attr) => !present.has(attr.name));
+      if (recipient.attrs.length + added.length > MAX_ATTRIBUTES) {
+        throw new TooManyAttributes(recipient.location);
+      }
+      for (const attr of added) present.add(attr.name);
       recipient.attrs.push(...added);
       if (recipient.visited) hooks.adoptAttributes(recipient, added);
     },
@@ -768,14 +868,14 @@ function sha256(value: string): string {
 // document order wins.
 function createIssueList(order: (a: WalkNode, b: WalkNode) => number = documentOrder) {
   let byKey = new Map<string, { issue: Issue; node?: WalkNode }>();
-  function add(level: IssueLevel, code: string, message: string, { node, attr, fix }: IssueOptions = {}) {
+  function add(level: IssueLevel, code: string, message: string, { node, at, attr, fix }: IssueOptions = {}) {
     const key = `${level}\0${code}\0${message}`;
     const existing = byKey.get(key);
     if (existing) {
       existing.issue.count += 1;
       if (!node || !existing.node || order(node, existing.node) >= 0) return;
     }
-    const location: Location | null | undefined = node?.location;
+    const location: Location | null | undefined = node ? node.location : at;
     const start = (attr && location?.attrs?.[attr]) || location;
     const issue: Issue = {
       level,
@@ -810,8 +910,8 @@ function documentOrder(a: WalkNode, b: WalkNode): number {
   if (a === b) return 0;
   const pathA: WalkNode[] = [];
   const pathB: WalkNode[] = [];
-  for (let node: WalkNode | null = a; node; node = node.parent) pathA.push(node);
-  for (let node: WalkNode | null = b; node; node = node.parent) pathB.push(node);
+  for (let node: WalkNode | null = a; node; node = node.parent ?? node.host) pathA.push(node);
+  for (let node: WalkNode | null = b; node; node = node.parent ?? node.host) pathB.push(node);
   let i = pathA.length - 1;
   let j = pathB.length - 1;
   while (i >= 0 && j >= 0 && pathA[i] === pathB[j]) {
@@ -849,10 +949,22 @@ function result({
   };
 }
 
+function parseFailed(bytes: number): HtmlValidation {
+  const failed = createIssueList();
+  failed.error("parse-failed", "HTML document could not be parsed.");
+  return result({ issues: failed, title: null, hasScripts: false, bytes, externalImageHosts: [] });
+}
+
 // A page of an oversized upload, sized but never parsed: the upload-wide
 // too-large issue already rejects it.
 function unparsedPage(bytes: number): HtmlValidation {
   return { ...result({ issues: createIssueList(), title: null, hasScripts: false, bytes, externalImageHosts: [] }), ok: false };
+}
+
+// A <template> with a declarative shadow root attribute. Current browsers
+// read shadowrootmode; older Chrome read shadowroot.
+function isShadowRoot(template: WalkNode): boolean {
+  return template.attrs.some((attr) => attr.name === "shadowrootmode" || attr.name === "shadowroot");
 }
 
 // True for paths that point at the author's machine or the draft's own host,
