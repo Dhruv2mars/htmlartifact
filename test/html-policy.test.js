@@ -117,12 +117,12 @@ describe("large uploads through the API", () => {
   });
 
   test("a body that cannot hold a valid upload is refused unread", async () => {
-    // 2x the limit plus 64 KiB is the most a valid upload's JSON can need.
+    // 3x the limit plus 64 KiB is the most a valid upload's JSON can need.
     const result = await callApi(stack, alice, "POST", "/api/uploads", {
       html: densePage(1000),
-      padding: "x".repeat(2 * ACCOUNT_LIMIT + 64 * 1024)
+      padding: "x".repeat(3 * ACCOUNT_LIMIT + 64 * 1024)
     });
     assert.equal(result.status, 413);
-    assert.match(result.body.error, /Request is over the 8\.1 MiB limit\./);
+    assert.match(result.body.error, /Request is over the 12\.1 MiB limit\./);
   });
 });

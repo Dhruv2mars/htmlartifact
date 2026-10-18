@@ -886,13 +886,15 @@ function uploadCapabilities(viewer: Viewer, config: Config): { maxBytes: number;
 // non-ASCII as raw UTF-8 (no growth) and escapes only `"`, `\`, and control
 // characters. Every escape but one is two characters for one byte (\" \\ \n
 // \r \t \b \f; lone surrogates count as 3 UTF-8 bytes and escape to 6), so
-// HTML within maxBytes encodes to at most 2 × maxBytes. Only raw C0 control
-// characters (\u00XX, 6 for 1) exceed that, and real HTML has none. 64 KiB
+// HTML within maxBytes encodes to at most 2 × maxBytes. Agents also post
+// directly with encoders that escape all non-ASCII (Python's json.dumps:
+// \uXXXX, 6 characters for 2–3 UTF-8 bytes), so allow 3 ×. Only raw C0
+// control characters (\u00XX, 6 for 1) exceed that, and real HTML has none. 64 KiB
 // covers the rest of the body: up to 50 page paths of 200 characters, slug,
 // filename, description (1000 characters), and metadata. Anything larger
 // cannot pass validateUpload, so it is refused before it is read into memory.
 function uploadBodyLimit(maxBytes: number): number {
-  return maxBytes * 2 + 64 * 1024;
+  return maxBytes * 3 + 64 * 1024;
 }
 
 // An upload is one document (`html`) or a folder of pages (`files`).
