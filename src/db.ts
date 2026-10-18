@@ -47,6 +47,14 @@ CREATE TABLE IF NOT EXISTS membership_epochs (
   epoch INTEGER NOT NULL,
   PRIMARY KEY (user_id, organization_id)
 );
+CREATE TABLE IF NOT EXISTS joins (
+  membership_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  code_created_at INTEGER NOT NULL,
+  undone INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
 CREATE TABLE IF NOT EXISTS revocations (
   subject TEXT NOT NULL,
   organization_id TEXT NOT NULL,
@@ -341,5 +349,12 @@ export async function revokeInvitesUpTo(db: D1Database, organizationId: string, 
   await db
     .prepare("UPDATE invites SET revoked_at = unixepoch() WHERE organization_id = ? AND revoked_at IS NULL AND created_at <= ?")
     .bind(organizationId, at)
+    .run();
+}
+
+export async function revokeAllInvites(db: D1Database, organizationId: string): Promise<void> {
+  await db
+    .prepare("UPDATE invites SET revoked_at = unixepoch() WHERE organization_id = ? AND revoked_at IS NULL")
+    .bind(organizationId)
     .run();
 }

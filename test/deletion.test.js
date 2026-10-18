@@ -700,3 +700,70 @@ describe("review round 10", () => {
     assert.ok(!(await liveCodes(nora)).includes(code));
   });
 });
+
+describe("review round 11", () => {
+  test("removed outside our app and back in (old code) before the webhook: the late removal undoes the rejoin, durably", async () => {
+    const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    const bobUser = await findUser(stack.emulator, "bob@acme.test");
+    const old = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+    // Bob had been removed in the WorkOS dashboard (membership om_dashboard), and rejoins
+    // with a code he already had before that removal's webhook arrives.
+    const bob = await signInTokens(stack, "bob@acme.test", "Acme");
+    assert.equal((await callApi(stack, bob.accessToken, "POST", "/api/workspaces/join", { code: old })).status, 200);
+    const bobIn = (await refreshInto(stack, bob, org.id)).accessToken;
+    assert.equal((await callApi(stack, bobIn, "GET", "/api/drafts?scope=workspace")).status, 200);
+    const [rejoined] = (
+      await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${bobUser.id}&organization_id=${org.id}`)
+    ).data;
+
+    // WorkOS is failing deletes: the undo is queued, and grants nothing meanwhile.
+    const restore = await breakWorkos(stack.emulator, "DELETE", `/user_management/organization_memberships/${rejoined.id}`);
+    try {
+      const late = await sendWebhook(stack, {
+        id: "event_dashboard_removal",
+        event: "organization_membership.deleted",
+        created_at: new Date(Date.now() + 1000).toISOString(),
+        data: { object: "organization_membership", id: "om_dashboard", user_id: bobUser.id, organization_id: org.id }
+      });
+      assert.equal(late.status, 200);
+      assert.equal((await callApi(stack, bobIn, "GET", "/api/drafts?scope=workspace")).status, 403, "access ended at once");
+      assert.equal(await count("SELECT COUNT(*) FROM pending_deletions WHERE kind = 'workos_membership' AND target = ?", rejoined.id), 1);
+    } finally {
+      await restore();
+    }
+    await runCron();
+    await eventually(
+      async () => (await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", rejoined.id)) === 0,
+      "the cron deletes the membership once WorkOS is back"
+    );
+    assert.equal(
+      (await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?user_id=${bobUser.id}&organization_id=${org.id}`)).data.length,
+      0
+    );
+
+    // The undo's own deletion event (e.g. redelivered) revokes nothing issued since.
+    const fresh = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
+    const own = await sendWebhook(stack, {
+      id: "event_undo_own",
+      event: "organization_membership.deleted",
+      created_at: new Date(Date.now() + 2000).toISOString(),
+      data: { object: "organization_membership", id: rejoined.id, user_id: bobUser.id, organization_id: org.id }
+    });
+    assert.equal(own.status, 200);
+    const live = (await callApi(stack, nora, "GET", "/api/workspaces/invites")).body.invites.map((i) => i.code);
+    assert.ok(live.includes(fresh));
+  });
+
+  test("invite codes typed without the HA- prefix parse even when the random part starts with HA; revoke ALL works", async () => {
+    const { normalizeInviteCode } = await import("../src/ids.ts");
+    assert.equal(normalizeInviteCode("haxy-z234-5678"), "HA-HAXY-Z234-5678");
+    assert.equal(normalizeInviteCode("HA-HAXY-Z234-5678"), "HA-HAXY-Z234-5678");
+    assert.equal(normalizeInviteCode("ha 7kq2 mx9p 4tra"), "HA-7KQ2-MX9P-4TRA");
+    assert.equal(normalizeInviteCode("7KQ2MX9P4TRA"), "HA-7KQ2-MX9P-4TRA");
+    const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
+    await callApi(stack, nora, "POST", "/api/workspaces/invites", {});
+    assert.equal((await callApi(stack, nora, "DELETE", "/api/workspaces/invites/ALL")).status, 200);
+    assert.deepEqual((await callApi(stack, nora, "GET", "/api/workspaces/invites")).body.invites, []);
+  });
+});

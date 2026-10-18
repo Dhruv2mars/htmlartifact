@@ -35,6 +35,8 @@ export function newInviteCode(): string {
 
 export function normalizeInviteCode(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const raw = value.toUpperCase().replace(/[^0-9A-Z]/g, "").replace(/^HA/, "");
+  const cleaned = value.toUpperCase().replace(/[^0-9A-Z]/g, "");
+  // Strip the "HA" prefix only when present: the random part may start with HA.
+  const raw = cleaned.length === 14 && cleaned.startsWith("HA") ? cleaned.slice(2) : cleaned;
   return raw.length === 12 ? `HA-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}` : null;
 }

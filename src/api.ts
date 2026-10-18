@@ -1,14 +1,14 @@
 import type { Context, Hono, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { sha256 } from "./crypto.ts";
-import { FLAGS, bumpMembershipEpoch, findWorkspace, now, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { FLAGS, bumpMembershipEpoch, findWorkspace, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 import { formatBytes, validateUpload, type Issue, type PageInput } from "./html-policy.ts";
 import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { draftUrl, slugProblem } from "./public-url.ts";
 import { clientIp, rateLimit } from "./rate-limit.ts";
 import { activeMembership, bearerViewer } from "./auth.ts";
-import { deleteWorkspaceStatements, draftPrefix, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, versionPrefix } from "./purge.ts";
+import { deleteWorkspaceStatements, draftPrefix, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
 import { putHtmlObject } from "./storage.ts";
 import {
   isMember,
@@ -229,8 +229,8 @@ export function registerApi(app: Hono<AppEnv>): void {
   app.delete("/api/workspaces/invites/:code", requireMember, requireAdmin, async (c) => {
     const viewer = c.get("viewer");
     const param = c.req.param("code") || "";
-    if (param === "all") {
-      await revokeInvitesUpTo(c.env.DB, viewer.organization_id, now());
+    if (param.toLowerCase() === "all") {
+      await revokeAllInvites(c.env.DB, viewer.organization_id);
       return c.json({ ok: true });
     }
     const code = normalizeInviteCode(param);
@@ -403,10 +403,10 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
         .prepare(
           `UPDATE invites SET uses = uses + 1
            WHERE code = ? AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses
-           RETURNING organization_id`
+           RETURNING organization_id, created_at`
         )
         .bind(code)
-        .first<{ organization_id: string }>()
+        .first<{ organization_id: string; created_at: number }>()
     : null;
   if (!reserved) {
     return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
@@ -443,12 +443,18 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
         userId: viewer.account_id,
         roleSlug: "member"
       });
+      // Which code let them in: a removal processed later undoes joins made
+      // with codes that were already due for revocation (src/webhooks.ts).
+      await db
+        .prepare("INSERT INTO joins (membership_id, user_id, organization_id, code_created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING")
+        .bind(created.id, viewer.account_id, organizationId, reserved.created_at)
+        .run();
       // A removal revokes codes before it deletes the membership, so a code
       // revoked while this join ran means someone was removed meanwhile (maybe
       // this person): undo the join rather than race it.
       const revoked = await db.prepare("SELECT revoked_at FROM invites WHERE code = ?").bind(code).first<{ revoked_at: number | null }>();
       if (revoked?.revoked_at) {
-        await workos(c.get("config")).client.userManagement.deleteOrganizationMembership(created.id);
+        await undoJoin(c.env, created.id);
         return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
       }
       await setRevokedAtEpoch(db, viewer.account_id, organizationId, false, epoch);

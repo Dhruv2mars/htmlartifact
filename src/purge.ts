@@ -3,7 +3,7 @@
 // Every deletion is queued in D1 first (`pending_deletions`), attempted at once,
 // and retried by the ops Worker's cron until it succeeds.
 
-export type DeletionKind = "r2_prefix" | "workos_org";
+export type DeletionKind = "r2_prefix" | "workos_org" | "workos_membership";
 
 export interface PurgeEnv {
   DB: D1Database;
@@ -50,6 +50,16 @@ export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<nu
   }
 }
 
+async function deleteWorkosMembership(env: PurgeEnv, membershipId: string): Promise<void> {
+  if (!env.WORKOS_API_KEY) throw new Error("WORKOS_API_KEY is not set");
+  const base = (env.WORKOS_API_URL || "https://api.workos.com").replace(/\/$/, "");
+  const response = await fetch(`${base}/user_management/organization_memberships/${encodeURIComponent(membershipId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${env.WORKOS_API_KEY}` }
+  });
+  if (!response.ok && response.status !== 404) throw new Error(`WorkOS ${response.status}`);
+}
+
 async function deleteWorkosOrganization(env: PurgeEnv, organizationId: string): Promise<void> {
   if (!env.WORKOS_API_KEY) throw new Error("WORKOS_API_KEY is not set");
   const base = (env.WORKOS_API_URL || "https://api.workos.com").replace(/\/$/, "");
@@ -63,6 +73,7 @@ async function deleteWorkosOrganization(env: PurgeEnv, organizationId: string): 
 export async function runDeletion(env: PurgeEnv, kind: DeletionKind, target: string): Promise<boolean> {
   try {
     if (kind === "r2_prefix") await deletePrefix(env.ARTIFACTS, target);
+    else if (kind === "workos_membership") await deleteWorkosMembership(env, target);
     else await deleteWorkosOrganization(env, target);
     await env.DB.prepare("DELETE FROM pending_deletions WHERE kind = ? AND target = ?").bind(kind, target).run();
     return true;
@@ -136,6 +147,7 @@ export function deleteWorkspaceStatements(db: D1Database, organizationId: string
     org("DELETE FROM memberships WHERE organization_id = ?"),
     org("DELETE FROM membership_epochs WHERE organization_id = ?"),
     org("DELETE FROM revocations WHERE organization_id = ?"),
+    org("DELETE FROM joins WHERE organization_id = ?"),
     org("DELETE FROM workspaces WHERE organization_id = ?")
   ];
 }
@@ -175,4 +187,28 @@ export async function eraseExpiredRequestMetadata(db: D1Database, now = Math.flo
     .bind(now - RETENTION_SECONDS)
     .run();
   return result.meta.changes ?? 0;
+}
+
+/**
+ * Undo a join that got in through an invite code which was (or became) due
+ * for revocation. Marked undone first, so its own membership.deleted webhook
+ * revokes nothing more; the WorkOS delete is queued, so a failure is retried
+ * by the cron, and a membership with a queued delete grants no access
+ * meanwhile (activeMembership, src/auth.ts).
+ */
+export async function undoJoin(env: PurgeEnv, membershipId: string): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare("UPDATE joins SET undone = 1 WHERE membership_id = ?").bind(membershipId),
+    queueDeletion(env.DB, "workos_membership", membershipId)
+  ]);
+  await runDeletion(env, "workos_membership", membershipId);
+}
+
+export async function membershipBeingUndone(db: D1Database, membershipId: string): Promise<boolean> {
+  return Boolean(
+    await db
+      .prepare("SELECT 1 FROM pending_deletions WHERE kind = 'workos_membership' AND target = ?")
+      .bind(membershipId)
+      .first()
+  );
 }

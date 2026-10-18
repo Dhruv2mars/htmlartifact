@@ -11,7 +11,7 @@ import {
   saveWorkspace
 } from "./db.ts";
 import { workspaceHandle } from "./ids.ts";
-import { isWorkspaceDeleted } from "./purge.ts";
+import { isWorkspaceDeleted, membershipBeingUndone } from "./purge.ts";
 import type { AppEnv, DraftRow, Viewer, WorkspaceRow } from "./types.ts";
 import { clearSessionCookie, readCookie, SESSION_COOKIE, sessionCookie } from "./web-auth.ts";
 import { displayName, validateApiKey, verifyAccessToken, workos, type AccessTokenClaims, type ApiKeyInfo } from "./workos.ts";
@@ -151,7 +151,9 @@ export async function activeMembership<E extends AppEnv>(
     statuses: ["active"],
     limit: 1
   });
-  const membership = page.data.find((m) => m.organizationId === organizationId && m.status === "active");
+  const found = page.data.find((m) => m.organizationId === organizationId && m.status === "active");
+  // A join being undone (its WorkOS delete queued) grants nothing meanwhile.
+  const membership = found && !(await membershipBeingUndone(c.env.DB, found.id)) ? found : undefined;
   const role = membership?.role?.slug || null;
   await saveMembership(c.env.DB, userId, organizationId, Boolean(membership), role, epoch);
   return membership ? { role } : null;

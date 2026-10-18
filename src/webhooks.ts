@@ -1,7 +1,7 @@
 import type { Event } from "@workos-inc/node";
 import type { Context, Hono } from "hono";
 import { bumpMembershipEpoch, now, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
-import { deleteWorkspaceStatements, isWorkspaceDeleted, runWorkspaceDeletions, scrubUserStatements } from "./purge.ts";
+import { deleteWorkspaceStatements, isWorkspaceDeleted, membershipBeingUndone, runWorkspaceDeletions, scrubUserStatements, undoJoin } from "./purge.ts";
 import type { AppEnv } from "./types.ts";
 import { revokePortalLinks, workos } from "./workos.ts";
 
@@ -61,7 +61,26 @@ async function applyEvent(
       // events only revoke codes already due). Deactivated memberships need
       // no revocation: joinWithCode refuses them.
       if (event === "organization_membership.deleted") {
-        await revokeInvitesUpTo(db, organizationId, eventTime(createdAt));
+        const removedId = field(data, "id");
+        const at = eventTime(createdAt);
+        // Our own undo of a join (its code was revoked mid-join): that code is
+        // already revoked, and revoking more would hit codes issued since.
+        const undone = removedId
+          ? await db.prepare("SELECT 1 FROM joins WHERE membership_id = ? AND undone = 1").bind(removedId).first()
+          : null;
+        if (!undone) {
+          await revokeInvitesUpTo(db, organizationId, at);
+          // Removed outside our app and back in before this event arrived,
+          // through a code that was due for revocation at the removal: undo it.
+          const { results } = await db
+            .prepare(
+              `SELECT membership_id FROM joins WHERE user_id = ? AND organization_id = ? AND membership_id != ?
+                 AND undone = 0 AND code_created_at <= ?`
+            )
+            .bind(userId, organizationId, removedId ?? "", at)
+            .all<{ membership_id: string }>();
+          for (const { membership_id } of results) await undoJoin(c.env, membership_id);
+        }
       }
       // Fail safe: bump the epoch and drop the cache first, so if WorkOS
       // cannot be reached below, the next request re-checks live; and a slower
@@ -74,7 +93,8 @@ async function applyEvent(
           if (Reflect.get(Object(error), "status") === 404) return { data: [] };
           throw error;
         });
-      const membership = page.data.find((m) => m.organizationId === organizationId);
+      const found = page.data.find((m) => m.organizationId === organizationId);
+      const membership = found && !(await membershipBeingUndone(db, found.id)) ? found : undefined;
       const active = Boolean(membership);
       await setRevokedAtEpoch(db, userId, organizationId, !active, epoch);
       // No longer an active admin: end any Admin Portal session they opened.
@@ -100,9 +120,11 @@ async function applyEvent(
       await setRevoked(db, id, "*", true);
       // They may hold invite codes to any workspace they were in.
       const { results } = await db
+        // Workspaces we last saw them active in, or joined through a code
+        // (not ones they left long ago).
         .prepare(
           `SELECT organization_id FROM memberships WHERE user_id = ?1
-           UNION SELECT organization_id FROM membership_epochs WHERE user_id = ?1`
+           UNION SELECT organization_id FROM joins WHERE user_id = ?1 AND undone = 0`
         )
         .bind(id)
         .all<{ organization_id: string }>();
