@@ -65,7 +65,18 @@ after(async () => {
 
 const upload = (token, body) => callApi(stack, token, "POST", "/api/uploads", body);
 const r2Keys = async (prefix) => (await proxy.env.ARTIFACTS.list({ prefix })).objects.map((o) => o.key).sort();
-const rows = async (sql, ...binds) => (await proxy.env.DB.prepare(sql).bind(...binds).all()).results;
+// The app, the ops Worker and this proxy share one local SQLite file; a read
+// racing a writer occasionally loses the lock. Retry only that transient error.
+async function rows(sql, ...binds) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return (await proxy.env.DB.prepare(sql).bind(...binds).all()).results;
+    } catch (error) {
+      if (attempt >= 5 || !String(error?.message).includes("session commit token")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+}
 const count = async (sql, ...binds) => Object.values((await rows(sql, ...binds))[0])[0];
 
 // Multi-page artifacts are served under a trailing slash.

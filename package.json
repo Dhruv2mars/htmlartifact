@@ -20,7 +20,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "bun scripts/deploy.ts",
-    "build": "bun build cli/main.ts --target=node --outfile dist/htmlartifact.js",
+    "build": "bun build cli/main.ts --target=node --minify-syntax --minify-whitespace --outfile dist/htmlartifact.js",
     "build:binaries": "bun build cli/main.ts --compile --outfile release/htmlartifact",
     "typecheck:cli": "tsc -p cli/tsconfig.json",
     "pretest": "bun run build",
