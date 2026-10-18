@@ -1,6 +1,7 @@
 import type { Event } from "@workos-inc/node";
 import type { Context, Hono } from "hono";
 import { bumpMembershipEpoch, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { deleteWorkspaceStatements, isWorkspaceDeleted, runWorkspaceDeletions, scrubUserStatements } from "./purge.ts";
 import type { AppEnv } from "./types.ts";
 import { workos } from "./workos.ts";
 
@@ -48,6 +49,9 @@ async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: str
     case "organization_membership.updated":
     case "organization_membership.deleted": {
       if (!userId || !organizationId) return;
+      // Deleting a workspace deletes its WorkOS organization, which fires
+      // these for every member. Nothing is left to update: ignore them.
+      if (await isWorkspaceDeleted(db, organizationId)) return;
       // Fail safe: bump the epoch and drop the cache first, so if WorkOS
       // cannot be reached below, the next request re-checks live; and a slower
       // handler that started earlier can no longer write its stale answer.
@@ -62,7 +66,25 @@ async function applyEvent(c: Context<AppEnv>, { event, data = {} }: { event: str
       await setRevokedAtEpoch(db, userId, organizationId, !active, epoch);
       return;
     }
-    case "user.deleted":
+    case "organization.deleted": {
+      // Deleted in WorkOS directly (e.g. the dashboard): delete the workspace
+      // here too. Ours already deleted (by DELETE /api/workspaces/current): no-op.
+      const id = field(data, "id");
+      if (!id) throw new Error(`${event} has no id.`);
+      if (await isWorkspaceDeleted(db, id)) return;
+      await db.batch(deleteWorkspaceStatements(db, id));
+      // R2 can take a while; the cron retries anything left queued.
+      c.executionCtx.waitUntil(runWorkspaceDeletions(c.env, id));
+      return;
+    }
+    case "user.deleted": {
+      // Revoke everywhere and drop cached PII. Their artifacts stay.
+      const id = field(data, "id");
+      if (!id) throw new Error(`${event} has no id.`);
+      await setRevoked(db, id, "*", true);
+      await db.batch(scrubUserStatements(db, id));
+      return;
+    }
     case "session.revoked":
     case "api_key.revoked":
     case "api_key.deleted": {

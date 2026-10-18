@@ -11,6 +11,7 @@ import {
   saveWorkspace
 } from "./db.ts";
 import { workspaceHandle } from "./ids.ts";
+import { isWorkspaceDeleted } from "./purge.ts";
 import type { AppEnv, DraftRow, Viewer, WorkspaceRow } from "./types.ts";
 import { clearSessionCookie, readCookie, SESSION_COOKIE, sessionCookie } from "./web-auth.ts";
 import { displayName, validateApiKey, verifyAccessToken, workos, type AccessTokenClaims, type ApiKeyInfo } from "./workos.ts";
@@ -77,6 +78,8 @@ export async function sessionViewer<E extends AppEnv>(
   }
 
   const { user } = auth;
+  // A deleted user's cookie may outlive them briefly: never re-cache their profile.
+  if (await isRevoked(c.env.DB, [user.id], "*")) return null;
   await saveAccount(c.env.DB, {
     id: user.id,
     name: displayName(user),
@@ -116,6 +119,7 @@ export async function activeMembership<E extends AppEnv>(
   const config = c.get("config");
   const cached = await hasFreshMembership(c.env.DB, userId, organizationId, config.workos.membershipCacheSeconds);
   if (cached) return cached;
+  if (await isWorkspaceDeleted(c.env.DB, organizationId)) return null;
   const epoch = await membershipEpoch(c.env.DB, userId, organizationId);
   const page = await workos(config).client.userManagement.listOrganizationMemberships({
     userId,
@@ -133,6 +137,8 @@ export async function activeMembership<E extends AppEnv>(
 export async function ensureWorkspace<E extends AppEnv>(c: Context<E>, organizationId: string): Promise<WorkspaceRow | null> {
   const existing = await findWorkspace(c.env.DB, organizationId);
   if (existing) return existing;
+  // A deleted workspace is never re-created from WorkOS.
+  if (await isWorkspaceDeleted(c.env.DB, organizationId)) return null;
   const organization = await workos(c.get("config")).client.organizations.getOrganization(organizationId);
   await saveWorkspace(c.env.DB, {
     organizationId,
@@ -198,8 +204,14 @@ async function buildViewer<E extends AppEnv>(
   // Deleted users, revoked sessions and revoked keys: no access at all.
   if (await isRevoked(db, [accountId, credentialId], "*")) return null;
   if (organizationId) {
-    // Removed from this workspace: still signed in, just not a member.
-    if (await isRevoked(db, [accountId, credentialId], organizationId)) organizationId = null;
+    // Removed from this workspace, or the workspace was deleted: still signed
+    // in, just not a member. This holds for organization API keys too.
+    if (
+      (await isRevoked(db, [accountId, credentialId], organizationId)) ||
+      (await isWorkspaceDeleted(db, organizationId))
+    ) {
+      organizationId = null;
+    }
   }
   if (organizationId) {
     if (!ownedByOrganization) {
@@ -211,6 +223,10 @@ async function buildViewer<E extends AppEnv>(
   }
   const account = await findAccount(db, accountId);
   const workspace = organizationId ? await ensureWorkspace(c, organizationId) : null;
+  if (!workspace) {
+    organizationId = null;
+    role = null;
+  }
   return {
     account_id: accountId,
     account_name: account?.name || accountId,
@@ -227,6 +243,8 @@ async function buildViewer<E extends AppEnv>(
 
 async function ensureAccount<E extends AppEnv>(c: Context<E>, userId: string): Promise<void> {
   if (await findAccount(c.env.DB, userId, PROFILE_CACHE_SECONDS)) return;
+  // Deleted users are scrubbed and revoked; buildViewer turns them away.
+  if (await isRevoked(c.env.DB, [userId], "*")) return;
   const user = await workos(c.get("config")).client.userManagement.getUser(userId);
   await saveAccount(c.env.DB, {
     id: user.id,

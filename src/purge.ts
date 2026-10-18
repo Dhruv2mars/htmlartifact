@@ -89,6 +89,77 @@ export async function drainPendingDeletions(env: PurgeEnv, max = 100): Promise<{
   return { done, failed };
 }
 
+// ---- Artifacts, workspaces, users. Each deletion is one D1 batch (atomic):
+// queue the R2 prefix (and WorkOS org) and drop every row. The R2/WorkOS work
+// runs right after; whatever fails stays queued for the cron.
+
+/** Queue an artifact's R2 prefix and delete its rows (its custom URL goes with the row). */
+export function deleteDraftStatements(db: D1Database, organizationId: string, draftId: string): D1PreparedStatement[] {
+  return [
+    queueDeletion(db, "r2_prefix", draftPrefix(organizationId, draftId)),
+    db
+      .prepare("DELETE FROM draft_pages WHERE draft_version_id IN (SELECT id FROM draft_versions WHERE draft_id = ?)")
+      .bind(draftId),
+    db.prepare("DELETE FROM draft_versions WHERE draft_id = ?").bind(draftId),
+    db.prepare("DELETE FROM drafts WHERE id = ? AND organization_id = ?").bind(draftId, organizationId)
+  ];
+}
+
+/** Delete an artifact everywhere. True if R2 was purged now; false: still queued for the cron. */
+export async function purgeDraft(env: PurgeEnv, organizationId: string, draftId: string): Promise<boolean> {
+  await env.DB.batch(deleteDraftStatements(env.DB, organizationId, draftId));
+  return runDeletion(env, "r2_prefix", draftPrefix(organizationId, draftId));
+}
+
+/**
+ * The first statement tombstones the workspace (deleted_workspaces), which
+ * every access path checks, so access ends in the same transaction that drops
+ * the data. The tombstone holds only the organization ID and is kept.
+ */
+export function deleteWorkspaceStatements(db: D1Database, organizationId: string): D1PreparedStatement[] {
+  const org = (sql: string) => db.prepare(sql).bind(organizationId);
+  return [
+    org("INSERT INTO deleted_workspaces (organization_id) VALUES (?) ON CONFLICT DO NOTHING"),
+    queueDeletion(db, "r2_prefix", orgPrefix(organizationId)),
+    queueDeletion(db, "workos_org", organizationId),
+    org(
+      `DELETE FROM draft_pages WHERE draft_version_id IN
+         (SELECT v.id FROM draft_versions v JOIN drafts d ON d.id = v.draft_id WHERE d.organization_id = ?)`
+    ),
+    org("DELETE FROM draft_versions WHERE draft_id IN (SELECT id FROM drafts WHERE organization_id = ?)"),
+    org("DELETE FROM drafts WHERE organization_id = ?"),
+    org("DELETE FROM invites WHERE organization_id = ?"),
+    org("DELETE FROM memberships WHERE organization_id = ?"),
+    org("DELETE FROM membership_epochs WHERE organization_id = ?"),
+    org("DELETE FROM revocations WHERE organization_id = ?"),
+    org("DELETE FROM workspaces WHERE organization_id = ?")
+  ];
+}
+
+/** The queued half of a workspace deletion: its R2 prefix, then its WorkOS organization. */
+export async function runWorkspaceDeletions(env: PurgeEnv, organizationId: string): Promise<{ r2: boolean; workos: boolean }> {
+  const r2 = await runDeletion(env, "r2_prefix", orgPrefix(organizationId));
+  const workos = await runDeletion(env, "workos_org", organizationId);
+  return { r2, workos };
+}
+
+export async function isWorkspaceDeleted(db: D1Database, organizationId: string): Promise<boolean> {
+  const row = await db.prepare("SELECT 1 FROM deleted_workspaces WHERE organization_id = ?").bind(organizationId).first();
+  return Boolean(row);
+}
+
+/** A deleted WorkOS user: drop their cached PII. Their artifacts stay with the workspace. */
+export function scrubUserStatements(db: D1Database, userId: string): D1PreparedStatement[] {
+  return [
+    db
+      .prepare(
+        "UPDATE accounts SET name = 'Deleted user', email = NULL, picture_url = NULL, updated_at = unixepoch() WHERE id = ?"
+      )
+      .bind(userId),
+    db.prepare("UPDATE draft_versions SET source_ip = NULL, user_agent = NULL WHERE created_by = ?").bind(userId)
+  ];
+}
+
 export const RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
 /** Erase upload request metadata older than the retention window. */

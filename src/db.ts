@@ -1,6 +1,7 @@
 // D1 (SQLite) access. The schema is created on first use by each isolate, so
 // a fresh deployment needs no migration step. Times are unix seconds.
 
+import { PENDING_DELETIONS_SCHEMA } from "./purge.ts";
 import type { Account, AccountRow, WorkspaceRow } from "./types.ts";
 
 export const FLAGS = { largeUploads: "large-uploads" };
@@ -103,6 +104,10 @@ CREATE TABLE IF NOT EXISTS draft_pages (
   has_inline_script INTEGER NOT NULL,
   PRIMARY KEY (draft_version_id, path)
 );
+CREATE TABLE IF NOT EXISTS deleted_workspaces (
+  organization_id TEXT PRIMARY KEY,
+  deleted_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
 `;
 
 const ready = new WeakMap<D1Database, Promise<D1Result[]>>();
@@ -114,6 +119,7 @@ export function ensureSchema(db: D1Database): Promise<D1Result[]> {
     const statements = SCHEMA.split(";")
       .map((statement) => statement.trim())
       .filter(Boolean)
+      .concat(PENDING_DELETIONS_SCHEMA)
       .map((statement) => db.prepare(statement));
     promise = db.batch(statements).catch((error: unknown) => {
       ready.delete(db);
@@ -240,9 +246,10 @@ export async function saveMembership(
       .prepare(
         `INSERT INTO memberships (user_id, organization_id, role, checked_at)
          SELECT ?, ?, ?, ? WHERE ${EPOCH_IS}
+           AND NOT EXISTS (SELECT 1 FROM deleted_workspaces WHERE organization_id = ?)
          ON CONFLICT (user_id, organization_id) DO UPDATE SET role = excluded.role, checked_at = excluded.checked_at`
       )
-      .bind(userId, organizationId, role, now(), userId, organizationId, epoch)
+      .bind(userId, organizationId, role, now(), userId, organizationId, epoch, organizationId)
       .run();
   } else {
     await forgetMembership(db, userId, organizationId);

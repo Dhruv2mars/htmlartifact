@@ -74,6 +74,19 @@ test("sign in → create workspace → invite → teammate joins → publish →
   assert.match(fs.readFileSync(read.stdout.match(/File: (.+)/)[1], "utf8"), /Crit notes/);
   assert.match((await cli(["list", "--all"])).stdout, /Crit notes/);
 
+  // Admin Portal links for the IT admin.
+  const domains = await json(["workspace", "domains"]);
+  assert.match(domains.url, new RegExp(`/portal/domain_verification/${created.workspace.id}$`));
+  assert.match((await cli(["workspace", "sso"])).stdout, /WorkOS Admin Portal: .*\/portal\/sso\//);
+
+  // Delete an artifact: gone for the teammate too.
+  const scratch = await json(["upload", writeHtml(stack.tmp, "scratch.html", page("Scratch")), "--new"]);
+  const deleted = await json(["delete", scratch.draftId]);
+  assert.equal(deleted.ok, true);
+  assert.equal(deleted.draftId, scratch.draftId);
+  const gone = await fetch(scratch.url, { headers: { Authorization: `Bearer ${sam.accessToken}` }, redirect: "manual" });
+  assert.equal(gone.status, 404);
+
   // Switching back to Acme: the Design Crit artifact is not visible there.
   await cli(["workspace", "switch", "Acme"]);
   assert.equal((await json(["whoami"])).workspace.name, "Acme");
@@ -110,6 +123,17 @@ test("CI publishes with HTMLARTIFACT_TOKEN and no saved sign-in", async () => {
     HTMLARTIFACT_TOKEN: CI_KEY
   });
   assert.equal(receipt.workspace, "Acme");
+});
+
+test("workspace delete needs the exact name, then erases the workspace", async () => {
+  await cli(["workspace", "switch", "Design Crit"]);
+  await assert.rejects(cli(["workspace", "delete"]), /htmlartifact workspace delete --confirm 'Design Crit'/);
+  await assert.rejects(cli(["workspace", "delete", "--confirm", "Design"]), /exact name/);
+  const result = await json(["workspace", "delete", "--confirm", "Design Crit"]);
+  assert.equal(result.ok, true);
+  assert.equal(result.workspace.name, "Design Crit");
+  const listed = await json(["workspace", "list"]);
+  assert.deepEqual(listed.map((w) => w.name), ["Acme"]);
 });
 
 test("signed out, commands say how to sign in", async () => {

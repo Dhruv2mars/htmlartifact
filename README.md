@@ -40,7 +40,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `list [--all]` | Your artifacts, or the whole workspace's |
 | `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |
-| `workspace sso` / `directory` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC) or SCIM directory (admins) |
+| `workspace sso` / `directory` / `domains` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC), SCIM directory, or domain verification (admins) |
 | `check <path>` | Validate against the rules without publishing |
 
 Every command takes `--json` for agents. In CI, set `HTMLARTIFACT_TOKEN` to a

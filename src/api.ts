@@ -8,6 +8,7 @@ import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspac
 import { draftUrl, slugProblem } from "./public-url.ts";
 import { clientIp, rateLimit } from "./rate-limit.ts";
 import { activeMembership, bearerViewer } from "./auth.ts";
+import { deleteWorkspaceStatements, draftPrefix, purgeDraft, runWorkspaceDeletions } from "./purge.ts";
 import { putHtmlObject } from "./storage.ts";
 import {
   isMember,
@@ -85,9 +86,10 @@ const SANDBOX_LIMITS = [
 // JSON API used by the CLI (and so by agents). Every route takes a bearer
 // credential; nothing here reads cookies.
 export function registerApi(app: Hono<AppEnv>): void {
-  const perUser = (keyPrefix: string, max: number) =>
-    rateLimit({ windowMs: 60_000, max, keyPrefix, key: (c) => c.get("viewer")?.account_id || clientIp(c) });
-  const perIp = (keyPrefix: string, max: number) => rateLimit({ windowMs: 60_000, max, keyPrefix, key: clientIp });
+  const perUser = (keyPrefix: string, max: number, kind: "upload" | "auth" = "upload") =>
+    rateLimit({ windowMs: 60_000, max, keyPrefix, kind, key: (c) => c.get("viewer")?.account_id || clientIp(c) });
+  const perIp = (keyPrefix: string, max: number) =>
+    rateLimit({ windowMs: 60_000, max, keyPrefix, kind: "auth", key: clientIp });
 
   // ---- CLI sign-in: the WorkOS device flow, relayed so the CLI holds no
   // WorkOS credentials. A new user signs up on the same WorkOS page.
@@ -206,7 +208,7 @@ export function registerApi(app: Hono<AppEnv>): void {
     );
   });
 
-  app.post("/api/workspaces/join", requireUser, perUser("join", 20), async (c) => {
+  app.post("/api/workspaces/join", requireUser, perUser("join", 20, "auth"), async (c) => {
     const viewer = c.get("viewer");
     if (viewer.is_api_key) return c.json({ ok: false, error: "API keys cannot join workspaces." }, 403);
     const body = await readJson(c, 16 * 1024);
@@ -257,6 +259,45 @@ export function registerApi(app: Hono<AppEnv>): void {
     return c.json({ ok: true });
   });
 
+  // Deletes the caller's current workspace (admins only), confirmed by its
+  // exact name: access ends at once (the tombstone is written in the same D1
+  // transaction that drops every row), then R2 and the WorkOS organization
+  // are deleted in this request. Anything that fails stays queued for the
+  // ops Worker's cron.
+  app.delete("/api/workspaces/current", requireMember, requireAdmin, perUser("workspace-delete", 5), async (c) => {
+    const viewer = c.get("viewer");
+    const { workspace } = viewer;
+    const body = await readJson(c, 16 * 1024);
+    if (body.confirm !== workspace.name) {
+      return c.json(
+        {
+          ok: false,
+          error: `To delete this workspace and every artifact in it, send {"confirm": ${JSON.stringify(workspace.name)}} (its exact name). This cannot be undone.`
+        },
+        400
+      );
+    }
+    await c.env.DB.batch(deleteWorkspaceStatements(c.env.DB, viewer.organization_id));
+    await runWorkspaceDeletions(c.env, viewer.organization_id);
+    return c.json({ ok: true, workspace: workspaceJson(workspace) });
+  });
+
+  // A WorkOS Admin Portal link for the caller's workspace (admins only): an IT
+  // admin opens it to connect SSO, a SCIM directory, or verify a domain.
+  app.post("/api/workspaces/portal", requireMember, requireAdmin, perUser("portal", 10), async (c) => {
+    const viewer = c.get("viewer");
+    const body = await readJson(c, 16 * 1024);
+    const intent = body.intent;
+    if (intent !== "sso" && intent !== "dsync" && intent !== "domain_verification") {
+      return c.json({ ok: false, error: 'intent must be "sso", "dsync", or "domain_verification".' }, 422);
+    }
+    const { link } = await workos(c.get("config")).client.adminPortal.generateLink({
+      organization: viewer.organization_id,
+      intent
+    });
+    return c.json({ ok: true, url: link });
+  });
+
   // ---- Artifacts
   app.post("/api/uploads", requireMember, perUser("upload", 30), handleUpload);
   app.post("/api/check", requireMember, perUser("check", 60), handleCheck);
@@ -271,17 +312,23 @@ export function registerApi(app: Hono<AppEnv>): void {
     return c.json({ ok: true, drafts });
   });
 
-  // Deleting an artifact frees its custom URL.
+  // Deletes an artifact for real: every version and page in R2 (one key
+  // prefix) and every row in D1, which frees its custom URL. Its author or a
+  // workspace admin may delete it; to anyone else it does not exist (404).
   app.delete("/api/drafts/:draftId", requireMember, async (c) => {
     const viewer = c.get("viewer");
-    const result = await c.env.DB.prepare(
-      `UPDATE drafts SET deleted_at = unixepoch(), slug = NULL, updated_at = unixepoch()
-       WHERE id = ? AND account_id = ? AND organization_id = ? AND deleted_at IS NULL`
-    )
-      .bind(c.req.param("draftId"), viewer.account_id, viewer.organization_id)
-      .run();
-    if (!result.meta.changes) return c.json({ ok: false, error: "Artifact not found." }, 404);
-    return c.json({ ok: true });
+    const draftId = c.req.param("draftId");
+    const draft = draftId
+      ? await c.env.DB.prepare("SELECT id, account_id FROM drafts WHERE id = ? AND organization_id = ?")
+          .bind(draftId, viewer.organization_id)
+          .first<Pick<DraftRow, "id" | "account_id">>()
+      : null;
+    if (!draft || (draft.account_id !== viewer.account_id && viewer.role !== "admin")) {
+      return c.json({ ok: false, error: "Artifact not found." }, 404);
+    }
+    // R2 is purged before responding; if it fails, the queued prefix is retried by the cron.
+    await purgeDraft(c.env, viewer.organization_id, draft.id);
+    return c.json({ ok: true, draftId: draft.id });
   });
 }
 
@@ -434,6 +481,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const title = validation.title || existing?.title || filename || "Untitled";
   const cleanDescription = cleanText(description, 1000);
   let versionId = current?.id;
+  // R2 keys this upload wrote; deleted again if its rows are not committed.
+  let written: string[] = [];
 
   const statements: D1PreparedStatement[] = [];
   if (!unchanged) {
@@ -443,8 +492,10 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     // Validation guarantees an index.html page.
     if (!index) throw new Error("Upload has no index.html page.");
     const extraPages = pages.filter((page) => page !== index);
-    const objectKey = `drafts/${id}/versions/${versionId}.html`;
-    const pageKey = (page: { path: string }) => `drafts/${id}/versions/${versionId}/${page.path}`;
+    const prefix = draftPrefix(viewer.organization_id, id);
+    const objectKey = `${prefix}versions/${versionId}.html`;
+    const pageKey = (page: { path: string }) => `${prefix}versions/${versionId}/${page.path}`;
+    written = [objectKey, ...extraPages.map(pageKey)];
     await Promise.all([
       putHtmlObject(c.env.ARTIFACTS, objectKey, index.html),
       ...extraPages.map((page) => putHtmlObject(c.env.ARTIFACTS, pageKey(page), page.html))
@@ -455,7 +506,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
         db
           .prepare(
             `INSERT INTO drafts (id, account_id, organization_id, title, description, repo_org, repo_name, repo_host, slug)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE NOT EXISTS (SELECT 1 FROM deleted_workspaces WHERE organization_id = ?)`
           )
           .bind(
             id,
@@ -466,7 +518,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
             cleanText(metadata.repoOrg),
             cleanText(metadata.repoName),
             cleanText(metadata.repoHost),
-            slug
+            slug,
+            viewer.organization_id
           )
       );
     }
@@ -482,7 +535,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
              git_branch, git_commit_sha, git_commit_subject, git_dirty, original_filename, ci_run_url)
            SELECT ?, ?, (SELECT COALESCE(MAX(version_number), 0) + 1 FROM draft_versions WHERE draft_id = ?),
                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-           WHERE (SELECT current_version_id FROM drafts WHERE id = ?) IS ?`
+           WHERE (SELECT current_version_id FROM drafts WHERE id = ?) IS ?
+             AND NOT EXISTS (SELECT 1 FROM deleted_workspaces WHERE organization_id = ?)`
         )
         .bind(
           versionId,
@@ -505,7 +559,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
           cleanText(filename),
           cleanText(metadata.ciRunUrl),
           id,
-          observedVersionId
+          observedVersionId,
+          viewer.organization_id
         )
     );
     for (const page of extraPages) {
@@ -543,14 +598,19 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       )
   );
 
+  // Nothing references the objects of an upload whose rows did not commit
+  // (lost race, artifact or workspace deleted meanwhile): delete them.
+  const discard = () => (written.length ? c.env.ARTIFACTS.delete(written) : Promise.resolve());
   try {
     const results = await db.batch(statements);
-    // Another upload to this artifact landed after we read it: nothing of
-    // ours became current. Safe to retry.
+    // Another upload to this artifact landed after we read it (or it was
+    // deleted): nothing of ours became current. Safe to retry.
     if (!results.at(-1)?.meta.changes) {
+      await discard();
       return c.json({ ok: false, error: "Another upload to this artifact landed at the same moment. Retry." }, 409);
     }
   } catch (error) {
+    await discard();
     const message = error instanceof Error ? error.message : "";
     if (/UNIQUE constraint failed: drafts\.organization_id, drafts\.slug/.test(message)) {
       return c.json({ ok: false, error: "That custom URL was just taken. Pick another." }, 409);
