@@ -8,6 +8,7 @@ export interface Env {
   DB: D1Database;
   ARTIFACTS: R2Bucket;
   HTMLARTIFACT_PUBLIC_BASE_URL?: string;
+  HTMLARTIFACT_SANDBOX_ORIGIN?: string;
   HTMLARTIFACT_COOKIE_PASSWORD?: string;
   HTMLARTIFACT_MEMBERSHIP_CACHE_SECONDS?: string;
   HTMLARTIFACT_INVITE_TTL_DAYS?: string;
@@ -24,6 +25,7 @@ export interface Env {
 
 export interface Config {
   publicBaseUrl: string | null;
+  sandboxOrigin: string | null;
   cookiePassword: string;
   limits: { accountBytes: number; largeBytes: number; maxPages: number };
   workos: {

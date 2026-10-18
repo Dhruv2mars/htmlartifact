@@ -227,7 +227,28 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 16).replace("T", " ");
 }
 
-function webPage({ title, body, header = "" }: { title: string; body: string; header?: string }): string {
+// An artifact, framed from the sandbox origin (src/serve.ts). No script: the
+// wrapper's CSP allows none. The frame is sandboxed without allow-same-origin
+// as well, on top of the sandbox CSP the artifact itself is served with.
+export function renderArtifactFrame({ title, src }: { title: string; src: string }): string {
+  return webPage({
+    title: `${title} · htmlartifact`,
+    script: false,
+    body: `<iframe class="artifact" title="${escapeHtml(title)}" src="${escapeHtml(src)}" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>`
+  });
+}
+
+function webPage({
+  title,
+  body,
+  header = "",
+  script = true
+}: {
+  title: string;
+  body: string;
+  header?: string;
+  script?: boolean;
+}): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -277,17 +298,18 @@ function webPage({ title, body, header = "" }: { title: string; body: string; he
     .orgs { padding-left: 18px; line-height: 2; }
     .orgs .linklike { margin-left: 0; font-size: 15px; }
     .notice { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 10px 14px; }
+    iframe.artifact { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
   </style>
 </head>
 <body>${header}${body}
-<script>
+${script ? `<script>
   for (const button of document.querySelectorAll(".copy")) {
     button.addEventListener("click", async () => {
       await navigator.clipboard.writeText(button.previousElementSibling.textContent);
       button.textContent = "Copied";
     });
   }
-</script>
+</script>` : ""}
 </body>
 </html>`;
 }
