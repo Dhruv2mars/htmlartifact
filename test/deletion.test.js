@@ -249,7 +249,8 @@ describe("ops Worker cron", () => {
       // The objects go first, the queue row right after.
       await eventually(
         async () => (await count("SELECT COUNT(*) FROM pending_deletions WHERE target = ?", prefix)) === 0,
-        "purged prefix leaves the queue"
+        "purged prefix leaves the queue",
+        runCron
       );
       assert.deepEqual(await r2Keys("orgs/org_cron_test/drafts/zzzzzzzzzzzz/"), [outside], "only the prefix");
     } finally {
