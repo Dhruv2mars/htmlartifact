@@ -4,6 +4,7 @@ import {
   Browser,
   CI_KEY,
   OTHER_CI_KEY,
+  STORAGE,
   accessToken,
   breakWorkos,
   callApi,
@@ -118,7 +119,11 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     assert.equal(results.filter((r) => r.status === 200).length, 1, JSON.stringify(results.map((r) => r.status)));
     const members = await callApi(stack, nora.accessToken, "GET", "/api/workspaces/members");
     const outsiders = ["alice@acme.test", "bob@acme.test", "olivia@other.test"];
-    assert.equal(members.body.members.filter((m) => outsiders.includes(m.email)).length, 1);
+    const winners = members.body.members.filter((m) => outsiders.includes(m.email));
+    assert.equal(winners.length, 1);
+    // Later tests rely on these people's original memberships only.
+    const removed = await callApi(stack, nora.accessToken, "DELETE", `/api/workspaces/members/${winners[0].id}`);
+    assert.equal(removed.status, 200);
   });
 
   test("only admins can invite", async () => {
@@ -381,6 +386,12 @@ describe("revocation", () => {
 });
 
 describe("web app", () => {
+  test("/healthz checks D1 and artifact storage", async () => {
+    const response = await fetch(`${stack.baseUrl}/healthz`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, checks: { d1: true, storage: true }, storage: STORAGE });
+  });
+
   test("open redirects through sign-in are refused", async () => {
     const response = await fetch(`${stack.baseUrl}/auth/sign-in?next=${encodeURIComponent("https://evil.example/")}`, {
       redirect: "manual"
@@ -419,5 +430,17 @@ describe("web app", () => {
       const response = await fetch(`${stack.baseUrl}${path}`, { redirect: "manual" });
       assert.equal(response.status, 401, path);
     }
+  });
+});
+
+describe("Enterprise connections", () => {
+  test("SSO and Directory Sync links are off unless enabled (WorkOS bills each connection); domain verification is not", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    for (const [intent, label] of [["sso", "SSO"], ["dsync", "Directory Sync"]]) {
+      const result = await callApi(stack, alice, "POST", "/api/workspaces/portal", { intent });
+      assert.equal(result.status, 409, intent);
+      assert.match(result.body.error, new RegExp(`${label} isn't available on this deployment yet`));
+    }
+    assert.equal((await callApi(stack, alice, "POST", "/api/workspaces/portal", { intent: "domain_verification" })).status, 200);
   });
 });

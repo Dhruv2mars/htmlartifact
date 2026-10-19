@@ -9,33 +9,48 @@
     "url": "git+https://github.com/Dhruv2mars/htmlartifact.git"
   },
   "files": [
-    "bin/",
-    "src/html-policy.js",
+    "dist/",
     "README.md",
-    "NOTICE"
+    "NOTICE",
+    "LICENSE"
   ],
   "bin": {
-    "htmlartifact": "./bin/htmlartifact.js"
+    "htmlartifact": "./dist/htmlartifact.js"
   },
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "test": "node --test --test-concurrency=1 test/*.test.js",
-    "dev:local": "node scripts/dev-local.mjs"
+    "deploy": "bun scripts/deploy.ts",
+    "build": "bun build cli/main.ts --target=node --minify-syntax --minify-whitespace --outfile dist/htmlartifact.js",
+    "build:binaries": "bun build cli/main.ts --compile --outfile release/htmlartifact",
+    "typecheck:cli": "tsc -p cli/tsconfig.json",
+    "pretest": "bun run build",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun run test:d1 && bun run test:r2",
+    "test:d1": "HTMLARTIFACT_TEST_STORAGE=d1 node --test --test-concurrency=1 test/*.test.js",
+    "test:r2": "HTMLARTIFACT_TEST_STORAGE=r2 node --test --test-concurrency=1 test/*.test.js",
+    "prepublishOnly": "bun run build",
+    "dev:local": "node scripts/dev-local.mjs",
+    "build:pages": "bun scripts/build-pages.ts",
+    "deploy:all": "bun scripts/deploy.ts",
+    "smoke": "bun scripts/smoke.ts",
+    "migrate:r2": "bun scripts/migrate-blobs-to-r2.ts"
   },
   "engines": {
     "node": ">=20.10"
   },
-  "dependencies": {
-    "commander": "^14.0.0",
-    "parse5": "^7.3.0"
-  },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261018.1",
+    "@effect/platform-node": "^4.0.5",
+    "@types/node": "^26.6.5",
     "@workos-inc/node": "^11.0.0",
     "@workos/emulate": "^0.15.0",
+    "effect": "^4.0.5",
+    "entities": "6.0.1",
     "hono": "^4.13.13",
     "jose": "^6.2.3",
     "nanoid": "^5.1.5",
+    "parse5": "7.3.0",
+    "typescript": "^7.0.2",
     "wrangler": "^4.151.1"
   }
 }

@@ -1,0 +1,87 @@
+# Worker "htmlartifact-ops": what Pages cannot do on its own.
+#   - Cron: retry failed R2 deletions, erase source_ip/user_agent after 30 days.
+#   - Rate limiting: the Workers rate-limit binding, called by Pages over RPC (entrypoint "Ops").
+# Deploy: (cd deploy/ops && bunx wrangler deploy)  [--env staging for htmlartifact-ops-staging]
+# Secrets: none beyond WORKOS_API_KEY/WORKOS_CLIENT_ID (workspace deletion retries call WorkOS).
+name = "htmlartifact-ops"
+main = "../../src/ops.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[triggers]
+crons = ["*/15 * * * *"]
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "htmlartifact"
+database_id = "c1fd2f32-8d99-4229-8e39-b441df855a89"
+
+# R2: not used (zero-spend rule: R2 needs a card and has no hard spending cap; README).
+# Artifact HTML lives in D1. Do not enable unless Cloudflare offers a hard $0 cap.
+# [[r2_buckets]]
+# binding = "ARTIFACTS"
+# bucket_name = "htmlartifact-artifacts"
+
+[[ratelimits]]
+name = "UPLOAD_LIMITER"
+namespace_id = "1001"
+simple = { limit = 60, period = 60 }
+
+[[ratelimits]]
+name = "AUTH_LIMITER"
+namespace_id = "1002"
+simple = { limit = 30, period = 60 }
+
+# Per IP, over every sign-in step: loose, so an office behind one NAT can sign in.
+[[ratelimits]]
+name = "AUTH_IP_LIMITER"
+namespace_id = "1003"
+simple = { limit = 120, period = 60 }
+
+# Per IP: bearer values that are not JWTs and not cached, i.e. WorkOS API key validations.
+[[ratelimits]]
+name = "API_KEY_LIMITER"
+namespace_id = "1004"
+simple = { limit = 60, period = 60 }
+
+[env.staging]
+name = "htmlartifact-ops-staging"
+
+[env.staging.triggers]
+crons = ["*/15 * * * *"]
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "htmlartifact-staging"
+database_id = "0c008194-08d1-4289-a7aa-e11d05da04cf"
+
+# R2: not used (zero-spend rule: R2 needs a card and has no hard spending cap; README).
+# Artifact HTML lives in D1. Do not enable unless Cloudflare offers a hard $0 cap.
+# [[env.staging.r2_buckets]]
+# binding = "ARTIFACTS"
+# bucket_name = "htmlartifact-artifacts-staging"
+
+[[env.staging.ratelimits]]
+name = "UPLOAD_LIMITER"
+namespace_id = "2001"
+simple = { limit = 60, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "AUTH_LIMITER"
+namespace_id = "2002"
+simple = { limit = 30, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "AUTH_IP_LIMITER"
+namespace_id = "2003"
+simple = { limit = 120, period = 60 }
+
+[[env.staging.ratelimits]]
+name = "API_KEY_LIMITER"
+namespace_id = "2004"
+simple = { limit = 60, period = 60 }

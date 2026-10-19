@@ -1,6 +1,7 @@
 import { createEmulator } from "@workos/emulate";
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { unstable_dev } from "wrangler";
@@ -14,6 +15,7 @@ export const CI_KEY = "sk_test_acme_ci_key";
 export const OTHER_CI_KEY = "sk_test_other_ci_key";
 export const PASSWORD = "correct-horse-battery";
 export const CLIENT_ID = "client_htmlartifact_test";
+export const COOKIE_PASSWORD = `${"x".repeat(32)}-test-cookie-password`;
 
 export const SEED = {
   roles: [
@@ -40,18 +42,62 @@ export const SEED = {
     },
     { name: "Other", memberships: [{ email: "olivia@other.test" }, { email: "max@both.test" }] }
   ],
+  // The emulator has no Admin Portal revocation endpoint; stand in for it.
+  errorHooks: [{ method: "POST", path: "/portal/revoke_link", status: 200, body: {} }],
   apiKeys: [
     { name: "Acme CI", organization: "Acme", value: CI_KEY },
     { name: "Other CI", organization: "Other", value: OTHER_CI_KEY }
   ]
 };
 
-export async function startStack() {
+// A free local TCP port, so URLs can be configured before the Worker starts.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+// With `sandbox`, the app is http://127.0.0.1:<port> and the sandbox origin
+// is http://localhost:<port>: the same Worker, routed by request host.
+// Which artifact storage the suite runs against: "r2" (the ARTIFACTS bucket
+// bound) or "d1" (no bucket: HTML chunked into D1). `bun run test` runs both.
+export const STORAGE = process.env.HTMLARTIFACT_TEST_STORAGE === "d1" ? "d1" : "r2";
+
+// The Worker config for this run: the repo's wrangler.toml, minus the R2
+// bucket when testing D1 storage. Same D1 database id either way.
+let generatedConfig;
+export function testConfigPath() {
+  const root = new URL("../wrangler.toml", import.meta.url).pathname;
+  if (STORAGE === "r2") return root;
+  if (!generatedConfig) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-config-"));
+    generatedConfig = path.join(dir, "wrangler.toml");
+    fs.writeFileSync(
+      generatedConfig,
+      fs
+        .readFileSync(root, "utf8")
+        .replace(/^main = .*$/m, `main = ${JSON.stringify(new URL("../src/index.ts", import.meta.url).pathname)}`)
+        .replace(/^\[\[r2_buckets\]\][^[]*/m, "")
+    );
+  }
+  return generatedConfig;
+}
+
+export async function startStack({ sandbox = false, directoryProvisioning = false, enterpriseConnections = directoryProvisioning, vars = {} } = {}) {
   const emulator = await createEmulator({ port: 0, requestsPerMinute: 100_000, seed: SEED });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-test-"));
-  const worker = await unstable_dev(new URL("../src/index.js", import.meta.url).pathname, {
-    config: new URL("../wrangler.toml", import.meta.url).pathname,
+  const port = sandbox ? await freePort() : undefined;
+  const sandboxUrl = sandbox ? `http://localhost:${port}` : null;
+  const worker = await unstable_dev(new URL("../src/index.ts", import.meta.url).pathname, {
+    config: testConfigPath(),
     ip: "127.0.0.1",
+    ...(port ? { port } : {}),
     persistTo: path.join(tmp, "state"),
     logLevel: "warn",
     vars: {
@@ -59,7 +105,13 @@ export async function startStack() {
       WORKOS_API_KEY: emulator.apiKey || "sk_test_default",
       WORKOS_CLIENT_ID: CLIENT_ID,
       WORKOS_WEBHOOK_SECRET: WEBHOOK_SECRET,
-      HTMLARTIFACT_COOKIE_PASSWORD: `${"x".repeat(32)}-test-cookie-password`
+      HTMLARTIFACT_COOKIE_PASSWORD: COOKIE_PASSWORD,
+      ...(directoryProvisioning ? { HTMLARTIFACT_DIRECTORY_PROVISIONING: "on" } : {}),
+      ...(enterpriseConnections ? { HTMLARTIFACT_ENTERPRISE_CONNECTIONS: "on" } : {}),
+      ...vars,
+      ...(sandbox
+        ? { HTMLARTIFACT_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, HTMLARTIFACT_SANDBOX_ORIGIN: sandboxUrl }
+        : {})
     },
     experimental: { disableExperimentalWarning: true }
   });
@@ -74,6 +126,7 @@ export async function startStack() {
 
   return {
     baseUrl,
+    sandboxUrl,
     emulator,
     tmp,
     async stop() {
@@ -158,11 +211,21 @@ export async function refreshInto(stack, tokens, organizationId) {
 }
 
 export async function callApi(stack, token, method, pathname, body) {
-  const response = await fetch(`${stack.baseUrl}${pathname}`, {
-    method,
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined
-  });
+  const send = () =>
+    fetch(`${stack.baseUrl}${pathname}`, {
+      method,
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined
+    });
+  // Locally the app, the ops Worker and test proxies share one SQLite file and
+  // can collide on its lock (a 500); production D1 has no such lock. Reads are
+  // safe to retry.
+  let response = await send();
+  for (let attempt = 1; method === "GET" && response.status === 500 && attempt < 4; attempt += 1) {
+    await response.text();
+    await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
+    response = await send();
+  }
   const text = await response.text();
   let json;
   try {
@@ -173,16 +236,24 @@ export async function callApi(stack, token, method, pathname, body) {
   return { status: response.status, body: json };
 }
 
-// Delivers a correctly signed WorkOS webhook, as WorkOS would.
-export function sendWebhook(stack, payload) {
+// Delivers a correctly signed WorkOS webhook, as WorkOS would, including its
+// retries of 5xx answers (locally the app, the ops Worker and the test proxy
+// share one SQLite file and occasionally collide on a lock).
+export async function sendWebhook(stack, payload) {
   const body = JSON.stringify(payload);
-  const t = Date.now();
-  const v1 = createHmac("sha256", WEBHOOK_SECRET).update(`${t}.${body}`).digest("hex");
-  return fetch(`${stack.baseUrl}/webhooks/workos`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "WorkOS-Signature": `t=${t}, v1=${v1}` },
-    body
-  });
+  let response;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+    const t = Date.now();
+    const v1 = createHmac("sha256", WEBHOOK_SECRET).update(`${t}.${body}`).digest("hex");
+    response = await fetch(`${stack.baseUrl}/webhooks/workos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "WorkOS-Signature": `t=${t}, v1=${v1}` },
+      body
+    });
+    if (response.status < 500) return response;
+  }
+  return response;
 }
 
 // A minimal browser: a cookie jar and manual redirects, so a test can sign in
