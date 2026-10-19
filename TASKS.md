@@ -41,7 +41,7 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
 - [x] D1 blob storage (R2 needs a card): `blobs` chunked ≤1 MB, written in the version's atomic batch; R2 when ARTIFACTS bound (reads fall back to D1); deletion clears both; suite runs on both backends; `bun run migrate:r2` (copy → SHA-256 verify → delete from D1; refuses to delete until /healthz says r2); README Storage section
 - [x] Zero-spend policy (Dhruv: not a penny): no card on Cloudflare — R2 has no hard cap, Workers Paid is $5/mo. Production stays on Workers Free + D1 permanently. SSO/Directory Sync links off by default (WorkOS bills $125/connection/mo); `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` to offer them
 - [x] Validation parses without source locations first (re-parses with them only to report issues): ~10–25% less CPU
-- [ ] Measure production CPU per upload size on Workers Free; set D1 upload limit to what passes reliably
+- [ ] After the HTMLRewriter fix: re-measure production uploads (50 KB … 2 MiB, repeated) on Workers Free
 - [x] Final Codex review (gpt-6.1-sol): one finding (migration could re-upload HTML of an artifact deleted mid-copy) → fixed: post-upload reference check drops it (queued retry), script refuses to run until the app reads R2; everything else confirmed (157/157 on D1 and on R2)
 - [x] PR #1 opened (ga/production → main); not merged (Dhruv merges)
 - [x] SECURITY.md (data handling, incident response, D1 Time Travel backups/restore) — revisit once Phase 2 lands
@@ -69,5 +69,11 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
 - [ ] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts` ready; blocked on `~/.config/htmlartifact/workos.env`), MFA (dashboard)
 - [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
 - [ ] First npm publish locally (claims the unclaimed `htmlartifact` name), then enable npm trusted publishing so release.yml publishes with provenance (no long-lived tokens)
-- [ ] Run workos-setup, deploy:all (D1 storage), smoke
-- [ ] Production walkthrough with two real accounts (item 4)
+- [x] workos-setup (redirect URI, webhook 7 events, secrets on both Pages projects + ops), deploy:all (D1 storage), smoke: all ok
+- [x] Production walkthrough with two real accounts (2026-10-19, htmlartifact.pages.dev, real CLI + browser):
+  - A (dhruv+haa@swayu.io): CLI device login → sign-up, email code, MFA (TOTP) enrollment → `workspace create "GA Walkthrough"` → `workspace invite` → `upload --slug ga-plan` (v1)
+  - B (dhruv+hab@swayu.io): CLI device login → sign-up + MFA; as outsider: CLI read 404 (same as missing), browser shows "workspace you are not in", anonymous curl 401, no content leaked
+  - B `workspace join <code>` → CLI read byte-identical to A's upload; browser shows the artifact framed from htmlartifact-usercontent.pages.dev (sandboxed)
+  - A publishes v2, then `delete`: production D1 blobs 2 → 0 chunks, versions 2 → 0, drafts 0, queue empty; B's read → 404
+  - Real WorkOS checks: org API keys are `sk_` + URL-safe (matches format check); /portal/revoke_link unknown user 200, unknown org 404; revokeSession unknown 404
+- [ ] BLOCKER found in walkthrough: Workers Free enforces 10 ms CPU; parse5 validation cold costs ~13 ms at 5 KB → error 1102 for uploads > ~1–5 KB once burst allowance is spent. Fix in progress: server validation on native HTMLRewriter (CLI keeps parse5)
