@@ -30,6 +30,10 @@ export interface Env {
   // "on" to offer SSO and Directory Sync setup links. WorkOS bills each SSO or
   // directory connection (per month), so they are off unless chosen.
   HTMLARTIFACT_ENTERPRISE_CONNECTIONS?: string;
+  // Storage guards (bytes): HTML per workspace, and the D1 database size at
+  // which uploads stop (D1 Free caps a database at 500 MB).
+  HTMLARTIFACT_WORKSPACE_QUOTA_BYTES?: string;
+  HTMLARTIFACT_DATABASE_LIMIT_BYTES?: string;
   // Service binding to the ops Worker's `Ops` entrypoint (src/ops.ts). When
   // absent (local dev, tests), rate limits fall back to an in-memory window.
   OPS?: OpsService;
@@ -51,7 +55,7 @@ export interface Config {
   publicBaseUrl: string | null;
   sandboxOrigin: string | null;
   cookiePassword: string;
-  limits: { accountBytes: number; largeBytes: number; maxPages: number };
+  limits: { accountBytes: number; largeBytes: number; maxPages: number; workspaceBytes: number; databaseBytes: number };
   workos: {
     apiKey: string;
     clientId: string;

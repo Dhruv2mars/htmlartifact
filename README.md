@@ -91,51 +91,41 @@ bun run test        # builds the CLI, then the full suite twice: D1 storage, the
 them on the emulator's login page. The CLI's browser sign-in is auto-approved
 as Alice.
 
-## Storage
+## Storage and the free-tier budget
 
-Artifact HTML is stored in R2 when the Worker has an `ARTIFACTS` bucket bound,
-and in D1 otherwise (`src/storage.ts`). Production runs on D1 on Cloudflare's
-free plans, by policy: Workers Free and D1 Free stop at their limits instead of
-billing, while R2 needs a card and has no hard spending cap. Switch to R2 only
-if paying for overage is acceptable.
+htmlartifact runs entirely on Cloudflare's free plans (Workers Free, Pages, D1)
+and WorkOS Staging, with no payment card on the Cloudflare account, so it
+cannot be billed: past a quota, Cloudflare returns errors until the daily reset
+(00:00 UTC) instead of charging. See `CLAUDE.md` (zero spend).
 
-- **D1:** each object is split into ≤ 1 MB rows of a `blobs` table, written in
-  the same atomic batch as the version that references them, so a fresh
-  artifact opens for teammates immediately (D1, not KV: KV is eventually
-  consistent). Default limits are lower than on R2: 1 MiB per upload (2 MiB
-  for flagged accounts) and 10 pages, sized to Workers Free (50 D1 queries
-  and 10 ms of CPU per request, with a burst allowance; measured in
-  production). D1 Free holds 5 GB.
-- **R2:** 4 MiB per upload (16 MiB flagged), 50 pages. Reads fall back to D1,
-  so objects stored before the switch keep working.
-- Deleting an artifact or workspace deletes its objects in both.
+Artifact HTML lives in D1 (`src/storage.ts`): each object is split into
+≤ 1 MB rows of a `blobs` table, written in the same atomic batch as the version
+that references them, so a fresh artifact opens for teammates immediately (D1,
+not KV: KV is eventually consistent). Deleting an artifact or workspace
+deletes every chunk of every version.
 
-The server validates HTML with the Workers runtime's native HTMLRewriter
-(`src/html-policy-server.ts`), which is cheap enough for Workers Free; the CLI
-checks pages locally with the parse5 validator first (`src/html-policy.ts`),
-so problems come with line numbers. If a burst of heavy uploads exhausts the
-CPU allowance, Cloudflare answers 503 for a few seconds; the CLI retries.
+The app's own limits keep usage inside the free quotas (numbers from
+Cloudflare's docs: Workers limits, D1 limits and pricing, Pages Functions
+pricing, checked 2026-10-19):
 
-**Switching to R2 (no downtime), if ever:**
+| Free quota | App limit or usage |
+|---|---|
+| D1: 500 MB per database (5 GB per account) | Uploads stop when the database would pass 450 MB (`HTMLARTIFACT_DATABASE_LIMIT_BYTES`); each workspace holds at most 50 MiB of HTML, every version counted (`HTMLARTIFACT_WORKSPACE_QUOTA_BYTES`); 1 MiB per upload (2 MiB flagged), 10 pages |
+| D1: 50 queries per request | An upload is one batch of ~2 statements per page + 1 per MB + ~8 |
+| D1: 100,000 rows written, 5 million rows read per day | An upload writes ~6–30 rows (artifact, version, pages, chunks, counters); opening an artifact reads ~10 |
+| Workers: 10 ms CPU per request (with a burst allowance) | The server validates HTML with the native HTMLRewriter (`src/html-policy-server.ts`); the CLI checks pages locally first (`src/html-policy.ts`, with line numbers). Measured in production: 1 MB pages pass even after the burst allowance is spent. If heavy uploads exhaust it, Cloudflare answers 503 for a few seconds and the CLI retries |
+| Workers + Pages Functions: 100,000 requests per day, shared by the app, the sandbox and the ops Worker | Opening an artifact in a browser is 2 requests (app page + sandbox frame); per-user rate limits (uploads 30/min, checks 60/min, sign-in polling per device code) and per-IP limits on API-key validation; the ops cron runs every 15 minutes (96/day) |
+| Cron triggers: 5 per account | 1 |
+| D1 Time Travel: 7 days | Deleted HTML stays restorable for 7 days (SECURITY.md) |
+| Pages static assets: unlimited | — |
 
-1. Enable R2 in the Cloudflare dashboard (needs a payment method), then:
-   `bunx wrangler r2 bucket create htmlartifact-artifacts` (and
-   `htmlartifact-artifacts-staging`).
-2. Uncomment the `r2_buckets` blocks in `deploy/app`, `deploy/usercontent` and
-   `deploy/ops` `wrangler.toml`, and run `bun run deploy:all`. From here new
-   artifacts go to R2; existing ones are still read from D1. `/healthz` reports
-   `"storage": "r2"`.
-3. `bun run migrate:r2` copies every D1 object into R2, downloads it again to
-   compare SHA-256, and deletes it from D1 only after it matches. An object
-   whose artifact was deleted during the copy is removed from R2 again. It
-   refuses to run until `/healthz` reports `"storage": "r2"` (before that, the
-   app could neither read moved objects nor delete their R2 copies), and is
-   safe to re-run. `--dry-run` reports what would move; `--staging` targets
-   staging.
-
-The binding goes in before the migration (not after) so every object is
-readable at every moment: during step 3 the app finds each object in R2 or,
-until it moves, in D1.
+R2 is not used: it needs a payment card and Cloudflare documents no hard
+spending cap for it (only billing at listed rates past the free tier), so it
+does not meet the zero-spend rule. The code still supports an `ARTIFACTS` R2
+binding (reads fall back to D1; `bun run migrate:r2` copies D1 blobs into R2
+with SHA-256 verification), and the suite tests both backends, but enabling
+R2 is optional future work only if Cloudflare ever offers a hard cap that
+guarantees $0.
 
 ## Deploying (later)
 
@@ -150,7 +140,6 @@ until it moves, in D1.
      (`bun scripts/workos-setup.ts` does all of this through the WorkOS API.)
 2. Cloudflare:
    - Run `wrangler d1 create htmlartifact` and put the ID in `wrangler.toml`.
-   - Optional: R2 for artifact HTML (see Storage); without it, D1 is used.
    - Run `wrangler secret put` for `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
      `WORKOS_WEBHOOK_SECRET` and `HTMLARTIFACT_COOKIE_PASSWORD` (32+ chars).
    - Run `bun run deploy`.

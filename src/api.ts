@@ -1,7 +1,7 @@
 import type { Context, Hono, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { sha256 } from "./crypto.ts";
-import { FLAGS, bumpMembershipEpoch, findWorkspace, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { FLAGS, bumpMembershipEpoch, databaseBytes, findWorkspace, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 // The Worker validates with the native HTMLRewriter (Workers Free CPU limits);
 // parse5 (src/html-policy.ts) stays in the CLI.
@@ -656,6 +656,26 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     await runDeletion(c.env, "r2_prefix", written);
   };
 
+  if (!unchanged) {
+    // Free-tier storage guards (src/config.ts): the workspace's share, then
+    // the whole database's headroom (D1 Free caps a database at 500 MB).
+    const { workspaceBytes, databaseBytes: databaseLimit } = c.get("config").limits;
+    const used = await workspaceStoredBytes(db, viewer.organization_id);
+    if (used + validation.totalBytes > workspaceBytes) {
+      return c.json(
+        {
+          ok: false,
+          error: `This workspace's storage is full (${formatBytes(used)} of ${formatBytes(workspaceBytes)}, every version counts). Delete old artifacts with htmlartifact delete, then upload again.`
+        },
+        507
+      );
+    }
+    const size = await databaseBytes(db);
+    if (size !== null && size + validation.totalBytes > databaseLimit) {
+      return c.json({ ok: false, error: "This htmlartifact deployment's storage is full. Ask an admin to delete old artifacts." }, 507);
+    }
+  }
+
   const statements: D1PreparedStatement[] = [];
   let blobStatements: D1PreparedStatement[] = [];
   if (!unchanged) {
@@ -754,6 +774,16 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       );
     }
     statements.push(...blobStatements);
+    // Count the new version's bytes, only if the version row committed.
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO workspace_usage (organization_id, stored_bytes)
+           SELECT ?, ? WHERE EXISTS (SELECT 1 FROM draft_versions WHERE id = ?)
+           ON CONFLICT (organization_id) DO UPDATE SET stored_bytes = stored_bytes + excluded.stored_bytes`
+        )
+        .bind(viewer.organization_id, validation.totalBytes, versionId)
+    );
   }
   // Metadata applies even when the content is unchanged; only new content
   // moves updated_at.

@@ -172,21 +172,30 @@ test("IPv6 callers are limited per /64, so rotating addresses buys no fresh buck
 test("a chunked body with no Content-Length is cut off at the limit, not buffered whole", async () => {
   const bob = await signInTokens(stack, "bob@acme.test", "Acme");
   const chunk = new TextEncoder().encode("x".repeat(1024 * 1024));
-  let sent = 0;
-  const body = new ReadableStream({
-    pull(controller) {
-      // Far past any upload limit (40 MiB), streamed without a length.
-      if (sent >= 40) return controller.close();
-      sent += 1;
-      controller.enqueue(chunk);
-    }
-  });
-  const response = await fetch(`${stack.baseUrl}/api/check`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${bob.accessToken}`, "Content-Type": "application/json" },
-    body,
-    duplex: "half"
-  });
+  const send = () => {
+    let sent = 0;
+    const body = new ReadableStream({
+      pull(controller) {
+        // Far past any upload limit (40 MiB), streamed without a length.
+        if (sent >= 40) return controller.close();
+        sent += 1;
+        controller.enqueue(chunk);
+      }
+    });
+    return fetch(`${stack.baseUrl}/api/check`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bob.accessToken}`, "Content-Type": "application/json" },
+      body,
+      duplex: "half"
+    });
+  };
+  // Locally, wrangler's dev proxy sometimes reports the server's early answer
+  // (it stops reading mid-stream) as a lost connection, a 500: try again.
+  let response = await send();
+  for (let attempt = 1; response.status === 500 && attempt < 4; attempt += 1) {
+    await response.text();
+    response = await send();
+  }
   assert.equal(response.status, 413);
   assert.match((await response.json()).error, /Request is over the .* limit\./);
 });

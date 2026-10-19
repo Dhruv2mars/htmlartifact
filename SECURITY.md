@@ -16,7 +16,7 @@ critical issues within 7 days. We will credit you unless you ask us not to.
 
 | Data | Where | Notes |
 |---|---|---|
-| Artifact HTML (every version, every page) | Cloudflare R2 (or, until R2 is enabled, D1 table `blobs`), keyed `orgs/<organization>/drafts/<draft>/…` | Encrypted at rest by Cloudflare (AES-256). Never cached by browsers or shared caches (`Cache-Control: private, no-store`). |
+| Artifact HTML (every version, every page) | Cloudflare D1, table `blobs`, keyed `orgs/<organization>/drafts/<draft>/…` | Encrypted at rest by Cloudflare (AES-256). Never cached by browsers or shared caches (`Cache-Control: private, no-store`). |
 | Artifact index: title, description, slug, repo name, git branch/commit subject, filename, sizes | Cloudflare D1 | Encrypted at rest by Cloudflare. |
 | Upload request metadata: `source_ip`, `user_agent` | Cloudflare D1 (`draft_versions`) | **Erased after 30 days** by a scheduled job. |
 | Workspace name and handle; invite codes (expiring, use-limited) | Cloudflare D1 | |
@@ -65,10 +65,9 @@ Artifact HTML may contain inline script. It never runs on the app's origin:
   makes the artifact unreadable immediately and deletes its stored HTML (every
   version and every page, in R2 and D1) and its D1 rows in the same request.
   If any delete fails, a scheduled job retries within 15 minutes, so the grace
-  window is at most **15 minutes**. While artifact HTML is stored in D1 (production
-  runs on D1 by its zero-cost policy), deleted HTML also stays in D1 Time Travel
-  history for its retention window (7 days on Workers Free, 30 on Paid), then is
-  gone; see Backups.
+  window is at most **15 minutes**. Artifact HTML is stored in D1, so deleted HTML also stays in D1 Time Travel
+  history for its retention window (7 days on Workers Free), then is gone; see
+  Backups.
 - **Workspaces:** `htmlartifact workspace delete --confirm <name>` (admins)
   blocks access at once, then deletes every artifact's R2 objects, every D1 row
   for the workspace, its invites and caches, and the WorkOS organization (which
@@ -79,15 +78,14 @@ Artifact HTML may contain inline script. It never runs on the app's origin:
   delete them. When WorkOS reports a user deleted, we scrub their cached name
   and email.
 - **Backups:** deleted D1 rows remain in D1 Time Travel history for its
-  retention window (30 days on Workers Paid, 7 on Free), then are gone. That
-  includes artifact HTML while it is stored in D1. R2 objects (if R2 is ever
-  enabled) have no versioning or backups: once deleted they cannot be restored.
+  retention window (7 days on Workers Free), then are gone. That includes
+  artifact HTML, which is stored in D1.
 
 ## Backups and restore
 
-D1 Time Travel keeps point-in-time history of the database (30 days on Workers
-Paid). R2 holds artifact HTML with Cloudflare's durability; it is not
-separately backed up, by design, so that deletion is real.
+D1 Time Travel keeps point-in-time history of the database (7 days on Workers
+Free), including artifact HTML. There are no other backups, by design, so that
+deletion is real once that window passes.
 
 Restore the database to a point in time:
 

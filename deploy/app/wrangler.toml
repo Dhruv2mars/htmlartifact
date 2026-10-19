@@ -16,7 +16,8 @@ binding = "DB"
 database_name = "htmlartifact"
 database_id = "c1fd2f32-8d99-4229-8e39-b441df855a89"
 
-# R2 (switch on once R2 is enabled; README: Storage). Unbound: artifact HTML lives in D1.
+# R2: not used (zero-spend rule: R2 needs a card and has no hard spending cap; README).
+# Artifact HTML lives in D1. Do not enable unless Cloudflare offers a hard $0 cap.
 # [[r2_buckets]]
 # binding = "ARTIFACTS"
 # bucket_name = "htmlartifact-artifacts"
@@ -36,7 +37,8 @@ binding = "DB"
 database_name = "htmlartifact-staging"
 database_id = "0c008194-08d1-4289-a7aa-e11d05da04cf"
 
-# R2 (switch on once R2 is enabled; README: Storage). Unbound: artifact HTML lives in D1.
+# R2: not used (zero-spend rule: R2 needs a card and has no hard spending cap; README).
+# Artifact HTML lives in D1. Do not enable unless Cloudflare offers a hard $0 cap.
 # [[env.preview.r2_buckets]]
 # binding = "ARTIFACTS"
 # bucket_name = "htmlartifact-artifacts-staging"

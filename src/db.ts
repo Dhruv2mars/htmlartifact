@@ -56,6 +56,10 @@ CREATE TABLE IF NOT EXISTS joins (
   undone INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
+CREATE TABLE IF NOT EXISTS workspace_usage (
+  organization_id TEXT PRIMARY KEY,
+  stored_bytes INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS revocations (
   subject TEXT NOT NULL,
   organization_id TEXT NOT NULL,
@@ -358,4 +362,30 @@ export async function revokeAllInvites(db: D1Database, organizationId: string): 
     .prepare("UPDATE invites SET revoked_at = unixepoch() WHERE organization_id = ? AND revoked_at IS NULL")
     .bind(organizationId)
     .run();
+}
+
+// HTML bytes a workspace stores (every version and page). Kept as a counter,
+// moved in the same batches that add or delete versions; created on first use
+// from the rows themselves (workspaces from before the counter existed).
+export async function workspaceStoredBytes(db: D1Database, organizationId: string): Promise<number> {
+  const row = await db.prepare("SELECT stored_bytes FROM workspace_usage WHERE organization_id = ?").bind(organizationId).first<{ stored_bytes: number }>();
+  if (row) return row.stored_bytes;
+  await db
+    .prepare(
+      `INSERT INTO workspace_usage (organization_id, stored_bytes)
+       SELECT ?1, (SELECT COALESCE(SUM(v.file_size), 0) FROM draft_versions v JOIN drafts d ON d.id = v.draft_id WHERE d.organization_id = ?1)
+                + (SELECT COALESCE(SUM(p.file_size), 0) FROM draft_pages p JOIN draft_versions v ON v.id = p.draft_version_id JOIN drafts d ON d.id = v.draft_id WHERE d.organization_id = ?1)
+       ON CONFLICT (organization_id) DO NOTHING`
+    )
+    .bind(organizationId)
+    .run();
+  const created = await db.prepare("SELECT stored_bytes FROM workspace_usage WHERE organization_id = ?").bind(organizationId).first<{ stored_bytes: number }>();
+  return created?.stored_bytes ?? 0;
+}
+
+// The D1 database's size in bytes, as D1 reports it with every query.
+export async function databaseBytes(db: D1Database): Promise<number | null> {
+  const { meta } = await db.prepare("SELECT 1").run();
+  const size = (meta as { size_after?: unknown }).size_after;
+  return typeof size === "number" ? size : null;
 }

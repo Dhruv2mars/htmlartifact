@@ -106,6 +106,15 @@ export async function drainPendingDeletions(env: PurgeEnv, max = 100): Promise<{
 export function deleteDraftStatements(db: D1Database, organizationId: string, draftId: string): D1PreparedStatement[] {
   return [
     queueDeletion(db, "r2_prefix", draftPrefix(organizationId, draftId)),
+    // The workspace's storage counter drops by what this artifact held.
+    db
+      .prepare(
+        `UPDATE workspace_usage SET stored_bytes = MAX(0, stored_bytes
+           - (SELECT COALESCE(SUM(file_size), 0) FROM draft_versions WHERE draft_id = ?1)
+           - (SELECT COALESCE(SUM(p.file_size), 0) FROM draft_pages p JOIN draft_versions v ON v.id = p.draft_version_id WHERE v.draft_id = ?1))
+         WHERE organization_id = ?2`
+      )
+      .bind(draftId, organizationId),
     db
       .prepare("DELETE FROM draft_pages WHERE draft_version_id IN (SELECT id FROM draft_versions WHERE draft_id = ?)")
       .bind(draftId),
@@ -142,6 +151,7 @@ export function deleteWorkspaceStatements(db: D1Database, organizationId: string
     org("DELETE FROM membership_epochs WHERE organization_id = ?"),
     org("DELETE FROM revocations WHERE organization_id = ?"),
     org("DELETE FROM joins WHERE organization_id = ?"),
+    org("DELETE FROM workspace_usage WHERE organization_id = ?"),
     org("DELETE FROM workspaces WHERE organization_id = ?")
   ];
 }

@@ -2,7 +2,7 @@
 
 ## Dashboard setup (2026-10-19)
 Done = requested WorkOS credentials saved and checked without exposing values, MFA saved, support request sent, and Cloudflare GitHub secrets listed; any blocked step records its exact stopping point.
-- [x] WorkOS environment and local credential file (directory 700, file 600): Staging; Production requires billing. Existing key copied through clipboard, values not printed.
+- [x] WorkOS environment and local credential file (directory 700, file 600): Staging (WorkOS Staging for GA; Production is a post-GA step, only on Dhruv's go-ahead). Existing key copied through clipboard, values not printed.
 - [x] WorkOS AuthKit TOTP MFA: enabled AuthKit prerequisite in Staging; Authentication → Features → Multi-factor auth changed Off → Required, saved and verified Required.
 - [x] WorkOS Directory Provisioning support request: exact requested text sent through dashboard Contact support; confirmed “Message sent” / email follow-up; no ticket ID or environment-ID field shown.
 - [x] Cloudflare scoped deploy token and GitHub Actions secrets: htmlartifact GitHub Actions Active, 1 Account, Pages/Workers Scripts/D1 Edit + Account Settings/User Details Read, no expiry/IP filter; CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID verified by name in Dhruv2mars/htmlartifact. Clipboard cleared.
@@ -38,7 +38,7 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
 - [x] Round 12 agent: HTML validated in bounded memory (custom parse5 tree adapter, no child lists: 4 MB dense page 258 MB → 9 MB peak heap; 0 diffs vs old validator on ~300k generated pages); size checked before parsing; upload body cap 3× + 64 KiB
 - [ ] Once real WorkOS keys land, verify: /portal/revoke_link responses (unknown user → ?), org API key values start with `sk_`, revokeSession 404 for unknown session
 - [x] Review round 13 (Claude Opus): validator stops at depth limit, caps attributes (linear duplicate check; parse5 pinned 7.3.0), checks declarative shadow roots; IPv6 /64 limits; recently-valid keys skip IP bucket; streamed body size limit; CLI lock/rename hardening — 155/155
-- [x] D1 blob storage (R2 needs a card): `blobs` chunked ≤1 MB, written in the version's atomic batch; R2 when ARTIFACTS bound (reads fall back to D1); deletion clears both; suite runs on both backends; `bun run migrate:r2` (copy → SHA-256 verify → delete from D1; refuses to delete until /healthz says r2); README Storage section
+- [x] D1 blob storage (permanent: R2 has no hard spending cap, so it is not used): `blobs` chunked ≤1 MB, written in the version's atomic batch; R2 when ARTIFACTS bound (reads fall back to D1); deletion clears both; suite runs on both backends; `bun run migrate:r2` (copy → SHA-256 verify → delete from D1; refuses to delete until /healthz says r2); README Storage section; R2 migration kept only as optional future work
 - [x] Zero-spend policy (Dhruv: not a penny): no card on Cloudflare — R2 has no hard cap, Workers Paid is $5/mo. Production stays on Workers Free + D1 permanently. SSO/Directory Sync links off by default (WorkOS bills $125/connection/mo); `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` to offer them
 - [x] Validation parses without source locations first (re-parses with them only to report issues): ~10–25% less CPU
 - [x] Server validates with the native HTMLRewriter (`src/html-policy-server.ts`; parse5 stays in the CLI, `src/html-policy.ts`; shared rules in `src/html-policy-rules.ts`): parse5 cost 13–29 ms cold for 5–20 KB → error 1102. Selective callbacks (source pre-scan picks tag/attribute selectors), markers for script/title text, `<noscript>` read twice, `<select>`/`<frameset>`/template-`<col>` contexts and malformed SVG/MathML refused as `ambiguous-markup` (lol-html's foreign-content model differs: nested-svg breakouts, self-closed roots, ignored end tags). Never looser than parse5: ~150k generated pages, 0 violations; 300 realistic reports identical (test/html-policy-server.test.js)
@@ -55,6 +55,7 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
 - Dropped by Dhruv: Vault/encryption, Audit Logs, Events API, Radar, extra roles, FGA, domain auto-join, export
 
 ## Blocked on Dhruv
+(nothing blocks GA; WorkOS Directory Provisioning request is with WorkOS support)
 - [x] Write WorkOS keys to `~/.config/htmlartifact/workos.env` (Staging; verified 2026-10-19)
 - [ ] WorkOS support asked 2026-10-19 to enable AuthKit Directory Provisioning (message sent, email follow-up pending); after confirmation set `HTMLARTIFACT_DIRECTORY_PROVISIONING=on` (deploy/app vars) and redeploy
 
@@ -79,3 +80,9 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
   - A publishes v2, then `delete`: production D1 blobs 2 → 0 chunks, versions 2 → 0, drafts 0, queue empty; B's read → 404
   - Real WorkOS checks: org API keys are `sk_` + URL-safe (matches format check); /portal/revoke_link unknown user 200, unknown org 404; revokeSession unknown 404
 - [x] (fixed) BLOCKER found in walkthrough: Workers Free enforces 10 ms CPU; parse5 validation cold costs ~13 ms at 5 KB → error 1102 for uploads > ~1–5 KB once burst allowance is spent. Fix in progress: server validation on native HTMLRewriter (CLI keeps parse5)
+
+## Zero-spend rule (CLAUDE.md, 2026-10-19)
+- [x] Merged main (rules in CLAUDE.md/AGENTS.md)
+- [x] R2: Cloudflare's R2 pricing page documents no hard spending cap → not enabled; D1 storage permanent; docs/config no longer present R2 or any paid plan as a pending step
+- [x] Free-tier budget documented (README: Storage and the free-tier budget) with official quotas vs app limits
+- [x] D1 Free caps a database at 500 MB: uploads stop at 450 MB (database size from D1's size_after), and each workspace holds at most 50 MiB of HTML (workspace_usage counter, moved in the upload and deletion batches)
