@@ -8,8 +8,9 @@ export function renderNotFound(): string {
       <main>
         <p class="code" aria-hidden="true">404</p>
         <h1>Not found</h1>
-        <p>This artifact does not exist, or your current team cannot see it.</p>
-        <p><a href="/">htmlartifact</a></p>
+        <p>This artifact does not exist, or it belongs to a workspace you are not in.</p>
+        <p>If someone shared it with you, ask them for an invite to their workspace.</p>
+        <p><a href="/">Go to htmlartifact</a></p>
       </main>
     `
   });

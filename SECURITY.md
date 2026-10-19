@@ -140,7 +140,7 @@ Artifact HTML lives in D1, so a restore brings back HTML and index together.
   to that moment; admins issue a fresh one for the team. An inactive
   membership is never reactivated by an invite. Admin Portal sessions also end when an admin
   is demoted, and a link minted while a removal or demotion lands is revoked.
-- **MFA:** enabled in AuthKit for password sign-ins.
+- **MFA:** off in AuthKit (Staging), so sign-up is email + password or a social login. A workspace that needs MFA can require it through its own SSO identity provider.
 
 ## Incident response
 

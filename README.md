@@ -37,7 +37,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `workspace list` / `switch <name>` | Your workspaces; change the current one |
 | `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately, and every invite code issued until then is revoked (they may hold one): share a fresh code with the team |
 | `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace |
-| `read <url>` | Download an artifact with your sign-in (how agents read links) |
+| `read <url-or-id>` | Download an artifact with your sign-in (how agents read links). `--out <file>` picks where |
 | `list [--all]` | Your artifacts, or the whole workspace's |
 | `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |

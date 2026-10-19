@@ -2,6 +2,7 @@ import { Console, Effect, Option } from "effect";
 import { Argument, Command } from "effect/cli";
 
 import { getAuth, leaveWorkspaceSession, switchSession } from "../auth.ts";
+import { CMD } from "../env.ts";
 import { CliError, reason } from "../errors.ts";
 import { jsonFlag, numberFlag, stringFlag } from "../flags.ts";
 import { printJson, shellQuote } from "../format.ts";
@@ -20,7 +21,7 @@ const create = Command.make(
     yield* switchSession(result.workspace.id);
     if (json) return yield* printJson(result);
     yield* Console.log(`Created workspace "${result.workspace.name}" and switched to it.`);
-    yield* Console.log("Invite people with: htmlartifact workspace invite");
+    yield* Console.log(`Invite people with: ${CMD} workspace invite`);
   })
 ).pipe(Command.withDescription("Create a workspace (you become its admin) and switch to it."));
 
@@ -168,7 +169,7 @@ const deleteWorkspace = Command.make(
       yield* printJson(result);
     } else {
       yield* Console.log(`Deleted workspace "${name}". Every artifact in it (every version) is erased.`);
-      yield* Console.log("See your other workspaces with: htmlartifact workspace list");
+      yield* Console.log(`See your other workspaces with: ${CMD} workspace list`);
     }
     if (refreshed) {
       yield* Console.error(`Warning: deleted, but could not refresh your sign-in: ${refreshed}`);

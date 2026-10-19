@@ -2,7 +2,7 @@ import { Console, Duration, Effect, Option } from "effect";
 import { Command } from "effect/cli";
 
 import { getAuth, refreshSession, resolveApiUrl, selectWorkspace, tokenExpiresAt } from "../auth.ts";
-import { CREDENTIALS_PATH } from "../env.ts";
+import { CMD, CREDENTIALS_PATH } from "../env.ts";
 import { CliError, reason } from "../errors.ts";
 import { apiUrlFlag, jsonFlag, stringFlag } from "../flags.ts";
 import { printJson } from "../format.ts";
@@ -54,10 +54,11 @@ export const login = Command.make(
         yield* Console.log(`\nSigned in as ${me.email || me.name}.`);
         if (me.workspace) {
           yield* Console.log(`Workspace: ${me.workspace.name}`);
+          yield* Console.log(`Next, publish a page: ${CMD} upload <file.html>`);
         } else {
           yield* Console.log("You are not in a workspace yet. Next, either:");
-          yield* Console.log('  htmlartifact workspace create "<name>"   start one and invite people');
-          yield* Console.log("  htmlartifact workspace join <code>       join with an invite code");
+          yield* Console.log(`  ${CMD} workspace create "<name>"   start one and invite people`);
+          yield* Console.log(`  ${CMD} workspace join <code>       join with an invite code`);
         }
         return;
       }
@@ -124,7 +125,7 @@ export const whoami = Command.make(
     yield* Console.log(
       me.workspace
         ? `Workspace: ${me.workspace.name} (${me.workspace.role || "member"})`
-        : "Workspace: none yet (htmlartifact workspace create <name> | workspace join <code>)"
+        : `Workspace: none yet (${CMD} workspace create <name> | workspace join <code>)`
     );
     yield* Console.log(`Service: ${apiUrl}`);
   })

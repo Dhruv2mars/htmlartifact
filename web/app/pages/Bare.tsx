@@ -21,12 +21,18 @@ function Bare({ children }: { children: ReactNode }) {
 }
 
 export function SignIn({ next }: { next: string }) {
+  // An invite link: say so, and give the terminal route to the same workspace.
+  const invite = /^\/join\/([A-Za-z0-9-]+)$/.exec(next || "")?.[1];
   return (
     <Bare>
       <Seal id="htmlartifact" size={96} className="mx-auto" />
-      <h1 className="mt-8 font-wide text-[34px] font-[740] leading-[1.05] tracking-[-0.03em] text-ink">Sign in to htmlartifact</h1>
+      <h1 className="mt-8 font-wide text-[34px] font-[740] leading-[1.05] tracking-[-0.03em] text-ink">
+        {invite ? "You're invited to a workspace" : "Sign in to htmlartifact"}
+      </h1>
       <p className="mt-3 text-[15.5px] leading-relaxed text-fog">
-        Artifacts open only for members of their workspace. Sign in, or create an account, and you'll come straight back here.
+        {invite
+          ? "Sign in, or create an account, and you'll come straight back here to join it."
+          : "Artifacts open only for members of their workspace. Sign in, or create an account, and you'll come straight back here."}
       </p>
       <ButtonLink href={`/auth/sign-in?next=${encodeURIComponent(next || "/")}`} size="lg" className="mt-8">
         Sign in or create an account
@@ -34,6 +40,7 @@ export function SignIn({ next }: { next: string }) {
       <div className="mt-14 border-t border-rule pt-6">
         <p className="text-[13.5px] text-fog">From a terminal or an agent</p>
         <CopyCommand command="npx htmlartifact login" className="mt-3" />
+        {invite && <CopyCommand command={`npx htmlartifact workspace join ${invite}`} className="mt-2" />}
       </div>
     </Bare>
   );
