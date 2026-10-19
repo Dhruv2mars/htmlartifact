@@ -15,7 +15,7 @@ CI is green on the PR, and the PR is open and ready for Dhruv to merge.
 - [x] Repo description, 13 topics, homepage https://htmlartifact.pages.dev; Discussions on; wiki off; delete branch on merge
 - [x] CodeQL alerts on main triaged: #1 (polynomial ReDoS in `trimSlash`) and #2 (identity replace in a test) fixed in 597f4b0; #3, #4 dismissed as false positives and #5 as test-only, each with a reason (`gh api .../code-scanning/alerts`); Sol round 3 approved
 - [x] Deploy workflow fixed: run 39253023896 (535b8be) was cancelled at the 15-minute limit after two ops-cron tests hung 300 s each in the test step. The step now runs the D1 suite only (production backend; CI runs D1 + R2 on every PR), pins Node 24 like CI, and has a 30-minute timeout. Locally from a clean build: 173/173 in 112 s
-- [ ] Green Deploy run on main after PR #4 merges (Dhruv merges; then check `gh run list --workflow deploy.yml`)
+- [x] Green Deploy run on main after PR #4 merged: Deploy 3da6fa5 success (tests, deploy:all, smoke); local `bun run smoke` 11/11 and `/healthz` ok (storage d1) on 2026-10-19
 - [ ] Social preview (web/public/og.png, 1200×630): no API; needs a signed-in GitHub browser session (Settings → Social preview)
 
 ## Dashboard setup (2026-10-19)
@@ -89,7 +89,8 @@ provably removes its stored HTML (every version; D1 blobs).
 - [x] package.json scripts: typecheck, build:pages, deploy:all, smoke
 - [x] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts`), MFA (dashboard)
 - [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
-- [ ] (Dhruv, after merging chore/oss-cleanup) First npm publish locally from `main` (`npm publish --access public`; claims the unclaimed `htmlartifact` name), then run the Release workflow to tag `v0.1.0`; add the repo + `release.yml` as trusted publisher (allow direct `npm publish`) only right before the next release, since unused configurations expire after 2 days (CONTRIBUTING.md → Releasing)
+- [x] First npm publish: htmlartifact@0.1.0 published by Dhruv from `main` (local publish, so no provenance attestation); Release workflow (workflow_dispatch, 3da6fa5) tagged `v0.1.0` and created the GitHub release; `npx htmlartifact@0.1.0 --version` prints 0.1.0
+- [ ] (Dhruv, right before the next release) Add the repo + `release.yml` as trusted publisher (allow direct `npm publish`) only right before the next release, since unused configurations expire after 2 days (CONTRIBUTING.md → Releasing)
 - [x] workos-setup (redirect URI, webhook 7 events, secrets on both Pages projects + ops), deploy:all (D1 storage), smoke: all ok
 - [x] Production walkthrough with two real accounts (2026-10-19, htmlartifact.pages.dev, real CLI + browser):
   - A (dhruv+haa@swayu.io): CLI device login → sign-up, email code, MFA (TOTP) enrollment → `workspace create "GA Walkthrough"` → `workspace invite` → `upload --slug ga-plan` (v1)
