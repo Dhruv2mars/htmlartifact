@@ -8,7 +8,17 @@ import { assertOwnServer, getAuth, resolveApiUrl } from "../auth.ts";
 import { USER_AGENT, VERSION } from "../env.ts";
 import { attempt, CliError, cliError, NetworkError, reason } from "../errors.ts";
 import { apiUrlFlag, jsonFlag, stringFlag, switchFlag } from "../flags.ts";
-import { offlineReport, printCheckReport, printJson, printReceipt, shellQuote, timeAgo, type Receipt } from "../format.ts";
+import { formatIssue } from "../../src/html-policy.ts";
+import {
+  offlineReport,
+  printCheckReport,
+  printJson,
+  printReceipt,
+  shellQuote,
+  timeAgo,
+  validateLocally,
+  type Receipt
+} from "../format.ts";
 import { api, requestJson, serverErrorMessage } from "../http.ts";
 import { collectCiMetadata, collectGitMetadata } from "../metadata.ts";
 import { readUploadSource } from "../source.ts";
@@ -92,6 +102,27 @@ export const upload = Command.make(
     }
     const { apiUrl, apiKey } = yield* getAuth(Option.getOrUndefined(options.apiUrl));
     const source = yield* readUploadSource(options.target);
+    // Check the markup locally first: parse5 reports each problem with its
+    // line and column (the server reports none), and a page that fails here
+    // would fail on the server too. Nothing is sent.
+    const local = validateLocally(source);
+    if (!local.ok) {
+      const errors = local.issues.filter((issue) => issue.level === "error");
+      if (options.json) {
+        yield* printJson({
+          ok: false,
+          status: null,
+          checkedLocally: true,
+          error: "HTML failed htmlartifact validation. Nothing was uploaded.",
+          errors: errors.map(formatIssue),
+          issues: local.issues
+        });
+        return yield* setFailureExitCode;
+      }
+      return yield* new CliError({
+        message: `Not uploaded: the HTML failed htmlartifact validation (checked locally).\n- ${errors.map(formatIssue).join("\n- ")}`
+      });
+    }
     // A slug names the draft by itself, so the saved mapping for this path is
     // only used without one. `--draft <id> --slug <name>` renames a draft.
     const mappedDraftId =

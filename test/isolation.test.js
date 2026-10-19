@@ -60,7 +60,8 @@ async function registeredRoutes() {
       routes.add(`${m[1].toUpperCase()} ${m[3]}`);
     }
     assert.doesNotMatch(
-      source,
+      // HTMLRewriter's .on(selector, handlers) chains are not routes.
+      source.replace(/new HTMLRewriter\(\)[\s\S]*?\.transform\(/g, ""),
       /\.(route|on|mount|basePath)\(/,
       `${file} registers routes in a form this sweep cannot enumerate; extend registeredRoutes()`
     );

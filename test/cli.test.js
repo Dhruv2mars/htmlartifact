@@ -126,6 +126,25 @@ test("CI publishes with HTMLARTIFACT_TOKEN and no saved sign-in", async () => {
   assert.equal(receipt.workspace, "Acme");
 });
 
+test("upload checks the markup locally first: errors with line and column, nothing sent", async () => {
+  const file = writeHtml(stack.tmp, "bad.html", `<!doctype html><title>Bad</title>\n<p>ok</p>\n<iframe src="https://x.test"></iframe>`);
+  // An API URL nothing listens on: the local check must fail before any request.
+  const env = { HTMLARTIFACT_HOME: path.join(stack.tmp, "ci-home"), HTMLARTIFACT_TOKEN: CI_KEY, HTMLARTIFACT_API_URL: "http://127.0.0.1:9" };
+  await assert.rejects(cli(["upload", file], env), (error) => {
+    assert.match(error.stderr, /Not uploaded: the HTML failed htmlartifact validation \(checked locally\)/);
+    assert.match(error.stderr, /line 3:1: Blocked <iframe> tag\./);
+    return true;
+  });
+  const failed = await cli(["upload", file, "--json"], env).catch((error) => error);
+  assert.equal(failed.code, 1);
+  const body = JSON.parse(failed.stdout);
+  assert.equal(body.checkedLocally, true);
+  assert.deepEqual(
+    body.issues.map(({ code, line, column }) => ({ code, line, column })),
+    [{ code: "blocked-tag", line: 3, column: 1 }]
+  );
+});
+
 test("workspace delete needs the exact name, then erases the workspace", async () => {
   await cli(["workspace", "switch", "Design Crit"]);
   await assert.rejects(cli(["workspace", "delete"]), /htmlartifact workspace delete --confirm 'Design Crit'/);

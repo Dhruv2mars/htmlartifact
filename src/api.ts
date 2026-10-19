@@ -3,7 +3,10 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { sha256 } from "./crypto.ts";
 import { FLAGS, bumpMembershipEpoch, findWorkspace, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
-import { formatBytes, validateUpload, type Issue, type PageInput } from "./html-policy.ts";
+// The Worker validates with the native HTMLRewriter (Workers Free CPU limits);
+// parse5 (src/html-policy.ts) stays in the CLI.
+import { formatBytes, type Issue, type PageInput } from "./html-policy-rules.ts";
+import { validateUpload } from "./html-policy-server.ts";
 import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
@@ -589,7 +592,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const capabilities = uploadCapabilities(viewer, c.get("config"));
   const body = await readJson<UploadBody, MemberEnv>(c, uploadBodyLimit(capabilities.maxBytes));
   const { filename, metadata = {}, draftId, description } = body;
-  const validation = validateUpload(requestPages(body), capabilities);
+  const validation = await validateUpload(requestPages(body), capabilities);
   if (!validation.ok) {
     return c.json(
       { ok: false, errors: validation.errors, warnings: validation.warnings, issues: validation.issues },
@@ -852,7 +855,7 @@ async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
     }
   };
   if (body.html !== undefined || body.files !== undefined) {
-    const validation = validateUpload(requestPages(body), capabilities);
+    const validation = await validateUpload(requestPages(body), capabilities);
     Object.assign(report, {
       ok: validation.ok,
       totalBytes: validation.totalBytes,

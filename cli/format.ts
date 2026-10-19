@@ -49,12 +49,16 @@ export const printReceipt = (receipt: Receipt) =>
     }
   });
 
+// The markup rules, checked locally with parse5: exact line and column for
+// every issue. The server checks again (with the account's limits) on upload.
+export function validateLocally(source: UploadSource) {
+  return validateUpload(source.body.files || [{ path: "index.html", html: source.body.html }]);
+}
+
 // Offline fallback for `check`: the bundled validator knows the markup rules,
 // but not the account, its limits, or whether scripts are allowed.
 export function offlineReport(source: UploadSource | null, networkError: string): Json {
-  const validation = source
-    ? validateUpload(source.body.files || [{ path: "index.html", html: source.body.html }])
-    : null;
+  const validation = source ? validateLocally(source) : null;
   return {
     ok: false,
     offline: true,
