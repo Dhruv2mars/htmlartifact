@@ -7,6 +7,15 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+## [0.1.2]
+
+### Fixed
+
+- `login` after joining a workspace in the browser no longer says "You are
+  not in a workspace yet": when the sign-in has no current workspace but you
+  are in one, it switches to it (`--workspace <name>` picks among several, or
+  it lists them with the `workspace switch` command). `whoami` says the same.
+
 ## [0.1.1]
 
 Fixes from a first-time-user walkthrough of the live site and `npx htmlartifact`.
@@ -50,6 +59,7 @@ First release.
   HTML stored in D1), with per-workspace and database quotas and rate limits
   sized to them.
 
-[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Dhruv2mars/htmlartifact/releases/tag/v0.1.0

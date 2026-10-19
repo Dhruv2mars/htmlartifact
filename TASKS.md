@@ -22,7 +22,16 @@ Friction found → fixed (0.1.1):
 - [x] `login` into a workspace printed no next step: now "Next, publish a page: … upload <file.html>"; the upload receipt's Update command uses the path as typed
 - [x] Signed-out `/join/<code>` page was the generic sign-in: now "You're invited to a workspace" plus the `workspace join <code>` command
 - [x] Artifact 404 said "your current team cannot see it" with no next step: now says it may belong to a workspace you're not in, ask for an invite
-- [ ] Verify run 2 after deploy + npm 0.1.1 (below)
+- [x] Released: PR #8 merged (9781ba6); Release workflow published htmlartifact@0.1.1 with npm provenance (sigstore log 3324402422), tag v0.1.1; `npx htmlartifact@latest --version` → 0.1.1
+- [x] Deploy for 9781ba6 was cancelled at 30 min (test step: workerd fatal SQLITE_BUSY, ops-cron tests hung 300 s each; also cancelled 535b8be). Deployed 9781ba6 with `deploy:all` from a clean origin/main worktree; smoke 11/11; new 404 and invite copy confirmed live. PR #10: Deploy runs after CI passes on the pushed commit instead of re-running the suite; Cloudflare token scoped to the deploy step
+
+Run 2 (live, CLI 0.1.1, MFA off, new accounts C dhruv+hae / D dhruv+haf):
+- [x] C: `npx htmlartifact@latest login` → sign-up (email code, no MFA) → Confirm; every hint says `npx htmlartifact …`; `workspace create "Run Two"` → `invite` → `upload plan.html` (scripted) → `list`; Update hint uses `plan.html`
+- [x] C web: `/d/<id>` → sign-in round trip → "script ran" inside the sandbox frame (`allow-scripts`, cross-site origin) → Sign out → landing page (sign-out fix holds)
+- [x] D opens `/join/<code>` signed out → "You're invited to a workspace" + `workspace join` command → sign-up → back on "Join Run Two"; before joining, `/d/<id>` → new 404 copy ("…a workspace you are not in… ask them for an invite"); Join → artifact opens
+- [x] **Found:** D `npx htmlartifact login` after joining in the browser → "You are not in a workspace yet" (the device flow reused the browser's pre-join AuthKit session, so the token has no organization; `workspace list` shows Run Two). Fixed in 0.1.2: login switches into the only workspace (or `--workspace`, or lists `workspace switch` commands); whoami says so. Verified live with the local build: "Workspace: Run Two"
+- [x] D CLI: `list --all` → `read <id> --out` (byte-identical) → `delete <C's id>` → "That artifact belongs to a teammate; only they or a workspace admin can delete it." → own upload → `delete <url>`; C `delete` → D `read` → 404 with hint
+- [ ] 0.1.2 on npm via Release; Deploy (new workflow) green on main; smoke green
 
 WorkOS thread (Dhruv approved), after run 1: MFA turned off (SECURITY.md updated), AuthKit branded "htmlartifact" with the site icon, sign-out URI set. Not ours to change: Staging emails ("[STAGING]", welcome@workos.dev) and the `*.authkit.app` device link stay until the post-GA Production move.
 
@@ -41,7 +50,7 @@ CI is green on the PR, and the PR is open and ready for Dhruv to merge.
 - [x] Repo description, 13 topics, homepage https://htmlartifact.pages.dev; Discussions on; wiki off; delete branch on merge
 - [x] CodeQL alerts on main triaged: #1 (polynomial ReDoS in `trimSlash`) and #2 (identity replace in a test) fixed in 597f4b0; #3, #4 dismissed as false positives and #5 as test-only, each with a reason (`gh api .../code-scanning/alerts`); Sol round 3 approved
 - [x] Deploy workflow fixed: run 39253023896 (535b8be) was cancelled at the 15-minute limit after two ops-cron tests hung 300 s each in the test step. The step now runs the D1 suite only (production backend; CI runs D1 + R2 on every PR), pins Node 24 like CI, and has a 30-minute timeout. Locally from a clean build: 173/173 in 112 s
-- [ ] Green Deploy run on main after PR #4 merges (Dhruv merges; then check `gh run list --workflow deploy.yml`)
+- [x] Green Deploy run on main after PR #4 merged (3da6fa5: tests, deploy:all, smoke); htmlartifact@0.1.0 published by Dhruv, Release tagged v0.1.0 (was PR #7, folded in here)
 - [ ] Social preview (web/public/og.png, 1200×630): no API; needs a signed-in GitHub browser session (Settings → Social preview)
 
 ## Dashboard setup (2026-10-19)
