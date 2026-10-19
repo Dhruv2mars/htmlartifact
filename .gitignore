@@ -5,3 +5,5 @@ dist/
 .wrangler/
 .dev.vars
 release/
+web/build/
+web/.react-router/

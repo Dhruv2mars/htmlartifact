@@ -165,7 +165,7 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     assert.match(landing.text_, /Join Nora Labs/);
     const joined = await browser.post("/join", { code: invite.body.code });
     assert.equal(joined.status, 200);
-    assert.match(joined.text_, /<h1>Nora Labs<\/h1>/);
+    assert.match(joined.text_, /<h1[^>]*>Nora Labs<\/h1>/);
     assert.match(joined.text_, /Nora plan/);
   });
 });
@@ -311,11 +311,11 @@ describe("reading", () => {
   test("a member of both workspaces is switched into the artifact's workspace", async () => {
     const browser = new Browser(stack);
     await browser.signIn("max@both.test", { workspace: "Other" });
-    assert.match((await browser.get("/")).text_, /<h1>Other<\/h1>/);
+    assert.match((await browser.get("/")).text_, /<h1[^>]*>Other<\/h1>/);
     const response = await browser.get(acme.publicUrl);
     assert.equal(response.status, 200);
     assert.match(response.text_, /Acme plan/);
-    assert.match((await browser.get("/")).text_, /<h1>Acme<\/h1>/);
+    assert.match((await browser.get("/")).text_, /<h1[^>]*>Acme<\/h1>/);
   });
 });
 
@@ -425,11 +425,21 @@ describe("web app", () => {
     assert.equal(noOrigin.status, 403);
   });
 
-  test("signed-out pages ask for sign-in", async () => {
-    for (const path of ["/", "/mine", "/workspaces"]) {
+  test("signed-out pages ask for sign-in; the home page is the landing page", async () => {
+    for (const path of ["/mine", "/workspaces"]) {
       const response = await fetch(`${stack.baseUrl}${path}`, { redirect: "manual" });
       assert.equal(response.status, 401, path);
+      assert.match(await response.text(), /Sign in to htmlartifact/, path);
     }
+    const home = await fetch(`${stack.baseUrl}/`, { redirect: "manual" });
+    assert.equal(home.status, 200);
+    assert.match(await home.text(), /Members only\./);
+  });
+
+  test("unknown pages get the web app's 404", async () => {
+    const response = await fetch(`${stack.baseUrl}/no-such-page`, { redirect: "manual" });
+    assert.equal(response.status, 404);
+    assert.match(await response.text(), /Not found/);
   });
 });
 
