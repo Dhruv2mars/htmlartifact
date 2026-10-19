@@ -42,7 +42,7 @@ export async function renderPage<E extends AppEnv>(c: Context<E>, page: Page, st
   // (an invalid invite, say) must not look like a React Router action, and a
   // path ending in .data must not turn into a React Router data request.
   const url = new URL(c.req.url);
-  url.pathname = url.pathname.replace(/\.data$/, "") || "/";
+  url.pathname = url.pathname.replace(/(\.data)+$/, "") || "/";
   url.searchParams.delete("_routes");
   const request = new Request(url, { method: "GET", headers: c.req.raw.headers });
   const context = new RouterContextProvider();

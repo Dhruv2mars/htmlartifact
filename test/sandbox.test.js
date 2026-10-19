@@ -328,5 +328,10 @@ describe("web app assets", () => {
     const res = await fetch(new URL("/no-such-page.data", stack.baseUrl), { redirect: "manual" });
     assert.equal(res.status, 404);
     assert.match(res.headers.get("content-type") || "", /text\/html/);
+    // A dynamic page too (signed-out sign-in page), with stacked suffixes.
+    const signIn = await fetch(new URL("/mine/bogus.data.data", stack.baseUrl), { redirect: "manual" });
+    assert.equal(signIn.status, 401);
+    assert.match(signIn.headers.get("content-type") || "", /text\/html/);
+    assert.match(await signIn.text(), /Sign in to htmlartifact/);
   });
 });

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { AppShell } from "../components/AppShell";
 import { ButtonLink } from "../components/Button";
 import { CopyText } from "../components/CopyText";
@@ -6,6 +7,8 @@ import { Seal } from "../components/Seal";
 import { Time } from "../components/Time";
 import { bytes } from "../lib/time";
 import type { ArtifactVersion, Session } from "../page";
+
+const SERVER_ROWS = 30;
 
 export function ArtifactDetail({
   session,
@@ -16,6 +19,11 @@ export function ArtifactDetail({
   artifact: { id: string; title: string; description: string | null; url: string };
   versions: ArtifactVersion[];
 }) {
+  // Like the feed: the server renders the newest versions only (Workers Free
+  // allows 10 ms of CPU), the browser renders the rest after hydration.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+  const shown = hydrated ? versions : versions.slice(0, SERVER_ROWS);
   return (
     <AppShell session={session} section="mine">
       <main className="mx-auto max-w-[1120px] px-4 pb-24 pt-8 sm:px-6 sm:pt-12">
@@ -47,7 +55,7 @@ export function ArtifactDetail({
           {versions.length} {versions.length === 1 ? "version" : "versions"}
         </h2>
         <ol className="mt-4 overflow-hidden rounded-2xl border border-rule bg-paper-2">
-          {versions.map((v, i) => (
+          {shown.map((v, i) => (
             <li key={v.number} className="relative grid grid-cols-[3.25rem_minmax(0,1fr)] gap-x-3 border-b border-rule px-4 py-4 last:border-b-0 sm:grid-cols-[3.5rem_minmax(0,1fr)_auto] sm:px-5">
               <a
                 href={v.url}
