@@ -63,7 +63,8 @@ export async function stageObjects(
 export async function getHtmlObject(env: StorageEnv, key: string): Promise<string> {
   if (env.ARTIFACTS) {
     const object = await env.ARTIFACTS.get(key);
-    if (object) return object.text();
+    // Decode exactly what was stored: Body.text() would drop a leading BOM.
+    if (object) return new TextDecoder("utf-8", { ignoreBOM: true, fatal: false }).decode(await object.arrayBuffer());
   }
   const { results } = await env.DB.prepare("SELECT data FROM blobs WHERE key = ? ORDER BY chunk")
     .bind(key)

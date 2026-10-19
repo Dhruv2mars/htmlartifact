@@ -166,3 +166,33 @@ describe("validation cost on the server", () => {
     assert.ok(ms < 1500, `took ${ms.toFixed(0)} ms`);
   });
 });
+
+describe("review regressions", () => {
+  test("a page the fallback title pass cannot read is refused, not a server error", async () => {
+    const html = "<title></title>".repeat(17) + "<svg><template/></svg>";
+    const res = await callApi(stack, tokens[0], "POST", "/api/check", { html });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    // Either refused, or read with parse5's verdict; never a crash.
+    const mine = validateHtml(html);
+    if (res.body.ok) assert.equal(res.body.ok, mine.ok);
+  });
+
+  test("comments inside an SVG script don't hide what the script calls", async () => {
+    const html = "<!doctype html><title>t</title><svg><script>fe<!--x>y-->tch(1)</script></svg>";
+    const mine = validateHtml(html);
+    const res = await callApi(stack, tokens[0], "POST", "/api/check", { html });
+    assert.ok(codes(mine.issues, "warning").includes("sandbox-network"));
+    assert.ok(codes(res.body.issues, "warning").includes("sandbox-network"), JSON.stringify(res.body.issues));
+    assert.equal(res.body.pages[0].hasScripts, true);
+  });
+
+  test("a leading byte-order mark is served back exactly as uploaded", async () => {
+    const html = "﻿<!doctype html><title>BOM</title><p>bom</p>";
+    const up = await callApi(stack, tokens[0], "POST", "/api/uploads", { html });
+    assert.equal(up.status, 201, JSON.stringify(up.body));
+    const read = await fetch(up.body.publicUrl, { headers: { Authorization: `Bearer ${tokens[0]}` } });
+    const bytes = new Uint8Array(await read.arrayBuffer());
+    assert.deepEqual([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf]);
+    assert.equal(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes), html);
+  });
+});

@@ -284,7 +284,18 @@ function sourceText(raw: string, foreign: boolean, decode: boolean): string {
   if (foreign) {
     return text
       .split(/(<!\[CDATA\[[\s\S]*?(?:\]\]>|$))/)
-      .map((part, i) => (i % 2 ? part.replace(/^<!\[CDATA\[/, "").replace(/\]\]>$/, "") : decodeHTML(part.replace(/<[^>]*>?/g, ""))))
+      .map((part, i) =>
+        i % 2
+          ? part.replace(/^<!\[CDATA\[/, "").replace(/\]\]>$/, "")
+          : // Comments first (a ">" inside one is not a tag end), then bogus
+            // comments (<!x>, <?x>), then tags: only text remains, as parse5 reads it.
+            decodeHTML(
+              part
+                .replace(/<!--(?:>|->|[\s\S]*?(?:--!?>|$))/g, "")
+                .replace(/<[!?][^>]*>?/g, "")
+                .replace(/<\/?[A-Za-z][^>]*>?/g, "")
+            )
+      )
       .join("");
   }
   if (decode) text = decodeHTML(text);
@@ -547,11 +558,15 @@ async function laterTitle(html: string): Promise<string | null> {
   await new HTMLRewriter()
     .on("template", {
       element(element) {
-        templates++;
-        element.onEndTag((end) => {
-          if (end.name === "template") templates--;
-          else templateLost = true;
-        });
+        try {
+          element.onEndTag((end) => {
+            if (end.name === "template") templates--;
+            else templateLost = true;
+          });
+          templates++;
+        } catch {
+          // A self-closed <template/> (in SVG/MathML) has no end tag and holds nothing.
+        }
       }
     })
     .on("title", {
@@ -781,7 +796,15 @@ async function readPage(html: string): Promise<PassResult> {
       break;
     }
   }
-  if (output && !title && titlesSeen > TITLES_MARKED) title = await laterTitle(html);
+  if (output && !title && titlesSeen > TITLES_MARKED) {
+    try {
+      title = await laterTitle(html);
+    } catch {
+      // Fail closed: a page the second pass cannot read is refused.
+      issues.error("parse-failed", "HTML document could not be parsed.");
+      hasScripts = true;
+    }
+  }
   return { issues: issues.list(), hasScripts, sandbox, title, hosts, noscript };
 }
 
