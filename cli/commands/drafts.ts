@@ -5,7 +5,7 @@ import { Console, Effect, Option } from "effect";
 import { Argument, Command } from "effect/cli";
 
 import { assertOwnServer, getAuth, resolveApiUrl } from "../auth.ts";
-import { USER_AGENT, VERSION } from "../env.ts";
+import { CMD, USER_AGENT, VERSION } from "../env.ts";
 import { attempt, CliError, cliError, NetworkError, reason } from "../errors.ts";
 import { apiUrlFlag, jsonFlag, stringFlag, switchFlag } from "../flags.ts";
 import { formatIssue } from "../../src/html-policy.ts";
@@ -30,18 +30,27 @@ const setFailureExitCode = Effect.sync(() => {
   process.exitCode = 1;
 });
 
-const parseUrl = (value: string) =>
-  Effect.try({ try: () => new URL(value), catch: () => cliError(`Not a URL: ${value}`) });
+// An artifact URL, or a bare artifact ID (as `list` and `upload` print it).
+const parseUrl = (value: string, apiUrl: string) =>
+  DRAFT_ID_PATTERN.test(value)
+    ? Effect.succeed(new URL(`/d/${value}`, apiUrl))
+    : Effect.try({ try: () => new URL(value), catch: () => cliError(`Not an artifact URL or ID: ${value}`) });
+
+// The path as the user would type it: relative when it's under the current directory.
+const displayPath = (resolved: string) => {
+  const relative = path.relative(process.cwd(), resolved);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative) ? relative : resolved;
+};
 
 export const read = Command.make(
   "read",
   {
-    url: Argument.String("url").pipe(Argument.withDescription("An artifact URL from this server")),
+    url: Argument.String("url").pipe(Argument.withDescription("An artifact URL from this server, or its artifact ID")),
     out: stringFlag("out", "file", "Write the HTML here instead of a new temp file")
   },
   Effect.fn(function* (options) {
     const { apiUrl, apiKey } = yield* getAuth();
-    const target = yield* parseUrl(options.url);
+    const target = yield* parseUrl(options.url, apiUrl);
     target.hash = "";
     yield* assertOwnServer(target, apiUrl);
 
@@ -189,7 +198,7 @@ export const upload = Command.make(
       pages: body.pages || null,
       // The draft ID never moves; a slug can be renamed and reused by
       // another draft, so it would not reliably name this one.
-      updateCommand: ["htmlartifact upload", shellQuote(source.resolved), `--draft ${body.draftId}`].join(" "),
+      updateCommand: [`${CMD} upload`, shellQuote(displayPath(source.resolved)), `--draft ${body.draftId}`].join(" "),
       warnings: body.warnings || []
     };
 
@@ -264,7 +273,7 @@ export const list = Command.make(
 
     if (!drafts.length) {
       return yield* Console.log(
-        options.all ? "Nothing published in this workspace yet." : "Nothing yet. Publish with: htmlartifact upload <file>"
+        options.all ? "Nothing published in this workspace yet." : `Nothing yet. Publish with: ${CMD} upload <file.html>`
       );
     }
 

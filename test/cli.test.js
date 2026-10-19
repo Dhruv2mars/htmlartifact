@@ -73,6 +73,9 @@ test("sign in → create workspace → invite → teammate joins → publish →
   assert.equal(opened.status, 200);
   const read = await cli(["read", receipt.url]);
   assert.match(fs.readFileSync(read.stdout.match(/File: (.+)/)[1], "utf8"), /Crit notes/);
+  // A bare artifact ID (as list and upload print it) works too.
+  const byId = await cli(["read", receipt.draftId]);
+  assert.match(fs.readFileSync(byId.stdout.match(/File: (.+)/)[1], "utf8"), /Crit notes/);
   assert.match((await cli(["list", "--all"])).stdout, /Crit notes/);
 
   // Admin Portal links for the IT admin.
@@ -158,8 +161,13 @@ test("workspace delete needs the exact name, then erases the workspace", async (
 
 test("signed out, commands say how to sign in", async () => {
   await assert.rejects(
-    cli(["list"], { HTMLARTIFACT_HOME: path.join(stack.tmp, "empty-home") }),
+    cli(["list"], { HTMLARTIFACT_HOME: path.join(stack.tmp, "empty-home"), npm_command: "" }),
     /Not signed in\. Run: htmlartifact login/
+  );
+  // Run through npx (not installed): every hint says `npx htmlartifact`, so pasting it works.
+  await assert.rejects(
+    cli(["list"], { HTMLARTIFACT_HOME: path.join(stack.tmp, "empty-home"), npm_command: "exec" }),
+    /Not signed in\. Run: npx htmlartifact login/
   );
 });
 

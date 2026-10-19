@@ -1,5 +1,31 @@
 # htmlartifact — GA checklist
 
+## First-time-user usability run (2026-10-19, branch usability/first-run)
+Done = a fresh user goes from zero to a shared artifact a teammate can open by
+following only the README/landing page, with no dead ends; fixes merged and
+deployed; live smoke green; `npx htmlartifact@latest` is the fixed version.
+
+Run 1 (live site + `npx htmlartifact@latest` 0.1.0, new Staging accounts, incognito browser, isolated HOMEs):
+- [x] Landing page → `npx htmlartifact login`: device link opened, sign-up (email code, MFA enrollment), "Confirm" → CLI "Signed in as Ada… not in a workspace yet. Next, either: …"
+- [x] A: `workspace create "Usability Run"` → `workspace invite` (code + `/join/` link) → `check plan.html` → `upload plan.html` (v1) → re-upload same path (v2, same URL) → `list` / `list --json`
+- [x] A in the browser: `/d/<id>` → sign-in round trip → artifact in the sandbox frame; `/` shows the workspace feed
+- [x] A web Sign out → **broken**: ended on error.workos.com `app-homepage-url-not-found`. Fixed by the WorkOS thread (Staging Sign-out URI https://htmlartifact.pages.dev, Default); re-tested: lands on the landing page
+- [x] B opens the `/join/<code>` link signed out → sign-up → back on "Join Usability Run"; **before joining**, B opens A's link → 404 (looks like a missing page) → Join workspace → feed → artifact opens
+- [x] B CLI: `login` (picked up the workspace) → `list` → `list --all` → `read <url>` / `read --out` (byte-identical to A's file) → `upload notes.html --slug ben-notes` → `workspace members`; `workspace invite` as a member → "Only workspace admins can do that."
+- [x] Signed out (fresh HOME): `read`/`upload`/`list`/`whoami` → "Not signed in. Run: htmlartifact login"
+- [x] A `delete <url>` → B `read` → 404 with a hint; A (admin) `delete <B's id>` → ok
+
+Friction found → fixed (0.1.1):
+- [x] CLI hints said `htmlartifact …`, which isn't on PATH for `npx` users ("command not found"): hints and errors now say `npx htmlartifact …` when run through npx/bunx/dlx (`CMD`/`withCmd` in cli/env.ts)
+- [x] `read <id>` → "Not a URL" although `delete` takes IDs: `read` takes an ID too
+- [x] Member deleting a teammate's artifact (that they can see in `list --all`) → "Artifact not found.": now 403 "only they or a workspace admin can delete it"
+- [x] `login` into a workspace printed no next step: now "Next, publish a page: … upload <file.html>"; the upload receipt's Update command uses the path as typed
+- [x] Signed-out `/join/<code>` page was the generic sign-in: now "You're invited to a workspace" plus the `workspace join <code>` command
+- [x] Artifact 404 said "your current team cannot see it" with no next step: now says it may belong to a workspace you're not in, ask for an invite
+- [ ] Verify run 2 after deploy + npm 0.1.1 (below)
+
+Not ours to change (WorkOS thread / Dhruv): MFA Required makes every new user set up an authenticator before first sign-in; AuthKit pages show no htmlartifact branding; Staging emails ("[STAGING]", welcome@workos.dev) and the `*.authkit.app` device link stay until the post-GA Production move.
+
 ## Open-source cleanup (2026-10-19, branch chore/oss-cleanup)
 Done = every item below is proven by `gh` output or the repo page in a browser,
 CI is green on the PR, and the PR is open and ready for Dhruv to merge.

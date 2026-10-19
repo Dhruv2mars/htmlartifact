@@ -217,7 +217,7 @@ function NotFoundPage() {
         <p className="font-expanded text-[56px] font-[800] leading-none tracking-[-0.04em] text-rule-2">404</p>
         <p className="mt-4 font-wide text-[22px] font-[650] tracking-[-0.02em] text-ink">Not found</p>
         <p className="mx-auto mt-2 max-w-[36ch] text-[13.5px] text-fog">
-          This artifact does not exist, or your current team cannot see it.
+          This artifact does not exist, or it belongs to a workspace you are not in.
         </p>
       </div>
     </div>

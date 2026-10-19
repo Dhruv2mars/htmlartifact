@@ -6,7 +6,7 @@ import { CliConfig, CliError as ParseError, Command, Flag, GlobalFlag } from "ef
 import { login, logout, whoami } from "./commands/account.ts";
 import { check, deleteDraft, list, read, upload } from "./commands/drafts.ts";
 import { workspace } from "./commands/workspace.ts";
-import { VERSION } from "./env.ts";
+import { VERSION, withCmd } from "./env.ts";
 import { isHtmlArtifactError, reason } from "./errors.ts";
 
 const htmlartifact = Command.make("htmlartifact").pipe(
@@ -38,7 +38,7 @@ const report = (cause: Cause.Cause<unknown>) =>
     process.exitCode = 1;
     const error = Cause.squash(cause);
     if (ParseError.isCliError(error)) return;
-    yield* Console.error(isHtmlArtifactError(error) ? error.message : reason(error));
+    yield* Console.error(withCmd(isHtmlArtifactError(error) ? error.message : reason(error)));
   });
 
 const program = Command.run(htmlartifact, { version: VERSION }).pipe(
