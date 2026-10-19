@@ -329,3 +329,18 @@
     animation: fade 300ms ease both;
   }
 }
+
+/* A deferred seal fades in where its placeholder ring was. */
+.seal-in {
+  animation: fade-in 240ms var(--ease-out) both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seal-in {
+    animation: none;
+  }
+}

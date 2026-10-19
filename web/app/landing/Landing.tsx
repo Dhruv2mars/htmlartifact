@@ -325,8 +325,8 @@ function Company() {
     <section className="border-t border-rule">
       <div className={`${shell} grid gap-10 py-20 sm:grid-cols-3 sm:gap-12`}>
         {[
-          ["SSO and SCIM", "SAML or OIDC sign-in and directory sync, set up by your IT admin from a WorkOS link."],
-          ["Nothing to run", "One Cloudflare Worker with R2 and D1. No servers, no containers, no database to babysit."],
+          ["Free to run", "It fits on free tiers: Cloudflare Pages, Workers and D1, with accounts by WorkOS. No card needed."],
+          ["Nothing to run", "One Cloudflare Worker and a D1 database. No servers, no containers, nothing to babysit."],
           ["Open source", "MIT licensed. Read the code, host your own, or send a pull request."]
         ].map(([title, body]) => (
           <div key={title}>

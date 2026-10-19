@@ -44,6 +44,8 @@ cmdk · clsx + cva · next-themes · Satori (OG image, build time)
 - [x] Code split by audience (landing ≈53 KB gz, app shell ≈65 KB gz)
 - [x] Real walkthrough on the integrated Worker (emulator sign-in → create workspace → CLI upload → feed, ⌘K, menu, sign-out)
 - [x] Security review of the integration (Opus; Codex hit its usage limit): 4 findings fixed — public files on Pages, dev assets on the sandbox host, `.data` paths, og:image origin
+- [x] Workers Free CPU budget (10 ms): landing, signed-out docs and 404 pre-rendered at build time (web/prerender.mjs, served as strings); list seals drawn in the browser; feeds server-render 30 rows. Warm SSR (Node, as a proxy): every dynamic page ≤ 3.5 ms incl. a 43-artifact worst-case feed
+- [x] Zero-spend copy: no SSO/SCIM promise on the landing (off by default), storage described as D1 (R2 optional), staging key example
 - [ ] Codex (gpt-6.1-sol, high) review, once its usage limit resets
 - [ ] Real-device check (iOS Safari / Android Chrome) once deployed
 

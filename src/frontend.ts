@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { createRequestHandler, RouterContextProvider, type ServerBuild } from "react-router";
 import * as build from "../web/build/server/index.js";
+import staticPages, { ORIGIN_TOKEN } from "../web/build/server/static-pages.js";
 import type { ArtifactSummary, ArtifactVersion, Page, Session } from "../web/app/page.ts";
 import type { DraftSummary, DraftWithVersions } from "./drafts.ts";
 import type { AppEnv, Viewer } from "./types.ts";
@@ -28,6 +29,15 @@ export function registerAssets(app: Hono<AppEnv>): void {
 }
 
 export async function renderPage<E extends AppEnv>(c: Context<E>, page: Page, status: number = 200): Promise<Response> {
+  // Pages that are the same for everyone were rendered at build time: serve
+  // the string (Workers Free allows 10 ms of CPU; a cold React render costs
+  // far more). Only the origin differs between deployments.
+  const prerendered = staticPage(page);
+  if (prerendered) {
+    return c.body(prerendered.replaceAll(ORIGIN_TOKEN, c.get("origin")), status as ContentfulStatusCode, {
+      "Content-Type": "text/html; charset=utf-8"
+    });
+  }
   // Always a GET of the current page: a page shown in answer to a form post
   // (an invalid invite, say) must not look like a React Router action, and a
   // path ending in .data must not turn into a React Router data request.
@@ -43,6 +53,12 @@ export async function renderPage<E extends AppEnv>(c: Context<E>, page: Page, st
   return c.body(await response.text(), (failed ? response.status : status) as ContentfulStatusCode, {
     "Content-Type": response.headers.get("Content-Type") || "text/html; charset=utf-8"
   });
+}
+
+function staticPage(page: Page): string | null {
+  if (page.kind === "landing" || page.kind === "not-found") return staticPages[page.kind];
+  if (page.kind === "docs" && !page.session) return staticPages.docs;
+  return null;
 }
 
 export function toSession(viewer: Viewer | null | undefined): Session | null {

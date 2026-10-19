@@ -78,7 +78,7 @@ export function Workspaces({ session, workspaces, next }: { session: Session; wo
                     disabled={w.current}
                     className="group flex w-full items-center gap-4 px-5 py-4 text-left transition-colors duration-150 enabled:hover:bg-paper"
                   >
-                    <Seal id={w.id} size={40} />
+                    <Seal id={w.id} size={40} deferred />
                     <span className="min-w-0 flex-1 truncate font-medium text-ink">{w.name}</span>
                     {w.current ? (
                       <span className="rounded-full bg-wash px-2.5 py-1 text-[12px] font-medium text-intaglio">Current</span>

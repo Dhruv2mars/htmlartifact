@@ -34,7 +34,7 @@
     "deploy:all": "bun scripts/deploy.ts",
     "smoke": "bun scripts/smoke.ts",
     "migrate:r2": "bun scripts/migrate-blobs-to-r2.ts",
-    "build:web": "react-router typegen web && react-router build web",
+    "build:web": "react-router typegen web && react-router build web && node web/prerender.mjs",
     "dev:web": "react-router dev web",
     "typecheck:web": "react-router typegen web && tsc -p web/tsconfig.json"
   },

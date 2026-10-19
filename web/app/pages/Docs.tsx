@@ -25,7 +25,7 @@ const COMMANDS: Array<[string, ReactNode]> = [
   ["list [--all]", "Your artifacts, or the whole workspace's."],
   ["delete <id-or-url>", "Delete an artifact. The HTML of every version is erased."],
   ["workspace delete --confirm <name>", "Delete the current workspace and everything in it (admins)."],
-  ["workspace sso · directory · domains", "A WorkOS Admin Portal link for your IT admin: SSO (SAML or OIDC), SCIM directory sync, or domain verification (admins)."],
+  ["workspace sso · directory · domains", "A WorkOS Admin Portal link for your IT admin: SSO (SAML or OIDC), SCIM directory sync, or domain verification (admins). SSO and directory links are off unless the deployment sets HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on, because WorkOS bills each connection."],
   ["check <path>", "Validate against the publishing rules without publishing."]
 ];
 
@@ -140,7 +140,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4`}
               In CI, set <code>HTMLARTIFACT_TOKEN</code> to a WorkOS organization API key instead of signing in. Uploads from CI land in
               that organization's workspace.
             </p>
-            <Code code={`HTMLARTIFACT_TOKEN=sk_live_… npx htmlartifact upload report.html --json`} />
+            <Code code={`HTMLARTIFACT_TOKEN=sk_test_… npx htmlartifact upload report.html --json`} />
           </Section>
 
           <Section id="publishing" title="What you can publish">
@@ -157,8 +157,8 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4`}
 
           <Section id="self-host" title="Run your own">
             <p>
-              htmlartifact is one Cloudflare Worker: Workers for the API, web pages and artifact serving, R2 for artifact HTML, D1 for the
-              index, and WorkOS AuthKit for accounts, workspaces and SSO. The{" "}
+              htmlartifact is one Cloudflare Worker: Workers for the API, web pages and artifact serving, D1 for the index and the
+              artifact HTML (or R2, where it is switched on), and WorkOS AuthKit for accounts and workspaces. It runs on free tiers. The{" "}
               <a href={`${REPO_URL}#deploying-later`}>README</a> walks through setting it up, and{" "}
               <a href={`${REPO_URL}/blob/main/SECURITY.md`}>SECURITY.md</a> covers data handling.
             </p>
