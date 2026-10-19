@@ -85,7 +85,7 @@ provably removes its stored HTML (every version; D1 blobs).
 - [x] package.json scripts: typecheck, build:pages, deploy:all, smoke
 - [x] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts`), MFA (dashboard)
 - [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
-- [ ] (Dhruv, after merging chore/oss-cleanup) First npm publish locally from `main` (`npm publish --access public`; claims the unclaimed `htmlartifact` name), then add the repo + `release.yml` as trusted publisher on npmjs.com, then run the Release workflow to tag `v0.1.0` (CONTRIBUTING.md → Releasing)
+- [ ] (Dhruv, after merging chore/oss-cleanup) First npm publish locally from `main` (`npm publish --access public`; claims the unclaimed `htmlartifact` name), then run the Release workflow to tag `v0.1.0`; add the repo + `release.yml` as trusted publisher (allow direct `npm publish`) only right before the next release, since unused configurations expire after 2 days (CONTRIBUTING.md → Releasing)
 - [x] workos-setup (redirect URI, webhook 7 events, secrets on both Pages projects + ops), deploy:all (D1 storage), smoke: all ok
 - [x] Production walkthrough with two real accounts (2026-10-19, htmlartifact.pages.dev, real CLI + browser):
   - A (dhruv+haa@swayu.io): CLI device login → sign-up, email code, MFA (TOTP) enrollment → `workspace create "GA Walkthrough"` → `workspace invite` → `upload --slug ga-plan` (v1)

@@ -74,9 +74,17 @@ CI derives all three from `package.json`:
    to npm (trusted publishing, with provenance), then creates the tag and a
    GitHub release whose notes are that CHANGELOG section.
 
-The very first publish is manual, because npm trusted publishing can only be
-configured on a package that exists: from an up-to-date `main`, run
-`npm publish --access public` (the `prepublishOnly` script builds the CLI), then
-on npmjs.com add this repository and `release.yml` as the package's trusted
-publisher. Run the Release workflow (or merge anything to `main`) and it tags
-the published version.
+The very first publish is manual, because npm trusted publishing is set up
+in a package's settings on npmjs.com, so the package has to exist:
+
+1. From an up-to-date `main`, run `npm publish --access public` (the
+   `prepublishOnly` script builds the CLI), then run the Release workflow
+   (Actions → Release → Run workflow). It sees the version on npm and only
+   creates the tag and GitHub release.
+2. Add the trusted publisher just before the next release, not earlier: a new
+   configuration expires unless its first publish succeeds within 2 days. On
+   npmjs.com → htmlartifact → Settings → Trusted publishing, add GitHub
+   Actions with this repository and workflow `release.yml`, and allow direct
+   `npm publish` (new configurations allow only `npm stage publish` by
+   default). Then merge the version bump; the Release workflow's publish
+   validates the configuration.

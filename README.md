@@ -147,8 +147,9 @@ Production deploys from `main` through GitHub Actions (`.github/workflows/deploy
    `deploy/ops/wrangler.toml` (the hostnames in those files are this
    deployment's; change them for yours).
 2. WorkOS: create an environment with AuthKit, put `WORKOS_API_KEY` and
-   `WORKOS_CLIENT_ID` in `~/.config/htmlartifact/workos.env`, and run
-   `bun scripts/workos-setup.ts`. It registers the redirect URI
+   `WORKOS_CLIENT_ID` in `~/.config/htmlartifact/workos.env`, set your app's
+   URL in `scripts/workos-setup.ts` (`app`, hardcoded to this deployment), and
+   run `bun scripts/workos-setup.ts`. It registers the redirect URI
    `<app>/auth/callback` and the webhook `<app>/webhooks/workos`
    (`organization_membership.*`, `organization.deleted`, `user.deleted`,
    `session.revoked`, `api_key.revoked`), and stores the secrets on both Pages
