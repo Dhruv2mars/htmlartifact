@@ -38,11 +38,9 @@ export {
   formatIssue,
   type HtmlValidation,
   type Issue,
-  type IssueLevel,
   type PageInput,
   type UploadLimits,
-  type UploadValidation,
-  type ValidatedPage
+  type UploadValidation
 } from "./html-policy-rules.ts";
 
 // One node as the validator sees it while parse5 builds the document. Nodes

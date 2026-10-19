@@ -1,5 +1,5 @@
 # Worker "htmlartifact-ops": what Pages cannot do on its own.
-#   - Cron: retry failed R2 deletions, erase source_ip/user_agent after 30 days.
+#   - Cron: retry failed deletions, erase source_ip/user_agent after 30 days.
 #   - Rate limiting: the Workers rate-limit binding, called by Pages over RPC (entrypoint "Ops").
 # Deploy: (cd deploy/ops && bunx wrangler deploy)  [--env staging for htmlartifact-ops-staging]
 # Secrets: none beyond WORKOS_API_KEY/WORKOS_CLIENT_ID (workspace deletion retries call WorkOS).

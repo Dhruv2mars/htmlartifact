@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "./types.ts";
 
 export const SESSION_COOKIE = "htmlartifact_session";
-export const AUTH_STATE_COOKIE = "htmlartifact_auth_state";
+const AUTH_STATE_COOKIE = "htmlartifact_auth_state";
 // The cookie only carries the WorkOS sealed session; WorkOS decides how long
 // the session really lives.
 const SESSION_COOKIE_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -18,7 +18,7 @@ export interface AuthState {
 
 // Compact HMAC-signed tokens (base64url(JSON) + "." + HMAC-SHA256) for the
 // short-lived sign-in state (OAuth state, PKCE verifier, return path).
-export function signToken(payload: object, secret: string, ttlSeconds: number): string {
+function signToken(payload: object, secret: string, ttlSeconds: number): string {
   const body = Buffer.from(JSON.stringify({ ...payload, exp: nowSeconds() + ttlSeconds })).toString(
     "base64url"
   );
@@ -26,7 +26,7 @@ export function signToken(payload: object, secret: string, ttlSeconds: number): 
 }
 
 // The payload is trusted as T: only this server can sign one.
-export function verifyToken<T extends object>(token: unknown, secret: string): (T & { exp: number }) | null {
+function verifyToken<T extends object>(token: unknown, secret: string): (T & { exp: number }) | null {
   if (typeof token !== "string" || !token.includes(".")) return null;
   const [body = "", signature] = token.split(".");
   const a = Buffer.from(signature || "");

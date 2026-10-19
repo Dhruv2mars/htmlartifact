@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Dhruv2mars/htmlartifact/security/advisories/new
+    about: Privately, please. Never in a public issue.
+  - name: Questions and ideas
+    url: https://github.com/Dhruv2mars/htmlartifact/discussions
+    about: Ask how to do something or float an idea before filing an issue.

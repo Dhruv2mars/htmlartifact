@@ -48,5 +48,3 @@ export type Page =
   | { kind: "artifact"; session: Session; artifact: { id: string; title: string; description: string | null; url: string }; versions: ArtifactVersion[] }
   | { kind: "workspaces"; session: Session; workspaces: WorkspaceChoice[]; next: string | null }
   | { kind: "join"; session: Session; code: string; workspaceName: string };
-
-export type PageKind = Page["kind"];

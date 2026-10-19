@@ -100,7 +100,7 @@ export async function probeStorage(env: StorageEnv): Promise<void> {
 
 // Splits `text` into pieces of at most `maxBytes` UTF-8 bytes, never inside a
 // character (TextEncoder.encodeInto stops at a character boundary).
-export function utf8Chunks(text: string, maxBytes: number): string[] {
+function utf8Chunks(text: string, maxBytes: number): string[] {
   if (text === "") return [""];
   const encoder = new TextEncoder();
   const buffer = new Uint8Array(maxBytes);

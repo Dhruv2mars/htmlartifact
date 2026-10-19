@@ -38,7 +38,7 @@ export interface PageInput {
   html?: unknown;
 }
 
-export interface ValidatedPage extends HtmlValidation {
+interface ValidatedPage extends HtmlValidation {
   path: string;
   html: string;
 }
@@ -84,8 +84,8 @@ export interface Location extends Position {
   attrs?: Record<string, Position>;
 }
 
-export const EMBED_FIX = "Link to the page instead of embedding it.";
-export const BLOCKED_TAGS = new Map<string, string>([
+const EMBED_FIX = "Link to the page instead of embedding it.";
+const BLOCKED_TAGS = new Map<string, string>([
   ["form", "Forms cannot submit on htmlartifact. Use inputs without a <form> wrapper."],
   ["iframe", EMBED_FIX],
   ["object", EMBED_FIX],
@@ -93,14 +93,14 @@ export const BLOCKED_TAGS = new Map<string, string>([
   ["applet", EMBED_FIX]
 ]);
 
-export const URL_ATTRS = new Set(["href", "src", "action", "formaction", "poster", "srcdoc", "xlink:href"]);
+const URL_ATTRS = new Set(["href", "src", "action", "formaction", "poster", "srcdoc", "xlink:href"]);
 
-export const BLOCKED_PROTOCOLS = ["javascript:", "vbscript:", "file:"];
+const BLOCKED_PROTOCOLS = ["javascript:", "vbscript:", "file:"];
 
 // Scripts the browser runs. Inline only: the CSP never allows a script URL.
-export const EXECUTABLE_SCRIPT_TYPES = new Set(["", "text/javascript", "application/javascript", "module"]);
+const EXECUTABLE_SCRIPT_TYPES = new Set(["", "text/javascript", "application/javascript", "module"]);
 // Inert data blocks. The browser never runs these, so they need no sign-in.
-export const DATA_SCRIPT_TYPES = new Set([
+const DATA_SCRIPT_TYPES = new Set([
   "application/json",
   "application/ld+json",
   "text/plain",
@@ -112,7 +112,7 @@ export const DATA_SCRIPT_TYPES = new Set([
 
 // Every token of a <link rel> must be one of these. The serving CSP bounds
 // what they can load (https stylesheets, fonts, and icons).
-export const ALLOWED_LINK_RELS = new Set([
+const ALLOWED_LINK_RELS = new Set([
   "stylesheet",
   "alternate",
   "icon",
@@ -155,7 +155,7 @@ export const EVENT_HANDLER_ATTRS = new Set(
 );
 
 // Tags whose src must already be hosted somewhere: htmlartifact only hosts HTML.
-export const EMBED_SRC_TAGS = new Set(["img", "video", "audio", "source", "track"]);
+const EMBED_SRC_TAGS = new Set(["img", "video", "audio", "source", "track"]);
 
 // Browser APIs that fail inside the scripted-draft sandbox (opaque origin,
 // connect-src 'none', no allow-modals). Reported as warnings so agents learn
@@ -327,11 +327,11 @@ export function checkAttributeRules(attrs: readonly Attribute[], sink: RuleSink)
   }
 }
 
-export const UNSAFE_CSS = /expression\s*\(|behavior\s*:|url\s*\(\s*javascript:/i;
+const UNSAFE_CSS = /expression\s*\(|behavior\s*:|url\s*\(\s*javascript:/i;
 
 // `value` is trimmed. Browsers skip ASCII whitespace and control characters
 // inside a URL's scheme, so they are stripped before comparing.
-export function isUnsafeUrl(value: string): boolean {
+function isUnsafeUrl(value: string): boolean {
   const normalized = value.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
   return BLOCKED_PROTOCOLS.some((protocol) => normalized.startsWith(protocol));
 }
@@ -387,8 +387,6 @@ export function createIssueList<N>(order?: (a: N, b: N) => number, locate?: (nod
     list: () => [...byKey.values()].map(({ issue }) => issue)
   };
 }
-
-export type IssueList = ReturnType<typeof createIssueList<unknown>>;
 
 export function htmlResult({
   issues,
@@ -572,7 +570,7 @@ function pagePathProblem(path: unknown): string | null {
   return null;
 }
 
-export function sizeMessage(bytes: number, maxBytes: number): string {
+function sizeMessage(bytes: number, maxBytes: number): string {
   return `HTML is ${bytes} bytes (${formatBytes(bytes)}); the limit for this upload is ${maxBytes} bytes (${formatBytes(maxBytes)}).`;
 }
 
@@ -624,7 +622,7 @@ function sha256(value: string): string {
 
 // True for paths that point at the author's machine or the draft's own host,
 // where htmlartifact serves nothing but HTML pages.
-export function isLocalReference(value: unknown): boolean {
+function isLocalReference(value: unknown): boolean {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw || raw.startsWith("#")) return false;
   return !/^(https?:|data:|blob:|\/\/)/.test(raw);
@@ -632,7 +630,7 @@ export function isLocalReference(value: unknown): boolean {
 
 // Returns the lowercased host of an absolute http(s) (or protocol-relative) URL,
 // or null for relative paths, data: URIs, and anything unparseable.
-export function externalHost(value: unknown): string | null {
+function externalHost(value: unknown): string | null {
   const raw = String(value || "").trim();
   if (!raw) return null;
   const candidate = raw.startsWith("//") ? `https:${raw}` : raw;

@@ -1,5 +1,19 @@
 # htmlartifact — GA checklist
 
+## Open-source cleanup (2026-10-19, branch chore/oss-cleanup)
+Done = every item below is proven by `gh` output or the repo page in a browser,
+CI is green on the PR, and the PR is open and ready for Dhruv to merge.
+- [ ] Dead code removed (knip clean, wired into CI as `bun run lint`); typecheck ×3 + full suite green
+- [ ] README, SECURITY.md, docs and TASKS.md match what shipped (Pages + ops Worker, D1 only)
+- [ ] CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md (supported versions); private vulnerability reporting on
+- [ ] LICENSE/NOTICE attribution to postplan verified against the npm tarball; vendored skills credited
+- [ ] Issue forms, PR template, labels
+- [ ] CI required on main via branch protection
+- [ ] Dependabot (bun + GitHub Actions) and Dependabot alerts/security updates
+- [ ] CodeQL and secret scanning (push protection)
+- [ ] Release automation: CHANGELOG.md, tag `vX.Y.Z` = package.json = npm version
+- [ ] Repo description, topics, homepage URL, social preview; Discussions; wiki off
+
 ## Dashboard setup (2026-10-19)
 Done = requested WorkOS credentials saved and checked without exposing values, MFA saved, support request sent, and Cloudflare GitHub secrets listed; any blocked step records its exact stopping point.
 - [x] WorkOS environment and local credential file (directory 700, file 600): Staging (WorkOS Staging for GA; Production is a post-GA step, only on Dhruv's go-ahead). Existing key copied through clipboard, values not printed.
@@ -10,7 +24,7 @@ Done = requested WorkOS credentials saved and checked without exposing values, M
 **Done =** in production at https://htmlartifact.pages.dev, two real accounts
 walk the CLI flow end to end (sign up → create workspace → invite → join →
 publish → member opens artifact → outsider blocked), and deleting an artifact
-provably removes its stored HTML (every version; D1 blobs until R2 is on).
+provably removes its stored HTML (every version; D1 blobs).
 
 ## Phase 1 — TypeScript
 - [x] `src/html-policy.ts` (shared by server + CLI), `tsconfig.json`
@@ -36,7 +50,7 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
 - [x] Review round 12 (Claude Opus), my part: stale join rows; reclaim a membership whose undo is queued; undo drops the membership cache; undo on partial join failure; cron favours fewest attempts; admins (and org CI keys for CI artifacts) can update teammates' artifacts; sandbox limits list downloads/plain links; expired capability asks for a reload
 - [x] Round 12 agent: auth rate limits (key format check, hashed negative cache, per-IP limiter before WorkOS validation; device/refresh limits keyed per token; CLI 429 backoff, refresh lock + re-read, logout revokes the session) — merged, 134/134
 - [x] Round 12 agent: HTML validated in bounded memory (custom parse5 tree adapter, no child lists: 4 MB dense page 258 MB → 9 MB peak heap; 0 diffs vs old validator on ~300k generated pages); size checked before parsing; upload body cap 3× + 64 KiB
-- [ ] Once real WorkOS keys land, verify: /portal/revoke_link responses (unknown user → ?), org API key values start with `sk_`, revokeSession 404 for unknown session
+- [x] (verified in the production walkthrough, Phase 4) Once real WorkOS keys land, verify: /portal/revoke_link responses (unknown user → ?), org API key values start with `sk_`, revokeSession 404 for unknown session
 - [x] Review round 13 (Claude Opus): validator stops at depth limit, caps attributes (linear duplicate check; parse5 pinned 7.3.0), checks declarative shadow roots; IPv6 /64 limits; recently-valid keys skip IP bucket; streamed body size limit; CLI lock/rename hardening — 155/155
 - [x] D1 blob storage (permanent: R2 has no hard spending cap, so it is not used): `blobs` chunked ≤1 MB, written in the version's atomic batch; R2 when ARTIFACTS bound (reads fall back to D1); deletion clears both; suite runs on both backends; `bun run migrate:r2` (copy → SHA-256 verify → delete from D1; refuses to delete until /healthz says r2); README Storage section; R2 migration kept only as optional future work
 - [x] Zero-spend policy (Dhruv: not a penny): no card on Cloudflare — R2 has no hard cap, Workers Paid is $5/mo. Production stays on Workers Free + D1 permanently. SSO/Directory Sync links off by default (WorkOS bills $125/connection/mo); `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` to offer them
@@ -64,14 +78,14 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
 - [x] Cloudflare Pages project `htmlartifact` created (exact subdomain) — deploys on D1 storage, blocked only on workos.env
 - [x] Sandbox Pages project `htmlartifact-usercontent` created (exact subdomain) — deploys on D1 storage, blocked only on workos.env
 - [x] Ops Worker `src/ops.ts`: cron (R2 delete retries, retention) + rate-limit RPC entrypoint `Ops`
-- [x] Staging config (Pages preview env + staging D1 created; staging R2 comes with the switch)
+- [x] Staging config (Pages preview env + staging D1 created; no R2, zero-spend)
 - [x] Rate limits (Workers rate-limit binding), logs/observability, deep `/healthz` (D1 + R2)
 - [x] Limits that survive offices and agents: API key format check + negative cache + per-IP validation limit; sign-in limited per device code / refresh token (loose per-IP ceiling); CLI backs off on 429, coordinates refreshes (lock + re-read); `logout` revokes the WorkOS session
-- [x] GitHub Actions written: ci.yml, deploy.yml (needs CLOUDFLARE_API_TOKEN secret), release.yml (npm trusted publishing)
+- [x] GitHub Actions: ci.yml, deploy.yml (CLOUDFLARE_API_TOKEN secret), release.yml (npm trusted publishing; since the OSS cleanup it releases on a package.json version bump merged to main)
 - [x] package.json scripts: typecheck, build:pages, deploy:all, smoke
-- [ ] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts` ready; blocked on `~/.config/htmlartifact/workos.env`), MFA (dashboard)
+- [x] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts`), MFA (dashboard)
 - [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
-- [ ] First npm publish locally (claims the unclaimed `htmlartifact` name), then enable npm trusted publishing so release.yml publishes with provenance (no long-lived tokens)
+- [ ] (Dhruv, after merging chore/oss-cleanup) First npm publish locally from `main` (`npm publish --access public`; claims the unclaimed `htmlartifact` name), then add the repo + `release.yml` as trusted publisher on npmjs.com, then run the Release workflow to tag `v0.1.0` (CONTRIBUTING.md → Releasing)
 - [x] workos-setup (redirect URI, webhook 7 events, secrets on both Pages projects + ops), deploy:all (D1 storage), smoke: all ok
 - [x] Production walkthrough with two real accounts (2026-10-19, htmlartifact.pages.dev, real CLI + browser):
   - A (dhruv+haa@swayu.io): CLI device login → sign-up, email code, MFA (TOTP) enrollment → `workspace create "GA Walkthrough"` → `workspace invite` → `upload --slug ga-plan` (v1)
@@ -79,7 +93,7 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
   - B `workspace join <code>` → CLI read byte-identical to A's upload; browser shows the artifact framed from htmlartifact-usercontent.pages.dev (sandboxed)
   - A publishes v2, then `delete`: production D1 blobs 2 → 0 chunks, versions 2 → 0, drafts 0, queue empty; B's read → 404
   - Real WorkOS checks: org API keys are `sk_` + URL-safe (matches format check); /portal/revoke_link unknown user 200, unknown org 404; revokeSession unknown 404
-- [x] (fixed) BLOCKER found in walkthrough: Workers Free enforces 10 ms CPU; parse5 validation cold costs ~13 ms at 5 KB → error 1102 for uploads > ~1–5 KB once burst allowance is spent. Fix in progress: server validation on native HTMLRewriter (CLI keeps parse5)
+- [x] (fixed) BLOCKER found in walkthrough: Workers Free enforces 10 ms CPU; parse5 validation cold costs ~13 ms at 5 KB → error 1102 for uploads > ~1–5 KB once burst allowance is spent. Fixed: server validation on native HTMLRewriter (CLI keeps parse5), Phase 2
 
 ## Zero-spend rule (CLAUDE.md, 2026-10-19)
 - [x] Merged main (rules in CLAUDE.md/AGENTS.md)

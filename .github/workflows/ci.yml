@@ -26,4 +26,6 @@ jobs:
       - run: bun run typecheck
       - run: bun run typecheck:cli
       - run: bun run typecheck:web
+      - run: bun run lint
+      - run: bun scripts/changelog.ts check
       - run: bun run test

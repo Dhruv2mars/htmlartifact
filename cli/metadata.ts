@@ -58,7 +58,7 @@ interface Remote {
   name?: string;
 }
 
-export function parseRemote(remote: string | null): Remote {
+function parseRemote(remote: string | null): Remote {
   if (!remote) return {};
 
   const cleaned = remote.replace(/\.git$/, "");

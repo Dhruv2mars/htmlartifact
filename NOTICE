@@ -1,7 +1,13 @@
 htmlartifact
-Copyright (c) 2026 Dhruv (Dhruv2mars) and contributors. MIT License.
+Copyright (c) 2026 Dhruv Sharma (Dhruv2mars) and htmlartifact contributors.
+MIT License (see LICENSE).
 
-This project began from the npm release of postplan 0.0.5
-(https://www.npmjs.com/package/postplan), MIT License, whose copyright
-notice is reproduced in LICENSE. The first commit of this repository is that
-release, unmodified.
+This project began from the npm release of postplan 0.0.5 by t3dotgg
+(https://www.npmjs.com/package/postplan), MIT License, Copyright (c) 2026
+t3dotgg; that copyright notice is reproduced in LICENSE. The first commit of
+this repository (878fa4f) is that release, unmodified. The HTML validator,
+artifact serving rules and CLI upload flow derive from it.
+
+The agent skills in .claude/skills/ come from https://github.com/emilkowalski/skills,
+MIT License, Copyright (c) 2026 Emil Kowalski; their license is in
+.claude/skills/LICENSE.

@@ -813,7 +813,7 @@ const NOSCRIPT_TAG = /<(\/?)(noscript)(?=[\t\n\f\r />])/gi;
 // Validates one HTML document with HTMLRewriter. Same result shape, codes,
 // and messages as parse5's validateHtml (src/html-policy.ts), without
 // source positions.
-export async function validateHtml(html: unknown, options: { maxBytes?: number } = {}): Promise<HtmlValidation> {
+async function validateHtml(html: unknown, options: { maxBytes?: number } = {}): Promise<HtmlValidation> {
   const early = precheckHtml(html, options.maxBytes ?? Infinity);
   if (early) return early;
   const source = html as string;

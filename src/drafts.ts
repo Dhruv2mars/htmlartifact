@@ -21,7 +21,7 @@ export interface DraftSummary {
   publicUrl: string;
 }
 
-export type VersionSummary = Pick<
+type VersionSummary = Pick<
   VersionRow,
   "id" | "version_number" | "git_branch" | "git_commit_sha" | "git_commit_subject" | "git_dirty" | "file_size"
 > & { created_at: string | null };
@@ -143,6 +143,6 @@ export async function getMyDraftWithVersions(
   };
 }
 
-export function isoTime(seconds: number | null | undefined): string | null {
+function isoTime(seconds: number | null | undefined): string | null {
   return seconds ? new Date(seconds * 1000).toISOString() : null;
 }

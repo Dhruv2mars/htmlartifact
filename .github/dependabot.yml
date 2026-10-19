@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies"]
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Pinned on purpose: the CLI validator (parse5) and the server validator
+      # (HTMLRewriter + entities, the same version parse5 decodes with) are
+      # proven equivalent for these exact versions. Upgrade them by hand.
+      - dependency-name: parse5
+      - dependency-name: entities
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "area: ci"]
+    groups:
+      actions:
+        patterns: ["*"]
