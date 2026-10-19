@@ -4,10 +4,9 @@
 // Each layer is one closed curve plus rotated copies of it (an SVG <use> per
 // copy), so a seal stays a few KB however dense it looks.
 
-export const SEAL_INKS = ["#2337c6", "#0f7a6b", "#7a2e8c", "#9e2b3a", "#8f6410"] as const;
-export const SEAL_INKS_DARK = ["#8c9bff", "#4fc9b4", "#d08ce0", "#ff8f9c", "#f0c060"] as const;
+const SEAL_INKS = ["#2337c6", "#0f7a6b", "#7a2e8c", "#9e2b3a", "#8f6410"] as const;
 
-export interface SealLayer {
+interface SealLayer {
   d: string;
   copies: number;
   step: number; // degrees between copies

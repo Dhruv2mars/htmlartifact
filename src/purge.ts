@@ -24,7 +24,7 @@ export const PENDING_DELETIONS_SCHEMA = `CREATE TABLE IF NOT EXISTS pending_dele
   PRIMARY KEY (kind, target)
 )`;
 
-export const orgPrefix = (organizationId: string) => `orgs/${organizationId}/`;
+const orgPrefix = (organizationId: string) => `orgs/${organizationId}/`;
 export const draftPrefix = (organizationId: string, draftId: string) =>
   `${orgPrefix(organizationId)}drafts/${draftId}/`;
 export const versionPrefix = (organizationId: string, draftId: string, versionId: string) =>
@@ -103,7 +103,7 @@ export async function drainPendingDeletions(env: PurgeEnv, max = 100): Promise<{
 // runs right after; whatever fails stays queued for the cron.
 
 /** Queue an artifact's R2 prefix and delete its rows (its custom URL goes with the row). */
-export function deleteDraftStatements(db: D1Database, organizationId: string, draftId: string): D1PreparedStatement[] {
+function deleteDraftStatements(db: D1Database, organizationId: string, draftId: string): D1PreparedStatement[] {
   return [
     queueDeletion(db, "r2_prefix", draftPrefix(organizationId, draftId)),
     // The workspace's storage counter drops by what this artifact held.
@@ -180,7 +180,7 @@ export function scrubUserStatements(db: D1Database, userId: string): D1PreparedS
   ];
 }
 
-export const RETENTION_SECONDS = 30 * 24 * 60 * 60;
+const RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
 /** Erase upload request metadata older than the retention window. */
 export async function eraseExpiredRequestMetadata(db: D1Database, now = Math.floor(Date.now() / 1000)): Promise<number> {

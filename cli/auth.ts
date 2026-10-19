@@ -5,7 +5,7 @@ import { CliError } from "./errors.ts";
 import { postJson, type JsonResult } from "./http.ts";
 import { readJson, saveSession, withCredentialsLock, type Json, type Session } from "./state.ts";
 
-export interface Auth {
+interface Auth {
   apiUrl: string;
   apiKey: string;
 }

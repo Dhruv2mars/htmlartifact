@@ -1013,7 +1013,7 @@ async function relayWorkos<E extends AppEnv>(c: Context<E>, pathname: string, bo
   return c.json(json, isContentfulStatus(response.status) ? response.status : 502);
 }
 
-export function workspaceJson(
+function workspaceJson(
   workspace: WorkspaceRow | null,
   role?: string | null
 ): { id: string; name: string; handle: string; role?: string | null } | null {
@@ -1026,7 +1026,7 @@ export function workspaceJson(
   };
 }
 
-export function httpError(status: ContentfulStatusCode, message: string): HttpError {
+function httpError(status: ContentfulStatusCode, message: string): HttpError {
   return Object.assign(new Error(message), { status });
 }
 

@@ -1,6 +1,8 @@
-# htmlartifact on Cloudflare Workers: artifacts in R2, data in D1, accounts
-# and workspaces in WorkOS. Secrets (wrangler secret put): WORKOS_API_KEY,
-# WORKOS_CLIENT_ID, HTMLARTIFACT_COOKIE_PASSWORD, WORKOS_WEBHOOK_SECRET.
+# Local development and tests only (bun run dev:local, bun run test).
+# Production deploys from deploy/app, deploy/usercontent and deploy/ops
+# (bun run deploy:all) and stores artifact HTML in D1, never R2. The R2 binding
+# below is local-only: the test suite runs once with it (HTMLARTIFACT_TEST_STORAGE=r2)
+# and once without it (d1).
 name = "htmlartifact"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"

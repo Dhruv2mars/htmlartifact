@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in the CLI, web app or service doesn't work.
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security problems go to a private advisory, not here** (see SECURITY.md).
+        Please don't paste artifact HTML, tokens, invite codes or other workspace data.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. npx htmlartifact upload plan.html
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where
+      options:
+        - CLI
+        - Web app
+        - Artifact viewing / sandbox
+        - Workspaces, invites or sign-in
+        - Self-hosting / deployment
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: CLI version
+      description: Output of `npx htmlartifact --version`, if you used the CLI.
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Node.js version, browser; hosted service or your own deployment.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output
+      description: Error messages or `--json` output, with secrets removed.
+      render: shell

@@ -32,6 +32,3 @@ export const ChevronDown = (p: P) => (
 export const SearchIcon = (p: P) => (
   <svg {...base} {...p}><circle cx="7" cy="7" r="4.25" /><path d="m10.25 10.25 3.5 3.5" /></svg>
 );
-export const PlusIcon = (p: P) => (
-  <svg {...base} {...p}><path d="M8 3v10M3 8h10" /></svg>
-);

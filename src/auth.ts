@@ -103,16 +103,9 @@ export async function sessionViewer<E extends AppEnv>(
   });
 }
 
-// "member" | "anonymous" | "denied" for reading `draft` (may be null).
-export async function canReadDraft<E extends AppEnv>(
-  c: Context<E>,
-  draft: DraftRow | null
-): Promise<"member" | "anonymous" | "denied"> {
-  return (await draftAccess(c, draft)).access;
-}
-
-// canReadDraft, plus who asked and how: `bearer` is true for CLI tokens and
-// API keys, false for browser sessions.
+// "member" | "anonymous" | "denied" for reading `draft` (may be null), plus
+// who asked and how: `bearer` is true for CLI tokens and API keys, false for
+// browser sessions.
 export async function draftAccess<E extends AppEnv>(
   c: Context<E>,
   draft: DraftRow | null
@@ -170,7 +163,7 @@ export async function activeMembership<E extends AppEnv>(
 }
 
 // Workspace row for an organization, created from WorkOS on first sight.
-export async function ensureWorkspace<E extends AppEnv>(c: Context<E>, organizationId: string): Promise<WorkspaceRow | null> {
+async function ensureWorkspace<E extends AppEnv>(c: Context<E>, organizationId: string): Promise<WorkspaceRow | null> {
   const existing = await findWorkspace(c.env.DB, organizationId);
   if (existing) return existing;
   // A deleted workspace is never re-created from WorkOS.

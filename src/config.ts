@@ -107,5 +107,8 @@ function parseSandboxOrigin(value: string | undefined, publicBaseUrl: string | n
 }
 
 function trimSlash(value: string | undefined): string | undefined {
-  return typeof value === "string" && value ? value.replace(/\/+$/, "") : value;
+  if (typeof value !== "string") return value;
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
 }

@@ -20,7 +20,7 @@ export interface Capability {
   exp: number;
 }
 
-export const CAPABILITY_TTL_SECONDS = 60 * 60;
+const CAPABILITY_TTL_SECONDS = 60 * 60;
 const CONTEXT = "htmlartifact:sandbox-capability:v1";
 
 function sign(secret: string, payload: string): string {

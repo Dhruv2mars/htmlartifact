@@ -66,13 +66,15 @@ the workspace's artifacts, and join with a code or a `/join/<code>` link.
 
 ## Architecture
 
-No servers to run. htmlartifact is one Cloudflare Worker:
+No servers to run. One Worker bundle (`src/index.ts`) is deployed to two
+Cloudflare Pages projects, plus a small ops Worker:
 
 | Piece | Service |
 |---|---|
-| API, web pages, artifact serving | Cloudflare Workers ([Hono](https://hono.dev)) |
-| Artifact HTML | Cloudflare R2, or D1 until R2 is switched on (see Storage) |
-| Artifact index, invites, caches | Cloudflare D1 (schema created automatically) |
+| API, web pages | Pages project `htmlartifact` ([Hono](https://hono.dev)), https://htmlartifact.pages.dev |
+| Artifact HTML, served to viewers | Pages project `htmlartifact-usercontent`: the same bundle on a separate, cross-site origin (SECURITY.md) |
+| Cron (deletion retries, 30-day retention) and rate limits | Worker `htmlartifact-ops` (`src/ops.ts`) |
+| Artifact HTML, index, invites, caches | Cloudflare D1 (schema created automatically; see Storage) |
 | Accounts, sign-up, workspaces (organizations), SSO | [WorkOS](https://workos.com) AuthKit |
 | Web pages | React Router (SSR) in `web/`, rendered by the Worker; Hono decides the page and its status |
 | CLI | TypeScript + [Effect](https://effect.website), bundled by Bun for Node.js ≥ 20.10, published to npm, run with `npx` |
@@ -87,8 +89,12 @@ HTMLARTIFACT_API_URL=http://localhost:8787 node dist/htmlartifact.js login
 bun run typecheck:cli
 bun run dev:web     # the web app alone (React Router + Vite) with fixture data, http://localhost:5173
 bun run build:web   # web/build: the SSR bundle the Worker imports, plus static assets
+bun run typecheck && bun run typecheck:cli && bun run typecheck:web
+bun run lint        # knip: unused files, exports and dependencies
 bun run test        # builds the CLI, then the full suite twice: D1 storage, then R2 (real Worker + official WorkOS emulator)
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 `dev:local` seeds `alice@`, `bob@` and `carol@example.com`. Sign in with any of
 them on the emulator's login page. The CLI's browser sign-in is auto-approved
@@ -130,25 +136,32 @@ with SHA-256 verification), and the suite tests both backends, but enabling
 R2 is optional future work only if Cloudflare ever offers a hard cap that
 guarantees $0.
 
-## Deploying (later)
+## Deploying
 
-1. WorkOS:
-   - Create an environment and enable AuthKit.
-   - Add the redirect URI `https://<host>/auth/callback`.
-   - Add a webhook to `https://<host>/webhooks/workos` for these events:
-     - `organization_membership.*`
-     - `user.deleted`
-     - `session.revoked`
-     - `api_key.revoked`, `api_key.deleted`
-     (`bun scripts/workos-setup.ts` does all of this through the WorkOS API.)
-2. Cloudflare:
-   - Run `wrangler d1 create htmlartifact` and put the ID in `wrangler.toml`.
-   - Run `wrangler secret put` for `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`,
-     `WORKOS_WEBHOOK_SECRET` and `HTMLARTIFACT_COOKIE_PASSWORD` (32+ chars).
-   - Run `bun run deploy`.
-3. The CLI defaults to `https://htmlartifact.pages.dev` (`DEFAULT_API_URL` in
-   `cli/env.ts`). Publish it to npm; `prepublishOnly` builds the bundle, so
-   the package has no runtime dependencies.
+Production deploys from `main` through GitHub Actions (`.github/workflows/deploy.yml`);
+`staging` deploys to https://staging.htmlartifact.pages.dev. To run your own copy:
+
+1. Cloudflare: create the Pages projects `htmlartifact` and
+   `htmlartifact-usercontent` and a D1 database, and put its ID in
+   `deploy/app/wrangler.toml`, `deploy/usercontent/wrangler.toml` and
+   `deploy/ops/wrangler.toml` (the hostnames in those files are this
+   deployment's; change them for yours).
+2. WorkOS: create an environment with AuthKit, put `WORKOS_API_KEY` and
+   `WORKOS_CLIENT_ID` in `~/.config/htmlartifact/workos.env`, set your app's
+   URL in `scripts/workos-setup.ts` (`app`, hardcoded to this deployment), and
+   run `bun scripts/workos-setup.ts`. It registers the redirect URI
+   `<app>/auth/callback` and the webhook `<app>/webhooks/workos`
+   (`organization_membership.*`, `organization.deleted`, `user.deleted`,
+   `session.revoked`, `api_key.revoked`), and stores the secrets on both Pages
+   projects and the ops Worker.
+3. Set `HTMLARTIFACT_COOKIE_PASSWORD` (32+ characters) the same way on both
+   Pages projects: `bunx wrangler pages secret put HTMLARTIFACT_COOKIE_PASSWORD --project-name=<project>`.
+4. `bun run deploy:all` (ops Worker, then both Pages projects), then
+   `bun run smoke -- https://<app host>`.
+
+The CLI defaults to `https://htmlartifact.pages.dev` (`DEFAULT_API_URL` in
+`cli/env.ts`); point it elsewhere with `HTMLARTIFACT_API_URL`. Releases are
+published to npm by CI ([CONTRIBUTING.md](CONTRIBUTING.md#releasing)).
 
 ## Credits
 
@@ -157,6 +170,10 @@ htmlartifact started from the MIT-licensed npm release of
 validator, artifact serving rules and CLI upload flow come from it. See
 `NOTICE`.
 
+## Security
+
+Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT
+[MIT](LICENSE). See [NOTICE](NOTICE) for attribution.

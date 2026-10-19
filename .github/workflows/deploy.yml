@@ -14,7 +14,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -28,9 +28,15 @@ jobs:
       - if: env.CLOUDFLARE_API_TOKEN != ''
         uses: oven-sh/setup-bun@v2
       - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: bun install --frozen-lockfile
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: bun run typecheck && bun run test
+        run: bun install --frozen-lockfile
+      # D1 only: production stores artifacts in D1. The required CI check runs
+      # the full suite (D1 and R2) on every PR.
+      - if: env.CLOUDFLARE_API_TOKEN != ''
+        run: bun run typecheck && bun run pretest && bun run test:d1
       - if: env.CLOUDFLARE_API_TOKEN != ''
         run: bun run deploy:all -- --branch "$BRANCH"
       - if: env.CLOUDFLARE_API_TOKEN != ''

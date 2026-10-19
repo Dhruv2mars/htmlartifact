@@ -74,7 +74,7 @@ export interface Config {
 
 // Per-request variables. `viewer` is set by the auth middleware
 // (requireUser / requireMember in api.ts, signedIn in web.ts).
-export interface Vars {
+interface Vars {
   config: Config;
   origin: string;
   viewer: Viewer | undefined;

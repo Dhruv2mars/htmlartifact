@@ -8,9 +8,19 @@ something goes wrong.
 ## Reporting a vulnerability
 
 Open a private advisory at
-<https://github.com/Dhruv2mars/htmlartifact/security/advisories/new>. Please do
-not open a public issue. We acknowledge within 2 business days and aim to fix
+<https://github.com/Dhruv2mars/htmlartifact/security/advisories/new>
+(Security tab → "Report a vulnerability"). Please do not open a public issue,
+discussion or pull request. We acknowledge within 2 business days and aim to fix
 critical issues within 7 days. We will credit you unless you ask us not to.
+
+Supported versions: the hosted service at https://htmlartifact.pages.dev runs
+`main`, and only the latest release of the `htmlartifact` CLI on npm gets fixes.
+
+In scope: the app and sandbox origins, the CLI, workspace isolation, the HTML
+validator and sandbox, authentication and offboarding. Please do not test
+against other people's workspaces or run load tests against the hosted service
+(it runs on free-tier quotas); `bun run dev:local` gives you a full local
+stack.
 
 ## What we store
 
@@ -63,13 +73,13 @@ Artifact HTML may contain inline script. It never runs on the app's origin:
 
 - **Artifacts:** `htmlartifact delete <id>` (the author or a workspace admin)
   makes the artifact unreadable immediately and deletes its stored HTML (every
-  version and every page, in R2 and D1) and its D1 rows in the same request.
+  version and every page) and its D1 rows in the same request.
   If any delete fails, a scheduled job retries within 15 minutes, so the grace
-  window is at most **15 minutes**. Artifact HTML is stored in D1, so deleted HTML also stays in D1 Time Travel
+  window is at most **15 minutes**. Deleted HTML also stays in D1 Time Travel
   history for its retention window (7 days on Workers Free), then is gone; see
   Backups.
 - **Workspaces:** `htmlartifact workspace delete --confirm <name>` (admins)
-  blocks access at once, then deletes every artifact's R2 objects, every D1 row
+  blocks access at once, then deletes every artifact's stored HTML, every D1 row
   for the workspace, its invites and caches, and the WorkOS organization (which
   ends every membership). Partial failures are retried by the scheduled job.
 - **People leaving:** removing a member (`workspace remove`, or the
@@ -102,8 +112,7 @@ Export a full SQL dump (for example before a risky migration):
 bunx wrangler d1 export htmlartifact --remote --output=htmlartifact-$(date +%F).sql
 ```
 
-Restoring D1 does not bring back R2 objects deleted after the restore point;
-those artifacts will 404.
+Artifact HTML lives in D1, so a restore brings back HTML and index together.
 
 ## Enterprise controls (WorkOS)
 

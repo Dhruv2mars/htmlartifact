@@ -44,7 +44,7 @@ export function readJson<T>(file: string, fallback: T): T {
 
 // Writes through a temp file and rename, so a crash or a concurrent CLI run
 // never leaves half-written JSON behind.
-export const writeJson = (file: string, value: unknown, mode = 0o600): Effect.Effect<void, CliError | FileError> =>
+const writeJson = (file: string, value: unknown, mode = 0o600): Effect.Effect<void, CliError | FileError> =>
   attempt(() => {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     const temp = `${file}.${process.pid}.tmp`;
@@ -66,7 +66,7 @@ export const writeJson = (file: string, value: unknown, mode = 0o600): Effect.Ef
 
 // Reads a JSON state file, or null when it does not exist. A corrupt file is
 // moved aside, not silently reset, so it can still be recovered by hand.
-export const readStateJson = <T>(file: string): Effect.Effect<T | null, CliError | FileError> =>
+const readStateJson = <T>(file: string): Effect.Effect<T | null, CliError | FileError> =>
   attempt(() => {
     let text: string;
     try {

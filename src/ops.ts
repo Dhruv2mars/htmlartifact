@@ -1,5 +1,5 @@
 // Worker "htmlartifact-ops" (deploy/ops): the jobs Cloudflare Pages cannot run.
-//   - scheduled(): retry queued deletions (R2 prefixes, WorkOS orgs) and erase
+//   - scheduled(): retry queued deletions (stored HTML, WorkOS orgs) and erase
 //     upload request metadata past the retention window. Every 15 minutes.
 //   - Ops.limit(): the Workers rate-limit binding, called by Pages over RPC.
 import { WorkerEntrypoint } from "cloudflare:workers";

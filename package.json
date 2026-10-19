@@ -1,7 +1,20 @@
 {
   "name": "htmlartifact",
   "version": "0.1.0",
-  "description": "Publish HTML artifacts from coding agents to your workspace. Only workspace members can open them.",
+  "description": "Publish HTML artifacts from coding agents to your team's workspace. Only workspace members can open them.",
+  "keywords": [
+    "html",
+    "artifacts",
+    "cli",
+    "coding-agents",
+    "claude-code",
+    "workos",
+    "cloudflare"
+  ],
+  "homepage": "https://htmlartifact.pages.dev",
+  "bugs": {
+    "url": "https://github.com/Dhruv2mars/htmlartifact/issues"
+  },
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -18,13 +31,11 @@
     "htmlartifact": "./dist/htmlartifact.js"
   },
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "bun scripts/deploy.ts",
     "build": "bun build cli/main.ts --target=node --minify-syntax --minify-whitespace --outfile dist/htmlartifact.js",
-    "build:binaries": "bun build cli/main.ts --compile --outfile release/htmlartifact",
     "typecheck:cli": "tsc -p cli/tsconfig.json",
     "pretest": "bun run build && bun run build:web",
     "typecheck": "tsc -p tsconfig.json",
+    "lint": "knip",
     "test": "bun run test:d1 && bun run test:r2",
     "test:d1": "HTMLARTIFACT_TEST_STORAGE=d1 node --test --test-concurrency=1 test/*.test.js",
     "test:r2": "HTMLARTIFACT_TEST_STORAGE=r2 node --test --test-concurrency=1 test/*.test.js",
@@ -62,8 +73,8 @@
     "effect": "^4.0.5",
     "entities": "6.0.1",
     "hono": "^4.13.13",
-    "isbot": "^5.2.2",
     "jose": "^6.2.3",
+    "knip": "^6.42.0",
     "motion": "^14.3.0",
     "nanoid": "^5.1.5",
     "next-themes": "^0.4.6",

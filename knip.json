@@ -1,0 +1,37 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "cli/main.ts",
+    "src/ops.ts",
+    "scripts/*.{ts,tsx,mjs}",
+    "test/*.test.js"
+  ],
+  "project": [
+    "cli/**/*.ts",
+    "src/**/*.ts",
+    "scripts/**",
+    "test/**/*.js",
+    "web/**/*.{ts,tsx,mjs,css}"
+  ],
+  "vite": {
+    "config": [
+      "web/vite.config.ts"
+    ]
+  },
+  "react-router": {
+    "config": [
+      "web/react-router.config.ts"
+    ]
+  },
+  "ignoreDependencies": [
+    "@fontsource/archivo",
+    "cloudflare"
+  ],
+  "ignoreUnresolved": [
+    "scripts/migrate-blobs-to-r2.ts",
+    "\\./\\+types/.+"
+  ],
+  "rules": {
+    "types": "off"
+  }
+}

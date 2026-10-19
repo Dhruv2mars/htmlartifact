@@ -296,7 +296,7 @@ export async function setRevokedAtEpoch(
   }
 }
 
-export async function forgetMembership(db: D1Database, userId: string, organizationId: string): Promise<void> {
+async function forgetMembership(db: D1Database, userId: string, organizationId: string): Promise<void> {
   await db
     .prepare("DELETE FROM memberships WHERE user_id = ? AND organization_id = ?")
     .bind(userId, organizationId)

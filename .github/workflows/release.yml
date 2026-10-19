@@ -1,26 +1,64 @@
 name: Release
-# Publishes the CLI to npm with provenance when a v* tag is pushed. Uses npm
-# trusted publishing (OIDC): enable it once on npmjs.com for this repo and
-# workflow (Package settings -> Trusted publishers).
+# Releases whatever version package.json says, once: when `vX.Y.Z` is not
+# tagged yet, publish htmlartifact@X.Y.Z to npm (trusted publishing, so no
+# token and automatic provenance), then create the tag and a GitHub release
+# from CHANGELOG.md. Tag = package.json = npm version. CONTRIBUTING.md → Releasing.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
-  id-token: write
+concurrency:
+  group: release
+  cancel-in-progress: false
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: write # create the tag and release
+      id-token: write # npm trusted publishing
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v4
+      - id: plan
+        name: Decide what to release
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "::notice::v$version is already released."
+            echo "action=none" >> "$GITHUB_OUTPUT"
+          elif npm view "htmlartifact@$version" version >/dev/null 2>&1; then
+            echo "action=tag" >> "$GITHUB_OUTPUT"
+          elif npm view htmlartifact name >/dev/null 2>&1; then
+            echo "action=publish" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::htmlartifact is not on npm yet. The first publish is manual (CONTRIBUTING.md → Releasing)."
+            echo "action=none" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.plan.outputs.action == 'publish'
+        uses: oven-sh/setup-bun@v2
+      - if: steps.plan.outputs.action == 'publish'
+        uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck:cli && bun run test
-      - run: bun run build
-      - run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
-      - run: npm publish --provenance --access public
+      - if: steps.plan.outputs.action == 'publish'
+        name: Check, test and publish
+        run: |
+          npm install -g npm@latest # trusted publishing needs npm >= 11.5.1
+          bun install --frozen-lockfile
+          bun scripts/changelog.ts check
+          bun run typecheck:cli
+          bun run test
+          npm publish --access public
+      - if: steps.plan.outputs.action != 'none'
+        name: Tag and create the GitHub release
+        run: |
+          version=${{ steps.plan.outputs.version }}
+          awk -v v="$version" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && (/^## / || /^\[[^]]*\]: /) {exit} on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "::error::CHANGELOG.md has no section for $version"; exit 1; }
+          gh release create "v$version" --target "$GITHUB_SHA" --title "v$version" --notes-file notes.md

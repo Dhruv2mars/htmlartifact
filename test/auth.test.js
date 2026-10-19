@@ -213,7 +213,7 @@ describe("publishing", () => {
     const newest = won.reduce((a, b) => (b.body.versionNumber > a.body.versionNumber ? b : a), first);
     const served = await read(first.body.publicUrl, alice);
     assert.equal(served.headers.get("x-htmlartifact-draft-version"), String(newest.body.versionNumber));
-    assert.match(served.text, new RegExp(newest.body.title.replace(/ /g, " ")));
+    assert.ok(served.text.includes(newest.body.title), newest.body.title);
   });
 
   test("a CI organization API key publishes into its own workspace", async () => {
