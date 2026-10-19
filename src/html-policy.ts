@@ -319,6 +319,15 @@ class LimitedParser extends Parser<WalkMap> {
 // as before: implied, foster-parented, ignored, and merged tags, <template>
 // content, and <noscript> with scripting off.
 export function validateHtml(html: unknown, options: { maxBytes?: number } = {}): HtmlValidation {
+  // Source locations only matter for reporting issues, and tracking them costs
+  // CPU (Workers Free allows 10 ms per request). Clean pages, the common case,
+  // pass without them; a page with anything to report is parsed again with
+  // them, so every issue still carries its line and column.
+  const quick = validateHtmlPass(html, options, false);
+  return quick.issues.length === 0 ? quick : validateHtmlPass(html, options, true);
+}
+
+function validateHtmlPass(html: unknown, options: { maxBytes?: number }, locations: boolean): HtmlValidation {
   const maxBytes = options.maxBytes ?? Infinity;
   // Until the tree builder places a node anywhere but the end of the
   // document, insertion order is document order and a counter compares
@@ -558,7 +567,7 @@ export function validateHtml(html: unknown, options: { maxBytes?: number } = {})
   try {
     // scriptingEnabled: false so <noscript> children parse as real elements:
     // a reader without JavaScript sees them, so the policy must see them too.
-    LimitedParser.parse(html, { scriptingEnabled: false, sourceCodeLocationInfo: true, treeAdapter: adapter });
+    LimitedParser.parse(html, { scriptingEnabled: false, sourceCodeLocationInfo: locations, treeAdapter: adapter });
   } catch (error) {
     // A page past a limit stops parsing at the first element over it. Issues
     // later in the page go unreported; the page fails anyway.

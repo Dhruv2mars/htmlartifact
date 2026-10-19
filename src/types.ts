@@ -27,6 +27,9 @@ export interface Env {
   // "on" once WorkOS has enabled AuthKit Directory Provisioning for this
   // environment; until then Directory Sync setup links are refused.
   HTMLARTIFACT_DIRECTORY_PROVISIONING?: string;
+  // "on" to offer SSO and Directory Sync setup links. WorkOS bills each SSO or
+  // directory connection (per month), so they are off unless chosen.
+  HTMLARTIFACT_ENTERPRISE_CONNECTIONS?: string;
   // Service binding to the ops Worker's `Ops` entrypoint (src/ops.ts). When
   // absent (local dev, tests), rate limits fall back to an in-memory window.
   OPS?: OpsService;
@@ -57,6 +60,7 @@ export interface Config {
     webhookSecret: string | null;
     membershipCacheSeconds: number;
     directoryProvisioning: boolean;
+    enterpriseConnections: boolean;
   };
   invites: { ttlDays: number; maxUses: number };
 }

@@ -15,7 +15,7 @@ let stack;
 let home;
 
 before(async () => {
-  stack = await startStack();
+  stack = await startStack({ enterpriseConnections: true });
   home = path.join(stack.tmp, "cli-home");
 });
 

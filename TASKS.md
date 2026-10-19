@@ -1,5 +1,12 @@
 # htmlartifact — GA checklist
 
+## Dashboard setup (2026-10-19)
+Done = requested WorkOS credentials saved and checked without exposing values, MFA saved, support request sent, and Cloudflare GitHub secrets listed; any blocked step records its exact stopping point.
+- [x] WorkOS environment and local credential file (directory 700, file 600): Staging; Production requires billing. Existing key copied through clipboard, values not printed.
+- [x] WorkOS AuthKit TOTP MFA: enabled AuthKit prerequisite in Staging; Authentication → Features → Multi-factor auth changed Off → Required, saved and verified Required.
+- [x] WorkOS Directory Provisioning support request: exact requested text sent through dashboard Contact support; confirmed “Message sent” / email follow-up; no ticket ID or environment-ID field shown.
+- [x] Cloudflare scoped deploy token and GitHub Actions secrets: htmlartifact GitHub Actions Active, 1 Account, Pages/Workers Scripts/D1 Edit + Account Settings/User Details Read, no expiry/IP filter; CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID verified by name in Dhruv2mars/htmlartifact. Clipboard cleared.
+
 **Done =** in production at https://htmlartifact.pages.dev, two real accounts
 walk the CLI flow end to end (sign up → create workspace → invite → join →
 publish → member opens artifact → outsider blocked), and deleting an artifact
@@ -32,7 +39,9 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
 - [ ] Once real WorkOS keys land, verify: /portal/revoke_link responses (unknown user → ?), org API key values start with `sk_`, revokeSession 404 for unknown session
 - [x] Review round 13 (Claude Opus): validator stops at depth limit, caps attributes (linear duplicate check; parse5 pinned 7.3.0), checks declarative shadow roots; IPv6 /64 limits; recently-valid keys skip IP bucket; streamed body size limit; CLI lock/rename hardening — 155/155
 - [x] D1 blob storage (R2 needs a card): `blobs` chunked ≤1 MB, written in the version's atomic batch; R2 when ARTIFACTS bound (reads fall back to D1); deletion clears both; suite runs on both backends; `bun run migrate:r2` (copy → SHA-256 verify → delete from D1; refuses to delete until /healthz says r2); README Storage section
-- [ ] Tomorrow (Dhruv's card): enable R2 + Workers Paid ($5/mo: Free caps CPU at 10 ms/request ≈ uploads > ~150 KB fail with 1102), then README → Storage → Switching to R2
+- [x] Zero-spend policy (Dhruv: not a penny): no card on Cloudflare — R2 has no hard cap, Workers Paid is $5/mo. Production stays on Workers Free + D1 permanently. SSO/Directory Sync links off by default (WorkOS bills $125/connection/mo); `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` to offer them
+- [x] Validation parses without source locations first (re-parses with them only to report issues): ~10–25% less CPU
+- [ ] Measure production CPU per upload size on Workers Free; set D1 upload limit to what passes reliably
 - [x] Final Codex review (gpt-6.1-sol): one finding (migration could re-upload HTML of an artifact deleted mid-copy) → fixed: post-upload reference check drops it (queued retry), script refuses to run until the app reads R2; everything else confirmed (157/157 on D1 and on R2)
 - [x] PR #1 opened (ga/production → main); not merged (Dhruv merges)
 - [x] SECURITY.md (data handling, incident response, D1 Time Travel backups/restore) — revisit once Phase 2 lands
@@ -40,12 +49,12 @@ provably removes its stored HTML (every version; D1 blobs until R2 is on).
 ## Phase 3 — WorkOS (scoped)
 - [x] SSO (SAML/OIDC) via Admin Portal link: `workspace sso`
 - [x] Directory Sync (SCIM) via Admin Portal link: `workspace directory`; dsync deprovisioning revokes access (membership webhooks)
-- [ ] MFA on in AuthKit (config only; documented)
+- [x] MFA on in AuthKit (Staging; Multi-factor auth Required, saved 2026-10-19)
 - Dropped by Dhruv: Vault/encryption, Audit Logs, Events API, Radar, extra roles, FGA, domain auto-join, export
 
 ## Blocked on Dhruv
-- [ ] Write WorkOS keys to `~/.config/htmlartifact/workos.env`
-- [ ] Ask WorkOS support to enable AuthKit Directory Provisioning; then set `HTMLARTIFACT_DIRECTORY_PROVISIONING=on` (deploy/app vars) and redeploy
+- [x] Write WorkOS keys to `~/.config/htmlartifact/workos.env` (Staging; verified 2026-10-19)
+- [ ] WorkOS support asked 2026-10-19 to enable AuthKit Directory Provisioning (message sent, email follow-up pending); after confirmation set `HTMLARTIFACT_DIRECTORY_PROVISIONING=on` (deploy/app vars) and redeploy
 
 ## Phase 4 — Production
 - [x] Pages configs `deploy/app`, `deploy/usercontent`, `deploy/ops`; `scripts/build-pages.ts` (verified with `wrangler pages dev`)

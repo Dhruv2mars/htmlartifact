@@ -373,6 +373,14 @@ export function registerApi(app: Hono<AppEnv>): void {
     // directory users to accounts and deactivates the membership (and revokes
     // sessions) when the directory removes someone; the membership webhook
     // ends access here. Without it a directory would sync but never offboard.
+    // SSO and directory connections are billed by WorkOS per connection: a
+    // customer's admin could otherwise start a bill by opening this link.
+    if ((intent === "sso" || intent === "dsync") && !c.get("config").workos.enterpriseConnections) {
+      return c.json(
+        { ok: false, error: `${intent === "sso" ? "SSO" : "Directory Sync"} isn't available on this deployment yet. Contact support to enable it.` },
+        409
+      );
+    }
     if (intent === "dsync" && !c.get("config").workos.directoryProvisioning) {
       return c.json({ ok: false, error: "Directory Sync isn't available yet. Contact support to enable it." }, 409);
     }

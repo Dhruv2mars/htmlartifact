@@ -433,12 +433,14 @@ describe("web app", () => {
   });
 });
 
-describe("Directory Sync", () => {
-  test("setup links are refused until AuthKit Directory Provisioning is enabled (deprovisioning depends on it)", async () => {
+describe("Enterprise connections", () => {
+  test("SSO and Directory Sync links are off unless enabled (WorkOS bills each connection); domain verification is not", async () => {
     const alice = await accessToken(stack, "alice@acme.test", "Acme");
-    const dsync = await callApi(stack, alice, "POST", "/api/workspaces/portal", { intent: "dsync" });
-    assert.equal(dsync.status, 409);
-    assert.match(dsync.body.error, /Directory Sync isn't available yet/);
-    assert.equal((await callApi(stack, alice, "POST", "/api/workspaces/portal", { intent: "sso" })).status, 200);
+    for (const [intent, label] of [["sso", "SSO"], ["dsync", "Directory Sync"]]) {
+      const result = await callApi(stack, alice, "POST", "/api/workspaces/portal", { intent });
+      assert.equal(result.status, 409, intent);
+      assert.match(result.body.error, new RegExp(`${label} isn't available on this deployment yet`));
+    }
+    assert.equal((await callApi(stack, alice, "POST", "/api/workspaces/portal", { intent: "domain_verification" })).status, 200);
   });
 });

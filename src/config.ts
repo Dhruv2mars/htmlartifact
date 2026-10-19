@@ -59,6 +59,7 @@ export function getConfig(env: Env): Config {
       issuer: env.WORKOS_ISSUER || null,
       webhookSecret: env.WORKOS_WEBHOOK_SECRET || null,
       directoryProvisioning: env.HTMLARTIFACT_DIRECTORY_PROVISIONING === "on",
+      enterpriseConnections: env.HTMLARTIFACT_ENTERPRISE_CONNECTIONS === "on",
       // How long a confirmed membership is trusted before asking WorkOS again.
       membershipCacheSeconds: Number(env.HTMLARTIFACT_MEMBERSHIP_CACHE_SECONDS || 300)
     },

@@ -510,7 +510,7 @@ const ROUTES = {
     async run(key) {
       for (const actor of apiActors()) {
         const res = await call(actor, "POST", "/api/workspaces/portal", {
-          intent: "sso",
+          intent: "domain_verification",
           organization: A.org.id,
           organization_id: A.org.id
         });

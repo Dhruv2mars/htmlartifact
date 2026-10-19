@@ -89,7 +89,7 @@ export function testConfigPath() {
   return generatedConfig;
 }
 
-export async function startStack({ sandbox = false, directoryProvisioning = false } = {}) {
+export async function startStack({ sandbox = false, directoryProvisioning = false, enterpriseConnections = directoryProvisioning } = {}) {
   const emulator = await createEmulator({ port: 0, requestsPerMinute: 100_000, seed: SEED });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-test-"));
   const port = sandbox ? await freePort() : undefined;
@@ -107,6 +107,7 @@ export async function startStack({ sandbox = false, directoryProvisioning = fals
       WORKOS_WEBHOOK_SECRET: WEBHOOK_SECRET,
       HTMLARTIFACT_COOKIE_PASSWORD: COOKIE_PASSWORD,
       ...(directoryProvisioning ? { HTMLARTIFACT_DIRECTORY_PROVISIONING: "on" } : {}),
+      ...(enterpriseConnections ? { HTMLARTIFACT_ENTERPRISE_CONNECTIONS: "on" } : {}),
       ...(sandbox
         ? { HTMLARTIFACT_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, HTMLARTIFACT_SANDBOX_ORIGIN: sandboxUrl }
         : {})

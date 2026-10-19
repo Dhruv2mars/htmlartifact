@@ -41,7 +41,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `list [--all]` | Your artifacts, or the whole workspace's |
 | `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |
-| `workspace sso` / `directory` / `domains` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC), SCIM directory, or domain verification (admins) |
+| `workspace sso` / `directory` / `domains` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC), SCIM directory, or domain verification (admins). SSO and directory links are off unless the deployment sets `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` (WorkOS bills each connection) |
 | `check <path>` | Validate against the rules without publishing |
 
 Every command takes `--json` for agents. In CI, set `HTMLARTIFACT_TOKEN` to a
@@ -94,8 +94,10 @@ as Alice.
 ## Storage
 
 Artifact HTML is stored in R2 when the Worker has an `ARTIFACTS` bucket bound,
-and in D1 otherwise (`src/storage.ts`). Production starts on D1 because R2
-needs a card on the Cloudflare account.
+and in D1 otherwise (`src/storage.ts`). Production runs on D1 on Cloudflare's
+free plans, by policy: Workers Free and D1 Free stop at their limits instead of
+billing, while R2 needs a card and has no hard spending cap. Switch to R2 only
+if paying for overage is acceptable.
 
 - **D1:** each object is split into ≤ 1 MB rows of a `blobs` table, written in
   the same atomic batch as the version that references them, so a fresh
@@ -107,7 +109,11 @@ needs a card on the Cloudflare account.
   so objects stored before the switch keep working.
 - Deleting an artifact or workspace deletes its objects in both.
 
-**Switching to R2 (no downtime):**
+Workers Free also caps CPU at 10 ms per request, and validating HTML costs
+about 45 ms per MB, so the D1 defaults above are reduced further to what
+production measures as reliable (see `deploy/app/wrangler.toml` vars).
+
+**Switching to R2 (no downtime), if ever:**
 
 1. Enable R2 in the Cloudflare dashboard (needs a payment method), then:
    `bunx wrangler r2 bucket create htmlartifact-artifacts` (and

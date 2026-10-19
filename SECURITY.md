@@ -65,9 +65,10 @@ Artifact HTML may contain inline script. It never runs on the app's origin:
   makes the artifact unreadable immediately and deletes its stored HTML (every
   version and every page, in R2 and D1) and its D1 rows in the same request.
   If any delete fails, a scheduled job retries within 15 minutes, so the grace
-  window is at most **15 minutes**. While artifact HTML is stored in D1 (before
-  R2 is switched on), deleted HTML also stays in D1 Time Travel history for its
-  retention window (7 days on Workers Free, 30 on Paid); see Backups.
+  window is at most **15 minutes**. While artifact HTML is stored in D1 (production
+  runs on D1 by its zero-cost policy), deleted HTML also stays in D1 Time Travel
+  history for its retention window (7 days on Workers Free, 30 on Paid), then is
+  gone; see Backups.
 - **Workspaces:** `htmlartifact workspace delete --confirm <name>` (admins)
   blocks access at once, then deletes every artifact's R2 objects, every D1 row
   for the workspace, its invites and caches, and the WorkOS organization (which
@@ -79,9 +80,8 @@ Artifact HTML may contain inline script. It never runs on the app's origin:
   and email.
 - **Backups:** deleted D1 rows remain in D1 Time Travel history for its
   retention window (30 days on Workers Paid, 7 on Free), then are gone. That
-  includes artifact HTML while it is stored in D1. R2 objects have no
-  versioning or backups: once deleted they cannot be restored, which is why
-  production moves artifact HTML to R2 as soon as R2 is enabled.
+  includes artifact HTML while it is stored in D1. R2 objects (if R2 is ever
+  enabled) have no versioning or backups: once deleted they cannot be restored.
 
 ## Backups and restore
 
@@ -109,7 +109,9 @@ those artifacts will 404.
 
 ## Enterprise controls (WorkOS)
 
-- **SSO (SAML/OIDC):** `htmlartifact workspace sso` gives an admin a WorkOS
+- **SSO (SAML/OIDC):** off unless the deployment sets
+  `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` (WorkOS bills each SSO and
+  directory connection). Then `htmlartifact workspace sso` gives an admin a WorkOS
   Admin Portal link to connect the company's identity provider;
   `workspace domains` verifies the email domain that routes people to it.
 - **Directory Sync (SCIM):** `htmlartifact workspace directory` gives an
