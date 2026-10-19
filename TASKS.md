@@ -31,7 +31,7 @@ Run 2 (live, CLI 0.1.1, MFA off, new accounts C dhruv+hae / D dhruv+haf):
 - [x] D opens `/join/<code>` signed out → "You're invited to a workspace" + `workspace join` command → sign-up → back on "Join Run Two"; before joining, `/d/<id>` → new 404 copy ("…a workspace you are not in… ask them for an invite"); Join → artifact opens
 - [x] **Found:** D `npx htmlartifact login` after joining in the browser → "You are not in a workspace yet" (the device flow reused the browser's pre-join AuthKit session, so the token has no organization; `workspace list` shows Run Two). Fixed in 0.1.2: login switches into the only workspace (or `--workspace`, or lists `workspace switch` commands); whoami says so. Verified live with the local build: "Workspace: Run Two"
 - [x] D CLI: `list --all` → `read <id> --out` (byte-identical) → `delete <C's id>` → "That artifact belongs to a teammate; only they or a workspace admin can delete it." → own upload → `delete <url>`; C `delete` → D `read` → 404 with hint
-- [ ] 0.1.2 on npm via Release; Deploy (new workflow) green on main; smoke green
+- [x] Shipped: PR #10 (Deploy after CI, Sol-reviewed in 2 rounds: tip check, FIFO `queue: max`, same-repo and main/staging-only dispatch, token scoped to the deploy step) → first run f106c90 deployed in 44 s, smoke 11/11; PR #11 (1af6c51) → Release published htmlartifact@0.1.2 with provenance, tag v0.1.2; Deploy green; `npx htmlartifact@latest --version` → 0.1.2; smoke 11/11
 
 WorkOS thread (Dhruv approved), after run 1: MFA turned off (SECURITY.md updated), AuthKit branded "htmlartifact" with the site icon, sign-out URI set. Not ours to change: Staging emails ("[STAGING]", welcome@workos.dev) and the `*.authkit.app` device link stay until the post-GA Production move.
 
