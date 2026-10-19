@@ -146,7 +146,8 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4`}
           <Section id="publishing" title="What you can publish">
             <p>
               A single <code>.html</code> file, or a folder of pages with an <code>index.html</code>. Run <code>check</code> first to see
-              whether it passes the rules (size limits, page count, markup) without publishing anything.
+              whether it passes the rules (size limits, page count, markup) without publishing anything. Each workspace holds up to 50 MiB of
+              HTML across all versions; delete old artifacts to make room.
             </p>
             <Code code={`npx htmlartifact check ./report\nnpx htmlartifact upload ./report --slug q4-report`} />
             <p>
@@ -158,7 +159,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4`}
           <Section id="self-host" title="Run your own">
             <p>
               htmlartifact is one Cloudflare Worker: Workers for the API, web pages and artifact serving, D1 for the index and the
-              artifact HTML (or R2, where it is switched on), and WorkOS AuthKit for accounts and workspaces. It runs on free tiers. The{" "}
+              artifact HTML, and WorkOS AuthKit for accounts and workspaces. It runs on free tiers. The{" "}
               <a href={`${REPO_URL}#deploying-later`}>README</a> walks through setting it up, and{" "}
               <a href={`${REPO_URL}/blob/main/SECURITY.md`}>SECURITY.md</a> covers data handling.
             </p>
