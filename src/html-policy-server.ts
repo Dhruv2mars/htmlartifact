@@ -506,7 +506,7 @@ const BEFORE_TITLE = new Set(["html", "head", "meta", "link", "base", "body"]);
 // tags above, then <title>. Then that <title> is the first in document order
 // and its text runs to "</title" (RCDATA). Returns undefined when the page
 // does not start that way, or the title has no text (a later one may).
-function leadingTitle(html: string): string | undefined {
+function leadingTitle(html: string, restore: (text: string) => string): string | undefined {
   let i = 0;
   for (;;) {
     const lt = html.indexOf("<", i);
@@ -543,14 +543,14 @@ function leadingTitle(html: string): string | undefined {
       end.lastIndex = i;
       const found = end.exec(html);
       const text = sourceText(html.slice(i, found ? found.index : undefined), false, true);
-      return /\S/.test(text) ? (titleText(text) ?? undefined) : undefined;
+      return /\S/.test(text) ? (titleText(restore(text)) ?? undefined) : undefined;
     }
   }
 }
 
 // The first <title> with text, when the first TITLES_MARKED had none: every
 // title is read, outside templates (a rare second pass).
-async function laterTitle(html: string): Promise<string | null> {
+async function laterTitle(html: string, restore: (text: string) => string): Promise<string | null> {
   const texts: string[] = [];
   let open = -1;
   let templates = 0;
@@ -582,7 +582,7 @@ async function laterTitle(html: string): Promise<string | null> {
   // Text chunks hold no markup, foreign or not: decode references only.
   for (const raw of texts) {
     const text = sourceText(raw, false, true);
-    if (/\S/.test(text)) return titleText(text);
+    if (/\S/.test(text)) return titleText(restore(text));
   }
   return null;
 }
@@ -594,7 +594,9 @@ const ambiguousForeign = (tag: string, root: string) =>
   `Blocked <${tag}> in <${root}>, where browsers can read the markup after it in two ways.`;
 
 // One reading of the page.
-async function readPage(html: string): Promise<PassResult> {
+// `restore` maps title text back to the page's own spelling before it is
+// trimmed (the <noscript> pass renames tags; see validateHtml).
+async function readPage(html: string, restore: (text: string) => string = (text) => text): Promise<PassResult> {
   const found = scan(html);
   const issues = createIssueList<never>();
   const sandbox = new Set<string>();
@@ -602,7 +604,7 @@ async function readPage(html: string): Promise<PassResult> {
   let hasScripts = false;
   // Usually the title is the first thing in the page: read it from the
   // source and spare a callback for every <title> tooltip in a chart.
-  const leading = leadingTitle(html);
+  const leading = leadingTitle(html, restore);
   const selectors = selectorsFor(found, Boolean(leading));
   const noscript = found.tags.has("noscript");
   if (!selectors.length) {
@@ -725,7 +727,8 @@ async function readPage(html: string): Promise<PassResult> {
     },
     title: () => {
       if (inTemplate()) return;
-      if (++titlesSeen <= TITLES_MARKED) titles.push({ id: mark(current), foreign: foreignDepth > 0 });
+      // A title inside <foreignObject>/<desc> is an HTML element again.
+      if (++titlesSeen <= TITLES_MARKED) titles.push({ id: mark(current), foreign: !currentIsHtml });
     },
     imageHost: (host) => hosts.add(host)
   };
@@ -768,7 +771,10 @@ async function readPage(html: string): Promise<PassResult> {
     const from = starts[id];
     if (from === undefined) return "";
     const to = ends[id];
-    const text = output.slice(from + markerLength(id), to).replace(markers, "");
+    let text = output.slice(from + markerLength(id), to).replace(markers, "");
+    // No end marker: the element ran to the end of the page, where an end tag
+    // cut off mid-tag ("</title x") is not text (parse5 drops it).
+    if (to === undefined) text = text.replace(/<\/(?:title|script)(?=[\t\n\f\r />]|$)[\s\S]*$/i, "");
     return sourceText(text, foreign, decode);
   };
   for (const script of output ? scripts : []) {
@@ -792,13 +798,13 @@ async function readPage(html: string): Promise<PassResult> {
   for (const candidate of output && !title ? titles : []) {
     const text = between(candidate.id, candidate.foreign, true);
     if (/\S/.test(text)) {
-      title = titleText(text);
+      title = titleText(restore(text));
       break;
     }
   }
   if (output && !title && titlesSeen > TITLES_MARKED) {
     try {
-      title = await laterTitle(html);
+      title = await laterTitle(html, restore);
     } catch {
       // Fail closed: a page the second pass cannot read is refused.
       issues.error("parse-failed", "HTML document could not be parsed.");
@@ -832,13 +838,14 @@ async function validateHtml(html: unknown, options: { maxBytes?: number } = {}):
     let prefix = "";
     do prefix = `ha${crypto.randomUUID().slice(0, 8)}`;
     while (source.toLowerCase().includes(`${prefix}noscript`));
-    const second = await readPage(source.replace(NOSCRIPT_TAG, `<$1${prefix}$2`));
+    const renamed = new RegExp(`<(\\/?)${prefix}(noscript)`, "gi");
+    // Titles get their original <noscript> spelling back before trimming.
+    const second = await readPage(source.replace(NOSCRIPT_TAG, `<$1${prefix}$2`), (text) => text.replace(renamed, "<$1$2"));
     for (const issue of second.issues) issues.merge(issue);
     hasScripts ||= second.hasScripts;
     for (const code of second.sandbox) sandbox.add(code);
     for (const host of second.hosts) hosts.add(host);
-    const renamed = new RegExp(`<(\\/?)${prefix}(noscript)`, "gi");
-    title = second.title?.replace(renamed, "<$1$2") ?? title;
+    title = second.title ?? title;
   }
 
   for (const api of SANDBOX_APIS) {
@@ -863,7 +870,7 @@ export function validateUpload(pages: PageInput[] | unknown, limits: UploadLimit
     '<img src="https://x.test/i.png" srcset="a.png 1x"><script>fetch(1)</script><link rel="stylesheet" href="https://x.test/a.css">' +
     '<svg viewBox="0 0 1 1"><rect x="0"><title>bar</title></rect><foreignObject><div>x</div></foreignObject><![CDATA[x]]></svg>';
   const found = scan(sample);
-  selectorsFor(found, Boolean(leadingTitle(sample)));
+  selectorsFor(found, Boolean(leadingTitle(sample, (text) => text)));
   foreignRegionProblem(sample.slice(sample.indexOf("<svg"), sample.lastIndexOf("</svg>")), "svg");
   const ignore = () => {};
   const sink: RuleSink = { error: ignore, warning: ignore, executableScript: ignore, handler: ignore, title: ignore, imageHost: ignore };
