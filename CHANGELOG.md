@@ -7,6 +7,22 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+## [0.1.1]
+
+Fixes from a first-time-user walkthrough of the live site and `npx htmlartifact`.
+
+### Fixed
+
+- Next-step hints and errors say `npx htmlartifact …` when the CLI was run
+  through npx, so a pasted hint no longer fails with "command not found".
+- `read` takes an artifact ID as well as a URL, like `delete`.
+- Deleting a teammate's artifact as a plain member says why (only its author
+  or a workspace admin can) instead of "Artifact not found".
+- `login` into a workspace ends with the next step (`upload`), and the upload
+  receipt's update command uses the path as you typed it.
+- Web: the sign-in page for an invite link says it's an invite and shows the
+  `workspace join` command; the artifact 404 says what to do next.
+
 ## [0.1.0]
 
 First release.
@@ -34,5 +50,6 @@ First release.
   HTML stored in D1), with per-workspace and database quotas and rate limits
   sized to them.
 
-[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Dhruv2mars/htmlartifact/releases/tag/v0.1.0

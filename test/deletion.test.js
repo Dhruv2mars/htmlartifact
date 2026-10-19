@@ -189,7 +189,7 @@ describe("artifact deletion", () => {
     assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${draftId}`)).status, 404);
   });
 
-  test("a plain member cannot delete a teammate's artifact (404, same as missing); an admin can", async () => {
+  test("a plain member cannot delete a teammate's artifact (403, says why); an admin can", async () => {
     const bob = await accessToken(stack, "bob@acme.test", "Acme");
     const max = await accessToken(stack, "max@both.test", "Acme");
     const alice = await accessToken(stack, "alice@acme.test", "Acme");
@@ -199,9 +199,10 @@ describe("artifact deletion", () => {
     const prefix = `orgs/${org.id}/drafts/${bobs.body.draftId}/`;
 
     const denied = await callApi(stack, max, "DELETE", `/api/drafts/${bobs.body.draftId}`);
-    const missing = await callApi(stack, max, "DELETE", "/api/drafts/zzzzzzzzzzzz");
-    assert.equal(denied.status, 404);
-    assert.deepEqual(denied.body, missing.body);
+    // They see it in the workspace list anyway, so say why instead of "not found".
+    assert.equal(denied.status, 403);
+    assert.match(denied.body.error, /belongs to a teammate/);
+    assert.equal((await callApi(stack, max, "DELETE", "/api/drafts/zzzzzzzzzzzz")).status, 404);
     assert.equal((await r2Keys(prefix)).length, 1, "still there");
 
     // Another workspace cannot reach it either.

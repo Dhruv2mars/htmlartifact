@@ -422,7 +422,9 @@ export function registerApi(app: Hono<AppEnv>): void {
 
   // Deletes an artifact for real: every version and page in R2 (one key
   // prefix) and every row in D1, which frees its custom URL. Its author or a
-  // workspace admin may delete it; to anyone else it does not exist (404).
+  // workspace admin may delete it. Other members already see it in the
+  // workspace list, so they get a 403 that says why; outside the workspace it
+  // does not exist (404).
   app.delete("/api/drafts/:draftId", requireMember, async (c) => {
     const viewer = c.get("viewer");
     const draftId = c.req.param("draftId");
@@ -431,8 +433,9 @@ export function registerApi(app: Hono<AppEnv>): void {
           .bind(draftId, viewer.organization_id)
           .first<Pick<DraftRow, "id" | "account_id">>()
       : null;
-    if (!draft || (draft.account_id !== viewer.account_id && viewer.role !== "admin")) {
-      return c.json({ ok: false, error: "Artifact not found." }, 404);
+    if (!draft) return c.json({ ok: false, error: "Artifact not found." }, 404);
+    if (draft.account_id !== viewer.account_id && viewer.role !== "admin") {
+      return c.json({ ok: false, error: "That artifact belongs to a teammate; only they or a workspace admin can delete it." }, 403);
     }
     // R2 is purged before responding; if it fails, the queued prefix is retried by the cron.
     await purgeDraft(c.env, viewer.organization_id, draft.id);
