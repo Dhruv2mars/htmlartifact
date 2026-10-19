@@ -18,11 +18,14 @@ permissions:
 concurrency:
   group: deploy-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
+  # FIFO: a re-run for an older commit must not replace a newer pending deploy
+  # (the default keeps one pending run); the tip check then skips the stale one.
+  queue: max
 jobs:
   deploy:
-    # A manual run, or a push to main/staging in this repository whose CI passed.
+    # A manual run of main or staging, or a push to either in this repository whose CI passed.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')) ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
