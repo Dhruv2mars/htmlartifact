@@ -1,43 +1,80 @@
 name: Deploy
 # main -> production (htmlartifact.pages.dev), staging -> staging.htmlartifact.pages.dev.
+# Runs once CI has passed on a pushed commit and deploys exactly that commit:
+# CI runs the full suite (D1 and R2), so it is not run again here (re-running
+# it doubled the wait and its local-SQLite flakes cancelled deploys). A manual
+# run deploys the branch tip only if CI passed on it.
 # Needs repo secrets CLOUDFLARE_API_TOKEN (Pages:Edit, Workers Scripts:Edit, D1:Edit) and
 # CLOUDFLARE_ACCOUNT_ID. Skips cleanly when they are not set.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main, staging]
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read # gh run list: did CI pass on this commit?
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
+  # FIFO: a re-run for an older commit must not replace a newer pending deploy
+  # (the default keeps one pending run); the tip check then skips the stale one.
+  queue: max
 jobs:
   deploy:
+    # A manual run of main or staging, or a push to either in this repository whose CI passed.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')) ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment: ${{ github.ref_name == 'main' && 'production' || 'staging' }}
+    timeout-minutes: 15
+    environment: ${{ (github.event.workflow_run.head_branch || github.ref_name) == 'main' && 'production' || 'staging' }}
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      BRANCH: ${{ github.ref_name }}
+      BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - if: env.CLOUDFLARE_API_TOKEN == ''
+      - if: env.HAS_TOKEN != 'true'
         run: echo "::notice::CLOUDFLARE_API_TOKEN not set; skipping deploy."
-      - if: env.CLOUDFLARE_API_TOKEN != ''
+      - if: env.HAS_TOKEN == 'true'
         uses: actions/checkout@v4
-      - if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          ref: ${{ env.SHA }}
+      # Only the branch tip, and only once CI passed on it: a late or re-run CI
+      # for an older commit must not deploy over a newer one.
+      - if: env.HAS_TOKEN == 'true'
+        name: Still the branch tip, and CI passed on it?
+        run: |
+          tip=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
+          if [ "$tip" != "$SHA" ]; then
+            echo "::notice::$SHA is no longer the tip of $BRANCH ($tip); skipping."
+            exit 0
+          fi
+          passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --commit "$SHA" --event push --status success --json databaseId --jq length)
+          if [ "${passed:-0}" -lt 1 ]; then
+            echo "::error::CI has not passed on $SHA; not deploying."
+            exit 1
+          fi
+          echo "GO=true" >> "$GITHUB_ENV"
+      - if: env.GO == 'true'
         uses: oven-sh/setup-bun@v2
-      - if: env.CLOUDFLARE_API_TOKEN != ''
+      - if: env.GO == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 24
-      - if: env.CLOUDFLARE_API_TOKEN != ''
+      - if: env.GO == 'true'
         run: bun install --frozen-lockfile
-      # D1 only: production stores artifacts in D1. The required CI check runs
-      # the full suite (D1 and R2) on every PR.
-      - if: env.CLOUDFLARE_API_TOKEN != ''
-        run: bun run typecheck && bun run pretest && bun run test:d1
-      - if: env.CLOUDFLARE_API_TOKEN != ''
+      - if: env.GO == 'true'
+        run: bun run typecheck
+      # The Cloudflare credentials are visible to this step only.
+      - if: env.GO == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: bun run deploy:all -- --branch "$BRANCH"
-      - if: env.CLOUDFLARE_API_TOKEN != ''
+      - if: env.GO == 'true'
         run: bun run smoke -- "$([ "$BRANCH" = main ] && echo https://htmlartifact.pages.dev || echo https://staging.htmlartifact.pages.dev)"
