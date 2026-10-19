@@ -24,7 +24,7 @@ Friction found → fixed (0.1.1):
 - [x] Artifact 404 said "your current team cannot see it" with no next step: now says it may belong to a workspace you're not in, ask for an invite
 - [ ] Verify run 2 after deploy + npm 0.1.1 (below)
 
-Not ours to change (WorkOS thread / Dhruv): MFA Required makes every new user set up an authenticator before first sign-in; AuthKit pages show no htmlartifact branding; Staging emails ("[STAGING]", welcome@workos.dev) and the `*.authkit.app` device link stay until the post-GA Production move.
+WorkOS thread (Dhruv approved), after run 1: MFA turned off (SECURITY.md updated), AuthKit branded "htmlartifact" with the site icon, sign-out URI set. Not ours to change: Staging emails ("[STAGING]", welcome@workos.dev) and the `*.authkit.app` device link stay until the post-GA Production move.
 
 ## Open-source cleanup (2026-10-19, branch chore/oss-cleanup)
 Done = every item below is proven by `gh` output or the repo page in a browser,
