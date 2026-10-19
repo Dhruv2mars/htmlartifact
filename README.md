@@ -102,16 +102,19 @@ if paying for overage is acceptable.
 - **D1:** each object is split into ≤ 1 MB rows of a `blobs` table, written in
   the same atomic batch as the version that references them, so a fresh
   artifact opens for teammates immediately (D1, not KV: KV is eventually
-  consistent). Default limits are lower than on R2: 2 MiB per upload (4 MiB
-  for flagged accounts) and 10 pages, which keeps an upload's D1 batch well
-  inside Workers Free's 50 queries per request. D1 Free holds 5 GB.
+  consistent). Default limits are lower than on R2: 1 MiB per upload (2 MiB
+  for flagged accounts) and 10 pages, sized to Workers Free (50 D1 queries
+  and 10 ms of CPU per request, with a burst allowance; measured in
+  production). D1 Free holds 5 GB.
 - **R2:** 4 MiB per upload (16 MiB flagged), 50 pages. Reads fall back to D1,
   so objects stored before the switch keep working.
 - Deleting an artifact or workspace deletes its objects in both.
 
-Workers Free also caps CPU at 10 ms per request, and validating HTML costs
-about 45 ms per MB, so the D1 defaults above are reduced further to what
-production measures as reliable (see `deploy/app/wrangler.toml` vars).
+The server validates HTML with the Workers runtime's native HTMLRewriter
+(`src/html-policy-server.ts`), which is cheap enough for Workers Free; the CLI
+checks pages locally with the parse5 validator first (`src/html-policy.ts`),
+so problems come with line numbers. If a burst of heavy uploads exhausts the
+CPU allowance, Cloudflare answers 503 for a few seconds; the CLI retries.
 
 **Switching to R2 (no downtime), if ever:**
 

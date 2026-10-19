@@ -889,7 +889,7 @@ describe(`artifact storage (${STORAGE})`, () => {
     const first = await upload(alice, { html: page("Race v1"), slug: "race-storage" });
     assert.equal(first.status, 201);
     const results = await Promise.all(
-      Array.from({ length: 6 }, (_, i) => upload(alice, { html: page(`Race contender ${i}`, `<p>${"x".repeat(1500 * 1024)}</p>`), slug: "race-storage" }))
+      Array.from({ length: 6 }, (_, i) => upload(alice, { html: page(`Race contender ${i}`, `<p>${"x".repeat(1_020_000)}</p>`), slug: "race-storage" }))
     );
     const won = results.filter((r) => r.status === 200).length;
     assert.ok(won >= 1, results.map((r) => r.status).join(","));
@@ -898,7 +898,7 @@ describe(`artifact storage (${STORAGE})`, () => {
     const versions = await count("SELECT COUNT(*) FROM draft_versions WHERE draft_id = ?", first.body.draftId);
     await eventually(async () => (await r2Keys(prefix)).length === versions, "exactly one object per committed version");
     if (STORAGE === "d1") {
-      // 1.5 MB pages span two 1 MB chunks.
+      // ~1.02 MB pages (under the 1 MiB D1 limit) span two 1 MB chunks.
       assert.ok((await count("SELECT COUNT(*) FROM blobs WHERE key >= ? AND key < ?", prefix, `${prefix}~`)) > versions);
     }
     assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${first.body.draftId}`)).status, 200);

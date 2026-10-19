@@ -145,11 +145,20 @@ export const upload = Command.make(
       }
     };
 
-    const { ok, status, body } = yield* requestJson(`${apiUrl}/api/uploads`, {
-      apiKey,
-      body: payload,
-      timeoutMs: 300_000
-    });
+    // On Cloudflare's free plan a burst of heavy uploads can run the server
+    // out of CPU; Cloudflare then answers 503 with its own error page (not our
+    // JSON). The allowance refills within seconds, so retry, and an upload is
+    // safe to repeat: identical content to the same artifact is a no-op.
+    let attempt = 0;
+    let result = yield* requestJson(`${apiUrl}/api/uploads`, { apiKey, body: payload, timeoutMs: 300_000 });
+    while (result.status === 503 && !result.body.ok && typeof result.body.error === "string" && result.body.error.startsWith("htmlartifact returned HTTP 503") && attempt < 3) {
+      const wait = result.retryAfter ?? [5, 15, 30][attempt]!;
+      attempt += 1;
+      yield* Console.error(`The server is busy (HTTP 503). Retrying in ${wait}s...`);
+      yield* Effect.sleep(`${wait} seconds`);
+      result = yield* requestJson(`${apiUrl}/api/uploads`, { apiKey, body: payload, timeoutMs: 300_000 });
+    }
+    const { ok, status, body } = result;
 
     if (!ok) {
       const staleMapping = status === 404 && mappedDraftId;

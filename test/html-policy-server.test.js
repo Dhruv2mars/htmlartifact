@@ -153,8 +153,8 @@ describe("validation cost on the server", () => {
     return parts.join("\n").slice(0, bytes - 20) + "</body></html>";
   }
 
-  test("a 2 MiB page checks in well under a second, with the same verdict as parse5", async () => {
-    const html = bigReport(2 * 1024 * 1024 - 64 * 1024);
+  test("a page at the upload limit (2 MiB here; 1 MiB on D1) checks in well under a second, with the same verdict as parse5", async () => {
+    const html = bigReport((STORAGE === "r2" ? 2 : 1) * 1024 * 1024 - 64 * 1024);
     const mine = validateHtml(html);
     const started = performance.now();
     const res = await callApi(stack, tokens[0], "POST", "/api/check", { html });
