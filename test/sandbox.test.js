@@ -307,3 +307,31 @@ describe("capabilities stop working when access ends", () => {
     assert.equal((await bob.get(single.publicUrl)).status, 404);
   });
 });
+
+describe("web app assets", () => {
+  test("the app host serves the web app's files; the sandbox host never does", async () => {
+    const og = await fetch(new URL("/og.png", stack.baseUrl));
+    assert.equal(og.status, 200);
+    assert.match(og.headers.get("content-type") || "", /image\/png/);
+    const home = await (await fetch(stack.baseUrl)).text();
+    const script = home.match(/\/assets\/[\w.-]+\.js/)?.[0];
+    assert.ok(script, "the landing page links its scripts");
+    assert.equal((await fetch(new URL(script, stack.baseUrl))).status, 200);
+    for (const path of ["/og.png", script, "/"]) {
+      const res = await fetch(onSandbox(path), { redirect: "manual" });
+      assert.equal(res.status, 404, `sandbox ${path}`);
+      assert.doesNotMatch(await res.text(), /__reactRouterContext/, `sandbox ${path}`);
+    }
+  });
+
+  test("a path ending in .data renders the HTML page, not a React Router data response", async () => {
+    const res = await fetch(new URL("/no-such-page.data", stack.baseUrl), { redirect: "manual" });
+    assert.equal(res.status, 404);
+    assert.match(res.headers.get("content-type") || "", /text\/html/);
+    // A dynamic page too (signed-out sign-in page), with stacked suffixes.
+    const signIn = await fetch(new URL("/mine/bogus.data.data", stack.baseUrl), { redirect: "manual" });
+    assert.equal(signIn.status, 401);
+    assert.match(signIn.headers.get("content-type") || "", /text\/html/);
+    assert.match(await signIn.text(), /Sign in to htmlartifact/);
+  });
+});

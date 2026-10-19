@@ -9,6 +9,7 @@ import { probeStorage, storageKind } from "./storage.ts";
 import type { AppEnv, Env } from "./types.ts";
 import { registerWeb } from "./web.ts";
 import { registerWebhooks } from "./webhooks.ts";
+import { registerAssets, renderPage } from "./frontend.ts";
 import { FAVICON_SVG } from "./favicon.ts";
 
 // htmlartifact on Cloudflare Workers. Bindings: DB (D1), optional ARTIFACTS (R2).
@@ -60,6 +61,12 @@ registerWebhooks(app);
 registerApi(app);
 registerServing(app);
 registerWeb(app);
+registerAssets(app);
+// Unknown app paths get the web app's page; artifact and API misses keep
+// the static one (serve.ts), which the sandbox origin shares.
+app.notFound((c) =>
+  c.req.path.startsWith("/api/") ? c.html(renderNotFound(), 404) : renderPage(c, { kind: "not-found", session: null }, 404)
+);
 
 // No session cookie, no web or API routes: capability URLs only.
 const sandbox = baseApp();

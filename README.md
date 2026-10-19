@@ -74,6 +74,7 @@ No servers to run. htmlartifact is one Cloudflare Worker:
 | Artifact HTML | Cloudflare R2, or D1 until R2 is switched on (see Storage) |
 | Artifact index, invites, caches | Cloudflare D1 (schema created automatically) |
 | Accounts, sign-up, workspaces (organizations), SSO | [WorkOS](https://workos.com) AuthKit |
+| Web pages | React Router (SSR) in `web/`, rendered by the Worker; Hono decides the page and its status |
 | CLI | TypeScript + [Effect](https://effect.website), bundled by Bun for Node.js ≥ 20.10, published to npm, run with `npx` |
 
 ## Development
@@ -84,6 +85,8 @@ bun run dev:local   # WorkOS emulator + Worker at http://localhost:8787, fully o
 bun run build       # CLI (TypeScript + Effect, cli/) → dist/htmlartifact.js
 HTMLARTIFACT_API_URL=http://localhost:8787 node dist/htmlartifact.js login
 bun run typecheck:cli
+bun run dev:web     # the web app alone (React Router + Vite) with fixture data, http://localhost:5173
+bun run build:web   # web/build: the SSR bundle the Worker imports, plus static assets
 bun run test        # builds the CLI, then the full suite twice: D1 storage, then R2 (real Worker + official WorkOS emulator)
 ```
 
