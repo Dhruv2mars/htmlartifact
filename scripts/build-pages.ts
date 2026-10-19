@@ -2,10 +2,15 @@
 // Both Pages projects (htmlartifact, htmlartifact-usercontent) deploy the same
 // bundle; each gets a copy in deploy/<project>/dist next to its wrangler.toml
 // (wrangler finds a Pages config by walking up from the _worker.js).
-import { mkdir, rm } from "node:fs/promises";
+// The app project also gets the web app's static assets (web/build/client),
+// served by Pages directly: _routes.json keeps /assets/* off the Worker.
+import { $ } from "bun";
+import { cp, mkdir, readdir, rm } from "node:fs/promises";
 
 const root = new URL("..", import.meta.url).pathname;
 const entry = process.argv[2] ?? `${root}src/index.ts`;
+
+await $`bun run build:web`.cwd(root);
 
 const result = await Bun.build({
   entrypoints: [entry],
@@ -27,6 +32,17 @@ for (const project of ["app", "usercontent"]) {
   await rm(out, { recursive: true, force: true });
   await mkdir(out, { recursive: true });
   await Bun.write(`${out}/_worker.js`, code);
-  await Bun.write(`${out}/_routes.json`, JSON.stringify({ version: 1, include: ["/*"], exclude: [] }));
+  const app = project === "app";
+  // Everything in web/build/client is served by Pages, not the Worker:
+  // hashed /assets/* plus top-level public files such as og.png.
+  const files = app ? (await readdir(`${root}web/build/client`)).filter((f) => f !== "assets" && !f.startsWith(".")) : [];
+  if (app) {
+    await cp(`${root}web/build/client`, out, { recursive: true, filter: (path) => !path.includes("/.vite") });
+    await Bun.write(`${out}/_headers`, "/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n");
+  }
+  await Bun.write(
+    `${out}/_routes.json`,
+    JSON.stringify({ version: 1, include: ["/*"], exclude: app ? ["/assets/*", ...files.map((f) => `/${f}`)] : [] })
+  );
 }
 console.log(`built _worker.js (${(code.length / 1024).toFixed(0)} KiB) for app and usercontent`);

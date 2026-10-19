@@ -274,6 +274,28 @@ const ROUTES = {
       assertClean(key, res.text);
     }
   },
+  // frontend.ts
+  "GET /assets/*": {
+    kind: "global",
+    why: "the web app's built JS/CSS/fonts, identical for everyone",
+    async run(key) {
+      const home = await read(null, app("/"));
+      const script = home.text.match(/\/assets\/[\w.-]+\.js/)?.[0];
+      assert.ok(script, "landing links a script");
+      const res = await read({ token: B.olivia }, app(script));
+      assert.equal(res.status, 200);
+      assertClean(key, res.text);
+    }
+  },
+  "GET /og.png": {
+    kind: "global",
+    why: "static social preview image",
+    async run(key) {
+      const res = await read({ token: B.olivia }, app("/og.png"));
+      assert.equal(res.status, 200);
+      assertClean(key, res.text);
+    }
+  },
 
   // webhooks.ts
   "POST /webhooks/workos": {
@@ -632,6 +654,20 @@ const ROUTES = {
   },
 
   // web.ts
+  "GET /docs": {
+    kind: "global",
+    why: "static docs; signed in, only the caller's own name and workspace appear",
+    async run(key) {
+      const anon = await fetch(`${stack.baseUrl}/docs`);
+      assert.equal(anon.status, 200);
+      assertClean(`${key} signed out`, await anon.text());
+      for (const actor of webActors()) {
+        const res = await actor.browser.get("/docs");
+        assert.equal(res.status, 200, actor.name);
+        assertClean(`${key} as ${actor.name}`, res.text_);
+      }
+    }
+  },
   "GET /": {
     kind: "list",
     why: "the caller's workspace feed",
@@ -688,7 +724,7 @@ const ROUTES = {
       const res = await scratch.post("/workspaces", { name: "Olivia Web", id: A.org.id }, { rewrite: loginHint("olivia@other.test") });
       assertClean(key, res.text_);
       const home = await scratch.get("/");
-      assert.match(home.text_, /<h1>Olivia Web<\/h1>/);
+      assert.match(home.text_, /<h1[^>]*>Olivia Web<\/h1>/);
       assertClean(`${key} home`, home.text_);
     }
   },

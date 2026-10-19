@@ -8,16 +8,8 @@ import { getMyDraftWithVersions, listMyDrafts, listWorkspaceDrafts } from "./dra
 import { normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { safeNext } from "./public-url.ts";
 import { clientIp, rateLimit } from "./rate-limit.ts";
-import {
-  renderAuthError,
-  renderDraftDetail,
-  renderJoin,
-  renderMine,
-  renderSignIn,
-  renderWorkspace,
-  renderWorkspaces,
-  type WorkspaceChoice
-} from "./render-web.ts";
+import type { Page, WorkspaceChoice } from "../web/app/page.ts";
+import { renderPage, toArtifacts, toSession, toVersions } from "./frontend.ts";
 import { isMember, type AppEnv, type MemberEnv, type UserEnv, type Viewer } from "./types.ts";
 import {
   authStateCookie,
@@ -41,16 +33,20 @@ export function registerWeb(app: Hono<AppEnv>): void {
     key: (c) => c.get("viewer")?.account_id || clientIp(c)
   });
 
-  app.get("/", signedIn, async (c) => {
-    const viewer = c.get("viewer");
+  // Signed out: the landing page. Signed in: the workspace feed.
+  app.get("/", async (c) => {
+    const viewer = await sessionViewer(c);
+    if (!viewer) return renderPage(c, { kind: "landing", session: null });
     if (!isMember(viewer)) return c.redirect("/workspaces");
     const drafts = await listWorkspaceDrafts(c.env.DB, {
       organizationId: viewer.organization_id,
       origin: c.get("origin"),
       handle: viewer.workspace.handle
     });
-    return c.html(renderWorkspace({ session: viewer, drafts }));
+    return renderPage(c, { kind: "feed", session: toSession(viewer)!, artifacts: toArtifacts(drafts) });
   });
+
+  app.get("/docs", async (c) => renderPage(c, { kind: "docs", session: toSession(await sessionViewer(c)) }));
 
   app.get("/mine", signedIn, inWorkspace, async (c) => {
     const viewer = c.get("viewer");
@@ -60,7 +56,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
       origin: c.get("origin"),
       handle: viewer.workspace.handle
     });
-    return c.html(renderMine({ session: viewer, drafts }));
+    return renderPage(c, { kind: "mine", session: toSession(viewer)!, artifacts: toArtifacts(drafts) });
   });
 
   app.get("/mine/:draftId", signedIn, inWorkspace, async (c) => {
@@ -75,15 +71,24 @@ export function registerWeb(app: Hono<AppEnv>): void {
       handle: viewer.workspace.handle
     });
     if (!result) return c.notFound();
-    return c.html(renderDraftDetail({ session: viewer, ...result }));
+    const { draft } = result;
+    return renderPage(c, {
+      kind: "artifact",
+      session: toSession(viewer)!,
+      artifact: { id: draft.draftId, title: draft.title, description: draft.description, url: draft.publicUrl },
+      versions: toVersions(result)
+    });
   });
 
   app.get("/workspaces", signedIn, async (c) => {
     const viewer = c.get("viewer");
     const next = safeNext(c.req.query("next"));
-    return c.html(
-      renderWorkspaces({ session: viewer, workspaces: await listWorkspaces(c, viewer), next: next === "/" ? null : next })
-    );
+    return renderPage(c, {
+      kind: "workspaces",
+      session: toSession(viewer)!,
+      workspaces: await listWorkspaces(c, viewer),
+      next: next === "/" ? null : next
+    });
   });
 
   app.post("/workspaces", sameOrigin, signedIn, writes, async (c) => {
@@ -114,7 +119,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
   app.get("/join/:code", async (c) => {
     const code = normalizeInviteCode(c.req.param("code"));
     const viewer = await sessionViewer(c);
-    if (!viewer) return c.html(renderSignIn({ next: c.req.path }), 401);
+    if (!viewer) return renderPage(c, { kind: "sign-in", next: c.req.path }, 401);
     const invite = code
       ? await c.env.DB.prepare(
           "SELECT organization_id FROM invites WHERE code = ? AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses"
@@ -123,20 +128,17 @@ export function registerWeb(app: Hono<AppEnv>): void {
           .first<{ organization_id: string }>()
       : null;
     if (!code || !invite) {
-      return c.html(
-        renderAuthError({ title: "Invite not valid", message: "That invite is invalid, expired, or used up.", retry: false }),
-        404
-      );
+      return renderPage(c, message("Invite not valid", "That invite is invalid, expired, or used up.", false), 404);
     }
     const workspace = await findWorkspace(c.env.DB, invite.organization_id);
-    return c.html(renderJoin({ session: viewer, code, workspaceName: workspace?.name || "workspace" }));
+    return renderPage(c, { kind: "join", session: toSession(viewer)!, code, workspaceName: workspace?.name || "workspace" });
   });
 
   app.post("/join", sameOrigin, signedIn, writes, async (c) => {
     const form = await c.req.parseBody();
     const result = await joinWithCode(c, c.get("viewer"), String(form.code || ""));
     if (!result.body.ok) {
-      return c.html(renderAuthError({ title: "Invite not valid", message: result.body.error, retry: false }), result.status);
+      return renderPage(c, message("Invite not valid", result.body.error, false), result.status);
     }
     return switchTo(c, result.body.workspace.id, safeNext(form.next));
   });
@@ -170,14 +172,14 @@ export function registerWeb(app: Hono<AppEnv>): void {
     const secure = isSecure(c);
     c.header("Set-Cookie", clearAuthStateCookie(secure), { append: true });
     if (c.req.query("error")) {
-      return c.html(renderAuthError({ message: "Sign-in was cancelled or denied." }), 403);
+      return renderPage(c, message("Sign-in problem", "Sign-in was cancelled or denied."), 403);
     }
     const authState = readAuthState(c, config.cookiePassword);
     const { code, state } = c.req.query();
     if (!authState || !state || state !== authState.state) {
-      return c.html(renderAuthError({ message: "Sign-in expired or state mismatch. Please retry." }), 400);
+      return renderPage(c, message("Sign-in problem", "Sign-in expired or state mismatch. Please retry."), 400);
     }
-    if (!code) return c.html(renderAuthError({ message: "Missing authorization code." }), 400);
+    if (!code) return renderPage(c, message("Sign-in problem", "Missing authorization code."), 400);
 
     let sealedSession: string | undefined;
     let organizationId: string | undefined;
@@ -190,11 +192,11 @@ export function registerWeb(app: Hono<AppEnv>): void {
       }));
     } catch (error) {
       console.error("WorkOS sign-in failed:", error instanceof Error ? error.message : error);
-      return c.html(renderAuthError({ message: "Sign-in could not be completed. Please retry." }), 502);
+      return renderPage(c, message("Sign-in problem", "Sign-in could not be completed. Please retry."), 502);
     }
     // sealSession: true always returns one; without it there is no session.
     if (!sealedSession) {
-      return c.html(renderAuthError({ message: "Sign-in could not be completed. Please retry." }), 502);
+      return renderPage(c, message("Sign-in problem", "Sign-in could not be completed. Please retry."), 502);
     }
     c.header("Set-Cookie", sessionCookie(sealedSession, secure), { append: true });
     const next = safeNext(authState.next);
@@ -222,9 +224,13 @@ export function registerWeb(app: Hono<AppEnv>): void {
   });
 }
 
+function message(title: string, text: string, retry = true): Page {
+  return { kind: "message", title, message: text, retry, session: null };
+}
+
 async function signedIn(c: Context<UserEnv>, next: Next): Promise<Response | void> {
   const viewer = await sessionViewer(c);
-  if (!viewer) return c.html(renderSignIn({ next: c.req.path }), 401);
+  if (!viewer) return renderPage(c, { kind: "sign-in", next: c.req.path }, 401);
   c.set("viewer", viewer);
   return next();
 }

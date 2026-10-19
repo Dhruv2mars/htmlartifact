@@ -84,6 +84,8 @@ export function testConfigPath() {
         .readFileSync(root, "utf8")
         .replace(/^main = .*$/m, `main = ${JSON.stringify(new URL("../src/index.ts", import.meta.url).pathname)}`)
         .replace(/^\[\[r2_buckets\]\][^[]*/m, "")
+        // Relative paths resolve against the config file, which now lives in tmp.
+        .replace(/^directory = "([^"]+)"$/m, (_, dir) => `directory = ${JSON.stringify(new URL(`../${dir}`, import.meta.url).pathname)}`)
     );
   }
   return generatedConfig;

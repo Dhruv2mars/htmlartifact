@@ -37,6 +37,9 @@ export interface Env {
   // Service binding to the ops Worker's `Ops` entrypoint (src/ops.ts). When
   // absent (local dev, tests), rate limits fall back to an in-memory window.
   OPS?: OpsService;
+  // The web app's static assets (web/build/client). Pages serves /assets/*
+  // and the public files itself (_routes.json); this covers the rest.
+  ASSETS?: Fetcher;
 }
 
 // What the Pages app calls on the ops Worker over RPC.

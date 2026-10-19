@@ -14,3 +14,11 @@ database_id = "00000000-0000-0000-0000-000000000000" # set after: wrangler d1 cr
 [[r2_buckets]]
 binding = "ARTIFACTS"
 bucket_name = "htmlartifact-artifacts"
+
+# The web app's static assets (bun run build:web). Pages deploys copy them
+# next to _worker.js (scripts/build-pages.ts). Worker first, so only the app
+# host serves them (src/frontend.ts); the sandbox host never does.
+[assets]
+directory = "web/build/client"
+binding = "ASSETS"
+run_worker_first = true
