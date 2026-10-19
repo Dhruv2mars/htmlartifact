@@ -138,8 +138,9 @@ guarantees $0.
 
 ## Deploying
 
-Production deploys from `main` through GitHub Actions (`.github/workflows/deploy.yml`);
-`staging` deploys to https://staging.htmlartifact.pages.dev. To run your own copy:
+Production deploys from `main` through GitHub Actions (`.github/workflows/deploy.yml`),
+once CI has passed on the pushed commit; `staging` deploys to
+https://staging.htmlartifact.pages.dev the same way. To run your own copy:
 
 1. Cloudflare: create the Pages projects `htmlartifact` and
    `htmlartifact-usercontent` and a D1 database, and put its ID in
