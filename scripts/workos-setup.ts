@@ -20,8 +20,9 @@ const EVENTS = [
   "organization.deleted",
   "user.deleted",
   "session.revoked",
-  "api_key.revoked",
-  "api_key.deleted"
+  "api_key.revoked"
+  // (api_key.deleted is handled by the webhook code but is not an event type
+  // WorkOS lets endpoints subscribe to.)
 ];
 
 const file = await Bun.file(`${homedir()}/.config/htmlartifact/workos.env`).text();
