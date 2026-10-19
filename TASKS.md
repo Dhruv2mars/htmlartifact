@@ -21,8 +21,8 @@ CI is green on the PR, and the PR is open and ready for Dhruv to merge.
 ## Dashboard setup (2026-10-19)
 Done = requested WorkOS credentials saved and checked without exposing values, MFA saved, support request sent, and Cloudflare GitHub secrets listed; any blocked step records its exact stopping point.
 - [x] WorkOS environment and local credential file (directory 700, file 600): Staging (WorkOS Staging for GA; Production is a post-GA step, only on Dhruv's go-ahead). Existing key copied through clipboard, values not printed.
-- [x] WorkOS AuthKit TOTP MFA: enabled AuthKit prerequisite in Staging; Authentication → Features → Multi-factor auth changed Off → Required, saved and verified Required.
-- [x] WorkOS Directory Provisioning support request: exact requested text sent through dashboard Contact support; confirmed “Message sent” / email follow-up; no ticket ID or environment-ID field shown.
+- [x] WorkOS AuthKit TOTP MFA: enabled AuthKit prerequisite in Staging; Authentication → Features → Multi-factor auth changed Off → Required, saved and verified Required. Later turned Off by Dhruv (biggest sign-up drop-off).
+- [x] WorkOS Directory Provisioning support request: exact requested text sent through dashboard Contact support; confirmed “Message sent” / email follow-up; no ticket ID or environment-ID field shown. Declined by Dhruv after WorkOS replied (not needed; Directory Sync is billed per connection and stays off).
 - [x] Cloudflare scoped deploy token and GitHub Actions secrets: htmlartifact GitHub Actions Active, 1 Account, Pages/Workers Scripts/D1 Edit + Account Settings/User Details Read, no expiry/IP filter; CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID verified by name in Dhruv2mars/htmlartifact. Clipboard cleared.
 
 **Done =** in production at https://htmlartifact.pages.dev, two real accounts
@@ -69,13 +69,13 @@ provably removes its stored HTML (every version; D1 blobs).
 ## Phase 3 — WorkOS (scoped)
 - [x] SSO (SAML/OIDC) via Admin Portal link: `workspace sso`
 - [x] Directory Sync (SCIM) via Admin Portal link: `workspace directory`; dsync deprovisioning revokes access (membership webhooks)
-- [x] MFA on in AuthKit (Staging; Multi-factor auth Required, saved 2026-10-19)
+- [x] MFA: turned Off in AuthKit by Dhruv (Staging, 2026-10-19); it was Required and was the biggest sign-up drop-off
 - Dropped by Dhruv: Vault/encryption, Audit Logs, Events API, Radar, extra roles, FGA, domain auto-join, export
 
 ## Blocked on Dhruv
-(nothing blocks GA; WorkOS Directory Provisioning request is with WorkOS support)
+(nothing blocks GA)
 - [x] Write WorkOS keys to `~/.config/htmlartifact/workos.env` (Staging; verified 2026-10-19)
-- [ ] WorkOS support asked 2026-10-19 to enable AuthKit Directory Provisioning (message sent, email follow-up pending); after confirmation set `HTMLARTIFACT_DIRECTORY_PROVISIONING=on` (deploy/app vars) and redeploy
+- [x] WorkOS Directory Provisioning: not wanted (Dhruv, 2026-10-19). Declined WorkOS support's follow-up; `HTMLARTIFACT_DIRECTORY_PROVISIONING` stays unset, so Directory Sync links stay refused
 
 ## Phase 4 — Production
 - [x] Pages configs `deploy/app`, `deploy/usercontent`, `deploy/ops`; `scripts/build-pages.ts` (verified with `wrangler pages dev`)
