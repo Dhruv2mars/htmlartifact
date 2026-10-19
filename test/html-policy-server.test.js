@@ -196,3 +196,24 @@ describe("review regressions", () => {
     assert.equal(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes), html);
   });
 });
+
+describe("title regressions (Opus review)", () => {
+  const cases = [
+    ["a <noscript> in a long title keeps its spelling and length", "<title>" + "x".repeat(130) + " <noscript> y</title>"],
+    ["an end tag cut off at the end of the page is not title text", "<p>x</p><title>abc</title x"],
+    ["a < in an SVG title is text", "<svg><title>a < b</title></svg>"],
+    ["a title inside foreignObject is HTML", "<svg><foreignObject><title>a<b>c</b></title></foreignObject></svg>"],
+    ["an SVG script comparing values still warns", "<title>t</title><svg><script>if (a < b) fetch(1)</script></svg>"]
+  ];
+  for (const [name, html] of cases) {
+    test(name, async () => {
+      const mine = validateHtml(html);
+      const res = await callApi(stack, tokens[0], "POST", "/api/check", { html });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      if (res.body.ok && mine.ok) assert.equal(res.body.pages[0].title, mine.title);
+      for (const code of codes(mine.issues, "warning")) {
+        if (code.startsWith("sandbox-")) assert.ok(codes(res.body.issues, "warning").includes(code), `${code}: ${JSON.stringify(res.body.issues)}`);
+      }
+    });
+  }
+});
