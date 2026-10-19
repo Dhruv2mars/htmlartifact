@@ -3,16 +3,17 @@
 ## Open-source cleanup (2026-10-19, branch chore/oss-cleanup)
 Done = every item below is proven by `gh` output or the repo page in a browser,
 CI is green on the PR, and the PR is open and ready for Dhruv to merge.
-- [ ] Dead code removed (knip clean, wired into CI as `bun run lint`); typecheck ×3 + full suite green
-- [ ] README, SECURITY.md, docs and TASKS.md match what shipped (Pages + ops Worker, D1 only)
-- [ ] CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md (supported versions); private vulnerability reporting on
-- [ ] LICENSE/NOTICE attribution to postplan verified against the npm tarball; vendored skills credited
-- [ ] Issue forms, PR template, labels
-- [ ] CI required on main via branch protection
-- [ ] Dependabot (bun + GitHub Actions) and Dependabot alerts/security updates
-- [ ] CodeQL and secret scanning (push protection)
-- [ ] Release automation: CHANGELOG.md, tag `vX.Y.Z` = package.json = npm version
-- [ ] Repo description, topics, homepage URL, social preview; Discussions; wiki off
+- [x] Dead code removed (knip + `tsc --noUnusedLocals`; knip in CI as `bun run lint`, a probe export is caught); typecheck ×3 clean, suite 173/173 on D1 and on R2
+- [x] README, SECURITY.md, docs and TASKS.md match what shipped (Pages + ops Worker, D1 only); Sol review: 3 doc findings fixed, approved in round 2
+- [x] CONTRIBUTING.md, CODE_OF_CONDUCT.md (Contributor Covenant 2.0), SECURITY.md (supported versions, scope); private vulnerability reporting on (`gh api …/private-vulnerability-reporting` → enabled)
+- [x] LICENSE/NOTICE attribution to postplan: first commit byte-identical to the postplan 0.0.5 npm tarball (`diff -r`), its copyright line matches; vendored skills' MIT license in `.claude/skills/LICENSE`
+- [x] Issue forms (bug, feature, config → advisory/Discussions), PR template, 8 new labels
+- [x] Branch protection on main: required check `test` (GitHub Actions, strict), PR required, admins included, no force push/deletion, conversations resolved
+- [x] Dependabot config (bun + GitHub Actions, grouped; parse5/entities pinned), Dependabot alerts + security updates on
+- [x] CodeQL default setup (actions, javascript-typescript) configured; secret scanning + push protection on (non-provider patterns and validity checks need paid Secret Protection: off, zero-spend)
+- [x] Release automation: CHANGELOG.md, release.yml (version bump on main → npm trusted publish → tag + release), CI checks CHANGELOG; first npm publish is Dhruv's (Blocked on Dhruv / Phase 4)
+- [x] Repo description, 13 topics, homepage https://htmlartifact.pages.dev; Discussions on; wiki off; delete branch on merge
+- [ ] Social preview (web/public/og.png, 1200×630): no API; needs a signed-in GitHub browser session (Settings → Social preview)
 
 ## Dashboard setup (2026-10-19)
 Done = requested WorkOS credentials saved and checked without exposing values, MFA saved, support request sent, and Cloudflare GitHub secrets listed; any blocked step records its exact stopping point.
