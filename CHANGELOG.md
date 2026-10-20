@@ -27,6 +27,14 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   each cron run retries at most 20 queued deletions (within D1 Free's 50
   queries per invocation) and a deletion failure no longer skips retention; a
   signed-in page view no longer rewrites an unchanged cached profile.
+- Two admins demoting, removing each other or leaving at the same moment
+  could leave a workspace with no admin. These changes now run one at a time
+  per workspace, and removing the last admin is refused.
+- A demoted admin's workspace API keys and the invite codes they issued
+  stop working (also when demoted in the WorkOS dashboard), as they already
+  did on removal.
+- `workspace members` (and `remove`/`promote`/`demote` by email) missed
+  people in workspaces of more than 100 members.
 
 ## [0.2.0] - 2026-10-20
 
