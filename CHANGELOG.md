@@ -22,6 +22,11 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   link points at the README's Deploying section.
 - `bun run dev:local` builds the web app first when `web/build/client` is
   missing, so it works from a clean checkout.
+- D1 Free quota use by the service: the 15-minute retention job reads an index
+  of versions still holding request metadata instead of scanning every version;
+  each cron run retries at most 20 queued deletions (within D1 Free's 50
+  queries per invocation) and a deletion failure no longer skips retention; a
+  signed-in page view no longer rewrites an unchanged cached profile.
 - Two admins demoting, removing each other or leaving at the same moment
   could leave a workspace with no admin. These changes now run one at a time
   per workspace, and removing the last admin is refused.

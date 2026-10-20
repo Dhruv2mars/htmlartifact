@@ -67,7 +67,7 @@ export function Privacy({ session }: { session: Session | null }) {
             <li>Upload IP addresses and user agents are erased after 30 days.</li>
             <li>
               Deleting an artifact makes it unreadable at once and deletes every version of its HTML in the same request (any failed
-              step is retried within 15 minutes).
+              step is retried automatically, usually within 15 minutes).
             </li>
             <li>
               Deleting a workspace deletes all of its artifacts, invites and records, and the workspace itself at WorkOS.
