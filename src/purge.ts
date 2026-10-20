@@ -234,6 +234,7 @@ export function deleteWorkspaceStatements(db: D1Database, organizationId: string
     org("DELETE FROM draft_versions WHERE draft_id IN (SELECT id FROM drafts WHERE organization_id = ?)"),
     org("DELETE FROM drafts WHERE organization_id = ?"),
     org("DELETE FROM invites WHERE organization_id = ?"),
+    org("DELETE FROM ci_keys WHERE organization_id = ?"),
     org("DELETE FROM memberships WHERE organization_id = ?"),
     org("DELETE FROM membership_epochs WHERE organization_id = ?"),
     org("DELETE FROM revocations WHERE organization_id = ?"),

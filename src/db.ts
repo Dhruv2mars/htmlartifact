@@ -3,7 +3,7 @@
 
 import { PENDING_DELETIONS_SCHEMA } from "./purge.ts";
 import { BLOBS_SCHEMA } from "./storage.ts";
-import type { Account, AccountRow, WorkspaceRow } from "./types.ts";
+import type { Account, AccountRow, CiKeyRow, WorkspaceRow } from "./types.ts";
 
 export const FLAGS = { largeUploads: "large-uploads" };
 
@@ -117,6 +117,18 @@ CREATE TABLE IF NOT EXISTS draft_pages (
   has_inline_script INTEGER NOT NULL,
   PRIMARY KEY (draft_version_id, path)
 );
+CREATE TABLE IF NOT EXISTS ci_keys (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  last_used_at INTEGER,
+  revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS ci_keys_org_idx ON ci_keys(organization_id);
+CREATE INDEX IF NOT EXISTS ci_keys_creator_idx ON ci_keys(created_by, organization_id);
 CREATE TABLE IF NOT EXISTS deleted_workspaces (
   organization_id TEXT PRIMARY KEY,
   deleted_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -288,6 +300,7 @@ export async function setRevokedAtEpoch(
       )
       .bind(userId, organizationId, userId, organizationId, epoch)
       .run();
+    await revokeCiKeysBy(db, userId, organizationId);
   } else {
     await db
       .prepare(`DELETE FROM revocations WHERE subject = ? AND organization_id = ? AND ${EPOCH_IS}`)
@@ -337,12 +350,36 @@ export async function setRevoked(
         .prepare("INSERT INTO revocations (subject, organization_id) VALUES (?, ?) ON CONFLICT DO NOTHING")
         .bind(subject, organizationId)
     ]);
+    await revokeCiKeysBy(db, subject, organizationId);
   } else {
     await db
       .prepare("DELETE FROM revocations WHERE subject = ? AND organization_id = ?")
       .bind(subject, organizationId)
       .run();
   }
+}
+
+// Workspace CI keys (HTMLARTIFACT_TOKEN in CI) are issued by an admin and act
+// for the workspace, not for them. Only a SHA-256 of the secret is stored.
+// A key dies with its creator's membership: removing, deactivating or
+// deleting the admin revokes every key they created there (one-way, so
+// re-adding them does not bring the keys back). Deleting the workspace drops
+// the rows (src/purge.ts).
+export async function findCiKey(db: D1Database, tokenHash: string): Promise<CiKeyRow | null> {
+  return db
+    .prepare("SELECT * FROM ci_keys WHERE token_hash = ? AND revoked_at IS NULL")
+    .bind(tokenHash)
+    .first<CiKeyRow>();
+}
+
+// organizationId '*': every workspace.
+export async function revokeCiKeysBy(db: D1Database, createdBy: string, organizationId: string): Promise<void> {
+  await db
+    .prepare(
+      "UPDATE ci_keys SET revoked_at = unixepoch() WHERE created_by = ? AND (? = '*' OR organization_id = ?) AND revoked_at IS NULL"
+    )
+    .bind(createdBy, organizationId, organizationId)
+    .run();
 }
 
 // Invite codes are bearer credentials, so removing anyone revokes every code
