@@ -6,7 +6,7 @@ import { ThemeToggle } from "./ThemeToggle";
 
 export const REPO_URL = "https://github.com/Dhruv2mars/htmlartifact";
 
-// Header for the public pages (landing, docs).
+// Header for the public pages (landing, docs, privacy).
 export function SiteHeader({ session, current }: { session: Session | null; current?: "docs" }) {
   return (
     <header className="vt-header relative z-10 mx-auto flex h-16 max-w-[1240px] items-center gap-6 px-5 sm:px-8">
@@ -46,6 +46,7 @@ export function SiteFooter() {
           <a className="hover:text-ink" href={REPO_URL}>GitHub</a>
           <a className="hover:text-ink" href="https://www.npmjs.com/package/htmlartifact">npm</a>
           <a className="hover:text-ink" href={`${REPO_URL}/blob/main/SECURITY.md`}>Security</a>
+          <a className="hover:text-ink" href="/privacy">Privacy</a>
         </nav>
         <p className="sm:ml-auto">Open source, MIT licensed.</p>
       </div>

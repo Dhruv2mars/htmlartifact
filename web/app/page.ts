@@ -50,6 +50,7 @@ export interface WorkspaceChoice {
 export type Page =
   | { kind: "landing"; session: Session | null }
   | { kind: "docs"; session: Session | null }
+  | { kind: "privacy"; session: Session | null }
   | { kind: "sign-in"; next: string }
   | { kind: "message"; title: string; message: string; retry: boolean; session: Session | null }
   | { kind: "not-found"; session: Session | null }

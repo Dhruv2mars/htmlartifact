@@ -7,6 +7,6 @@ declare module "*/web/build/server/index.js" {
 // Pages pre-rendered at build time (web/prerender.mjs).
 declare module "*/web/build/server/static-pages.js" {
   export const ORIGIN_TOKEN: string;
-  const pages: Record<"landing" | "docs" | "not-found", string>;
+  const pages: Record<"landing" | "docs" | "privacy" | "not-found", string>;
   export default pages;
 }
