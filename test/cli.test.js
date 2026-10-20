@@ -30,6 +30,9 @@ function cli(args, env = {}) {
       HTMLARTIFACT_HOME: home,
       HTMLARTIFACT_TOKEN: "",
       HTMLARTIFACT_API_URL: stack.baseUrl,
+      // Tests run in CI too: only the CI test says it is in CI.
+      CI: "",
+      GITHUB_ACTIONS: "",
       ...env
     },
     timeout: 60_000
@@ -141,7 +144,7 @@ test("upload checks the markup locally first: errors with line and column, nothi
     return true;
   });
   const failed = await cli(["upload", file, "--json"], env).catch((error) => error);
-  assert.equal(failed.code, 1);
+  assert.equal(failed.code, 5, "validation exit code");
   const body = JSON.parse(failed.stdout);
   assert.equal(body.checkedLocally, true);
   assert.deepEqual(
@@ -403,4 +406,170 @@ test("logout still forgets the sign-in when the server cannot be reached", async
   assert.match(out.stdout, /Signed out\./);
   assert.match(out.stderr, /could not end the session/);
   assert.ok(!fs.existsSync(file));
+});
+
+// ---- run 3 fixes: slugs, bytes, exit codes, CI, check, sign-in errors -------
+
+// A fresh home publishing with the CI key (Acme): its own path mappings.
+function ciEnv(name, env = {}) {
+  return { HTMLARTIFACT_HOME: path.join(stack.tmp, name), HTMLARTIFACT_TOKEN: CI_KEY, ...env };
+}
+
+const failure = (promise) => promise.then(() => assert.fail("expected the command to fail"), (error) => error);
+
+test("--slug naming another artifact than the path's needs --force, and never rebinds the path", async () => {
+  const env = ciEnv("slug-home");
+  const bench = await json(["upload", writeHtml(stack.tmp, "bench.html", page("Bench")), "--slug", "bench-dash"], env);
+  const changelogFile = writeHtml(stack.tmp, "changelog.html", page("Changelog"));
+  const changelog = await json(["upload", changelogFile, "--slug", "changelog"], env);
+  assert.notEqual(bench.draftId, changelog.draftId);
+
+  const refused = await failure(cli(["upload", changelogFile, "--slug", "bench-dash"], env));
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, new RegExp(`--slug bench-dash names artifact ${bench.draftId} \\("Bench"\\), but .*changelog\\.html was published to ${changelog.draftId}`));
+  assert.match(refused.stderr, /--force/);
+
+  const forced = await json(["upload", changelogFile, "--slug", "bench-dash", "--force"], env);
+  assert.equal(forced.draftId, bench.draftId);
+  assert.match(forced.warnings.join("\n"), new RegExp(`still updates artifact ${changelog.draftId}`));
+  // A plain upload of the path still goes to the artifact it was bound to.
+  writeHtml(stack.tmp, "changelog.html", page("Changelog v2"));
+  const plain = await json(["upload", changelogFile], env);
+  assert.equal(plain.draftId, changelog.draftId);
+  assert.equal(plain.action, "updated");
+});
+
+test("read --out writes the stored bytes exactly; a non-UTF-8 file is refused, not altered", async () => {
+  const env = ciEnv("bytes-home");
+  const bytes = Buffer.from(`\ufeff${page("BOM").replace(/></g, ">\r\n<")}`, "utf8");
+  const file = path.join(stack.tmp, "bom.html");
+  fs.writeFileSync(file, bytes);
+  const receipt = await json(["upload", file, "--new"], env);
+  const out = path.join(stack.tmp, "bom-out.html");
+  const read = await json(["read", receipt.url, "--out", out], env);
+  assert.equal(read.file, out);
+  assert.equal(read.bytes, bytes.length);
+  assert.ok(fs.readFileSync(out).equals(bytes), "byte-identical, BOM and CRLF kept");
+
+  const latin1 = path.join(stack.tmp, "latin1.html");
+  fs.writeFileSync(latin1, Buffer.concat([Buffer.from("<!doctype html><title>caf"), Buffer.from([0xe9]), Buffer.from("</title>")]));
+  const refused = await failure(cli(["upload", latin1, "--json"], { ...env, HTMLARTIFACT_API_URL: "http://127.0.0.1:9" }));
+  assert.equal(refused.code, 5);
+  assert.match(JSON.parse(refused.stdout).error, /latin1\.html is not valid UTF-8/);
+});
+
+test("exit codes tell failures apart, and --json errors are JSON on stdout", async () => {
+  const empty = { HTMLARTIFACT_HOME: path.join(stack.tmp, "codes-home") };
+  const usage = await failure(cli(["upload", "--json"], empty));
+  assert.equal(usage.code, 2);
+  assert.deepEqual(JSON.parse(usage.stdout), { ok: false, error: "Missing required argument: path", kind: "usage", exitCode: 2 });
+
+  const auth = await failure(cli(["read", "abcdefghijkl", "--json"], empty));
+  assert.equal(auth.code, 3);
+  assert.equal(JSON.parse(auth.stdout).kind, "auth");
+
+  const notFound = await failure(cli(["read", "abcdefghijkl", "--json"], ciEnv("codes-ci")));
+  assert.equal(notFound.code, 4);
+  assert.match(JSON.parse(notFound.stdout).error, /HTTP 404/);
+
+  const network = await failure(cli(["list", "--json"], ciEnv("codes-ci", { HTMLARTIFACT_API_URL: "http://127.0.0.1:9" })));
+  assert.equal(network.code, 6);
+  assert.match(JSON.parse(network.stdout).error, /Could not reach http:\/\/127\.0\.0\.1:9/);
+
+  const p = await proxy((pathname) =>
+    pathname === "/api/drafts" ? { status: 429, headers: { "Retry-After": "0" }, body: RATE_LIMITED } : null
+  );
+  try {
+    const limited = await failure(cli(["list", "--json"], ciEnv("codes-ci", { HTMLARTIFACT_API_URL: p.url })));
+    assert.equal(limited.code, 7);
+    assert.equal(JSON.parse(limited.stdout).kind, "rateLimit");
+  } finally {
+    await p.close();
+  }
+});
+
+test("a 429 is retried once after its Retry-After", async () => {
+  let limited = 0;
+  const p = await proxy((pathname) => {
+    if (pathname === "/api/drafts" && limited < 1) {
+      limited += 1;
+      return { status: 429, headers: { "Retry-After": "1" }, body: RATE_LIMITED };
+    }
+    return null;
+  });
+  try {
+    const started = Date.now();
+    const out = await cli(["list", "--json"], ciEnv("retry-home", { HTMLARTIFACT_API_URL: p.url }));
+    assert.ok(Array.isArray(JSON.parse(out.stdout)));
+    assert.equal(limited, 1);
+    assert.match(out.stderr, /Retrying in 1s/);
+    assert.ok(Date.now() - started >= 1000, "waited Retry-After");
+  } finally {
+    await p.close();
+  }
+});
+
+test("login, logout and read take --json", async () => {
+  const dir = path.join(stack.tmp, "json-login-home");
+  const login = await cli(["login", "--json"], { HTMLARTIFACT_HOME: dir });
+  const result = JSON.parse(login.stdout);
+  assert.equal(result.ok, true);
+  assert.equal(result.email, "alice@acme.test");
+  assert.match(login.stderr, /Open this link/);
+  const logout = JSON.parse((await cli(["logout", "--json"], { HTMLARTIFACT_HOME: dir })).stdout);
+  assert.deepEqual(logout, { ok: true, wasSignedIn: true, sessionEnded: true });
+});
+
+test("in CI, an upload with neither --slug nor --draft warns that it makes a new URL every run", async () => {
+  const file = writeHtml(stack.tmp, "ci-report.html", page("CI report"));
+  const warned = await json(["upload", file], ciEnv("ci-warn-home", { CI: "true" }));
+  assert.match(warned.warnings.join("\n"), /In CI without --slug or --draft, every run publishes a new artifact/);
+  const human = await cli(["upload", file, "--slug", "ci-report"], ciEnv("ci-warn-home-2", { CI: "true" }));
+  assert.doesNotMatch(human.stderr, /In CI without/);
+});
+
+test("a rejected HTMLARTIFACT_TOKEN says so, with the npx hint under --json too", async () => {
+  const env = { HTMLARTIFACT_HOME: path.join(stack.tmp, "bad-token-home"), HTMLARTIFACT_TOKEN: "sk_test_not_a_key" };
+  const human = await failure(cli(["list"], env));
+  assert.equal(human.code, 3);
+  assert.match(human.stderr, /HTMLARTIFACT_TOKEN was rejected/);
+  const viaNpx = await failure(cli(["upload", writeHtml(stack.tmp, "t.html", page("T")), "--json"], { ...env, npm_command: "exec" }));
+  const body = JSON.parse(viaNpx.stdout);
+  assert.match(body.error, /HTMLARTIFACT_TOKEN was rejected.*\(npx htmlartifact login\)/);
+  assert.equal(body.status, 401);
+});
+
+test("check works signed out, and reports line:col from the local parse", async () => {
+  const bad = writeHtml(stack.tmp, "check-bad.html", `<!doctype html><title>Bad</title>\n<p>ok</p>\n<iframe src="https://x.test"></iframe>`);
+  const good = writeHtml(stack.tmp, "check-good.html", page("Good"));
+  const signedOut = { HTMLARTIFACT_HOME: path.join(stack.tmp, "check-out-home") };
+
+  const ready = await json(["check", good], signedOut);
+  assert.equal(ready.ok, true);
+  assert.match(ready.signedOut, /Not signed in/);
+  const notReady = await failure(cli(["check", bad, "--json"], signedOut));
+  assert.equal(notReady.code, 5);
+  assert.deepEqual(JSON.parse(notReady.stdout).issues.map(({ line, column }) => [line, column]), [[3, 1]]);
+
+  const online = await failure(cli(["check", bad, "--json"], ciEnv("check-ci")));
+  assert.equal(online.code, 5);
+  const report = JSON.parse(online.stdout);
+  assert.equal(report.offline, false);
+  assert.deepEqual(report.issues.map(({ code, line, column }) => ({ code, line, column })), [{ code: "blocked-tag", line: 3, column: 1 }]);
+  assert.match(report.errors[0], /^line 3:1: Blocked <iframe> tag\./);
+});
+
+test("an expired sign-in link says to run login again", async () => {
+  const p = await proxy((pathname, body) =>
+    pathname === "/api/cli/token" && body?.device_code ? { status: 400, body: { error: "expired_token" } } : null
+  );
+  try {
+    const expiredLink = await failure(
+      cli(["login"], { HTMLARTIFACT_HOME: path.join(stack.tmp, "expired-home"), HTMLARTIFACT_API_URL: p.url, npm_command: "exec" })
+    );
+    assert.equal(expiredLink.code, 3);
+    assert.match(expiredLink.stderr, /^The sign-in link expired\. Run: npx htmlartifact login$/m);
+  } finally {
+    await p.close();
+  }
 });

@@ -69,9 +69,10 @@ describe("validating large pages", () => {
       "no other issue: the page was never parsed"
     );
     assert.equal(result.title, null);
+    const over = result.bytes - ACCOUNT_LIMIT;
     assert.equal(
       result.issues[0].message,
-      `HTML is ${result.bytes} bytes (4 MiB); the limit for this upload is 4194304 bytes (4 MiB).`
+      `HTML is ${result.bytes} bytes, ${over} ${over === 1 ? "byte" : "bytes"} over the 4 MiB (4194304-byte) limit for this upload.`
     );
 
     const upload = validateUpload(
@@ -88,6 +89,15 @@ describe("validating large pages", () => {
     );
     assert.equal(upload.totalBytes, Buffer.byteLength(big));
     assert.equal(upload.pages[0].title, null, "pages of an oversized upload are not parsed");
+  });
+
+  test("one byte over: the message says by how much, and the fix is one anyone can act on", () => {
+    const html = `<!doctype html><title>x</title><p>${"a".repeat(1024 * 1024)}</p>`;
+    const result = validateUpload([{ path: "index.html", html: html.slice(0, 1024 * 1024 + 1) }], { maxBytes: 1024 * 1024 });
+    const issue = result.issues.find((i) => i.code === "too-large");
+    assert.equal(issue.message, "HTML is 1048577 bytes, 1 byte over the 1 MiB (1048576-byte) limit for this upload.");
+    assert.doesNotMatch(issue.fix, /flag|admin/);
+    assert.match(issue.fix, /several artifacts/);
   });
 });
 

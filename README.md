@@ -38,16 +38,29 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately, and every invite code issued until then is revoked (they may hold one): share a fresh code with the team |
 | `workspace promote <email>` / `demote <email>` | Make a member an admin, or an admin a member (admins). One admin always remains |
 | `workspace leave` | Leave the current workspace (its last admin promotes someone first) |
-| `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace |
+| `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace (a slug that names another artifact than the path was published to needs `--force`) |
 | `read <url-or-id>` | Download an artifact with your sign-in (how agents read links), from any workspace you are in. `--out <file>` picks where; `--workspace <name>` reads a custom URL name there |
 | `list [--all] [--workspace <name>]` | Your artifacts, or the whole workspace's; `--workspace` lists another of your workspaces |
 | `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
 | `workspace api-key create [--name <label>]` / `list` / `revoke <id>` | API keys for CI (admins). The key is shown once; it stops working when revoked, when the admin who created it leaves the workspace, or when the workspace is deleted |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |
 | `workspace sso` / `directory` / `domains` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC), SCIM directory, or domain verification (admins). SSO and directory links are off unless the deployment sets `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` (WorkOS bills each connection) |
-| `check <path>` | Validate against the rules without publishing |
+| `check <path>` | Validate against the rules without publishing (signed out or offline: markup only) |
 
-Every command takes `--json` for agents.
+Every command takes `--json` for agents: stdout is then one JSON object (an
+error too: `{ "ok": false, "error", "kind", "exitCode" }`), and anything else
+goes to stderr.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Any other failure (server error, conflict, local file) |
+| 2 | Usage: bad arguments or flags |
+| 3 | Auth: not signed in, sign-in expired, token rejected, or not allowed |
+| 4 | Not found: no such artifact, workspace, member or path |
+| 5 | Validation: the HTML (or another input) was refused |
+| 6 | Network: htmlartifact could not be reached |
+| 7 | Rate-limited: still refused after waiting out `Retry-After` once |
 
 ### Publishing from CI
 
@@ -60,7 +73,10 @@ npx htmlartifact workspace api-key create --name "GitHub Actions"
 
 Save it as a repository secret named `HTMLARTIFACT_TOKEN` (Settings → Secrets
 and variables → Actions), then publish from a workflow. Give the upload a
-`--slug` so every run updates the same URL instead of creating a new one:
+`--slug` (or `--draft <id>`) so every run updates the same URL: a re-upload
+otherwise finds its artifact through a path mapping kept in `~/.htmlartifact`,
+which a CI run throws away, so each run would publish a new artifact at a new
+URL (the CLI warns when it detects CI):
 
 ```yaml
 # .github/workflows/publish-report.yml

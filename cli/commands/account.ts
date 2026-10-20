@@ -15,9 +15,12 @@ export const login = Command.make(
   "login",
   {
     apiUrl: apiUrlFlag("Use another htmlartifact service"),
-    workspace: stringFlag("workspace", "name", "If you are in several workspaces, start in this one")
+    workspace: stringFlag("workspace", "name", "If you are in several workspaces, start in this one"),
+    json: jsonFlag("Print the result as JSON (the sign-in link goes to stderr)")
   },
   Effect.fn(function* (options) {
+    // Under --json, stdout is the result alone; the link and progress go to stderr.
+    const say = options.json ? Console.error : Console.log;
     const apiUrl = yield* resolveApiUrl(Option.getOrUndefined(options.apiUrl));
     const start = yield* postJson(`${apiUrl}/api/cli/device`, {});
     if (!start.ok || !start.body.device_code) {
@@ -27,10 +30,10 @@ export const login = Command.make(
     }
     const device = start.body;
 
-    yield* Console.log("Open this link, sign in (or create an account), and confirm the code:\n");
-    yield* Console.log(`  ${device.verification_uri_complete || device.verification_uri}\n`);
-    yield* Console.log(`  Code: ${device.user_code}\n`);
-    yield* Console.log("Waiting for you to finish in the browser...");
+    yield* say("Open this link, sign in (or create an account), and confirm the code:\n");
+    yield* say(`  ${device.verification_uri_complete || device.verification_uri}\n`);
+    yield* say(`  Code: ${device.user_code}\n`);
+    yield* say("Waiting for you to finish in the browser...");
 
     let interval = Number(device.interval || 5) * 1000;
     const deadline = Date.now() + Number(device.expires_in || 300) * 1000;
@@ -51,7 +54,7 @@ export const login = Command.make(
       if (poll.ok) {
         const session = yield* saveSession(apiUrl, poll.body);
         const me = yield* api(apiUrl, "/api/me", { apiKey: session.accessToken });
-        yield* Console.log(`\nSigned in as ${me.email || me.name}.`);
+        if (!options.json) yield* Console.log(`\nSigned in as ${me.email || me.name}.`);
         // Signed in without a current workspace, but already in some (e.g.
         // joined in the browser, then signed in here with that browser
         // session): use the only one, or say how to pick.
@@ -72,6 +75,16 @@ export const login = Command.make(
             others = workspaces;
           }
         }
+        if (options.json) {
+          return yield* printJson({
+            ok: true,
+            apiUrl,
+            name: me.name ?? null,
+            email: me.email ?? null,
+            workspace: workspace ?? null,
+            workspaces: others
+          });
+        }
         if (workspace) {
           yield* Console.log(`Workspace: ${workspace.name}`);
           yield* Console.log(`Next, publish a page: ${CMD} upload <file.html>`);
@@ -91,11 +104,15 @@ export const login = Command.make(
         interval += 5000;
         continue;
       }
+      if (error === "expired_token") {
+        return yield* new CliError({ kind: "auth", message: "The sign-in link expired. Run: htmlartifact login" });
+      }
       return yield* new CliError({
+        kind: "auth",
         message: `Sign-in ${error === "access_denied" ? "was denied" : `failed: ${error || poll.status}`}.`
       });
     }
-    return yield* new CliError({ message: "Sign-in timed out. Run htmlartifact login again." });
+    return yield* new CliError({ kind: "auth", message: "The sign-in link expired. Run: htmlartifact login" });
   })
 ).pipe(
   Command.withDescription("Sign in, or create an account, in your browser (works over SSH: open the link on any device).")
@@ -105,11 +122,12 @@ export const login = Command.make(
 // everywhere), then forgets it. Best-effort: the local file goes regardless.
 export const logout = Command.make(
   "logout",
-  {},
-  Effect.fn(function* () {
+  { json: jsonFlag() },
+  Effect.fn(function* (options) {
     const session = readJson<Session | null>(CREDENTIALS_PATH, null);
+    let problem: string | null = null;
     if (session?.refreshToken && session.apiUrl) {
-      const problem = yield* endSession(session).pipe(
+      problem = yield* endSession(session).pipe(
         Effect.catch((error) => Effect.succeed<string | null>(error.message || reason(error)))
       );
       if (problem) {
@@ -117,6 +135,9 @@ export const logout = Command.make(
       }
     }
     yield* removeCredentials;
+    if (options.json) {
+      return yield* printJson({ ok: true, wasSignedIn: !!session?.refreshToken, sessionEnded: !!session?.refreshToken && !problem });
+    }
     yield* Console.log("Signed out.");
   })
 ).pipe(Command.withDescription("Sign out: end the saved sign-in's session and forget it on this machine."));

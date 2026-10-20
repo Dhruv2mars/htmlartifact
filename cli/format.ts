@@ -1,10 +1,15 @@
 import { Console, Effect } from "effect";
 
 import { formatBytes, formatIssue, validateUpload, type Issue } from "../src/html-policy.ts";
+import { withCmd } from "./env.ts";
 import type { UploadSource } from "./source.ts";
 import type { Json } from "./state.ts";
 
-export const printJson = (value: unknown) => Console.log(JSON.stringify(value, null, 2));
+// Straight to stdout: under --json, Console.log goes to stderr (see main.ts).
+export const printJson = (value: unknown) =>
+  Effect.sync(() => {
+    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+  });
 
 export function shellQuote(value: string): string {
   return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
@@ -55,14 +60,18 @@ export function validateLocally(source: UploadSource) {
   return validateUpload(source.body.files || [{ path: "index.html", html: source.body.html }]);
 }
 
-// Offline fallback for `check`: the bundled validator knows the markup rules,
-// but not the account, its limits, or whether scripts are allowed.
-export function offlineReport(source: UploadSource | null, networkError: string): Json {
+// Fallback for `check` when offline or signed out: the bundled validator
+// knows the markup rules, but not the account, its limits, or whether scripts
+// are allowed. Signed out, a page that passes is ready as far as can be told.
+export function offlineReport(
+  source: UploadSource | null,
+  why: { networkError: string; signedOut?: undefined } | { signedOut: string; networkError?: undefined }
+): Json {
   const validation = source ? validateLocally(source) : null;
   return {
-    ok: false,
+    ok: why.signedOut !== undefined && validation !== null && validation.ok,
     offline: true,
-    networkError,
+    ...why,
     ...(validation && {
       markupOk: validation.ok,
       totalBytes: validation.totalBytes,
@@ -77,7 +86,10 @@ export function offlineReport(source: UploadSource | null, networkError: string)
 export const printCheckReport = (report: Json) =>
   Effect.gen(function* () {
     yield* Console.log(`htmlartifact ${report.cliVersion} -> ${report.apiUrl}`);
-    if (report.offline) {
+    if (report.signedOut) {
+      yield* Console.log(withCmd(report.signedOut));
+      yield* Console.log("Checked markup locally. Account and limits were not checked.");
+    } else if (report.offline) {
       yield* Console.log(`Offline: ${report.networkError}`);
       yield* Console.log("Checked markup locally. Account and limits were not checked.");
     } else if (report.limits) {

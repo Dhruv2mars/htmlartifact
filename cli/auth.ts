@@ -18,7 +18,7 @@ export const resolveApiUrl = (override?: string): Effect.Effect<string, CliError
       override || process.env.HTMLARTIFACT_API_URL || credentials.apiUrl || config.apiUrl || DEFAULT_API_URL;
     if (!apiUrl) {
       return Effect.fail(
-        new CliError({ message: "No htmlartifact server configured. Run: htmlartifact login --api-url https://<your-server>" })
+        new CliError({ kind: "usage", message: "No htmlartifact server configured. Run: htmlartifact login --api-url https://<your-server>" })
       );
     }
     return Effect.succeed(apiUrl.replace(/\/+$/, ""));
@@ -90,6 +90,7 @@ export const refreshSession = (session: Partial<Session>, options: { organizatio
         const why = result.body.error_description || result.body.message || result.body.error || `HTTP ${result.status}`;
         if (result.status === 429) {
           return yield* new CliError({
+            kind: "rateLimit",
             message: "htmlartifact is rate-limiting sign-in refreshes right now. You are still signed in: try again in a minute."
           });
         }
@@ -99,8 +100,8 @@ export const refreshSession = (session: Partial<Session>, options: { organizatio
             message: `Could not ${action} (${why}). You are still signed in: try again shortly.`
           });
         }
-        if (organizationId) return yield* new CliError({ message: `Could not switch workspace: ${why}` });
-        return yield* new CliError({ message: `Your sign-in expired (${why}). Run: htmlartifact login` });
+        if (organizationId) return yield* new CliError({ kind: "auth", message: `Could not switch workspace: ${why}` });
+        return yield* new CliError({ kind: "auth", message: `Your sign-in expired (${why}). Run: htmlartifact login` });
       }
       return yield* saveSession(current.apiUrl as string, result.body);
     })
@@ -115,9 +116,10 @@ export const getAuth = (apiUrlOverride?: string) =>
     if (token) return { apiUrl, apiKey: token } satisfies Auth;
 
     const session = readJson<Session | null>(CREDENTIALS_PATH, null);
-    if (!session?.refreshToken) return yield* new CliError({ message: "Not signed in. Run: htmlartifact login" });
+    if (!session?.refreshToken) return yield* new CliError({ kind: "auth", message: "Not signed in. Run: htmlartifact login" });
     if (session.apiUrl !== apiUrl) {
       return yield* new CliError({
+        kind: "auth",
         message: `Signed in to ${session.apiUrl}, not ${apiUrl}. Run: htmlartifact login --api-url ${apiUrl}`
       });
     }
@@ -133,7 +135,7 @@ export const selectWorkspace = (apiUrl: string, pending: Json, name: string | un
     const org = wanted ? choices.find((o) => o.id === name || o.name.toLowerCase() === wanted) : undefined;
     if (!org) {
       const names = choices.map((o) => `  ${o.name}`).join("\n");
-      return yield* new CliError({ message: `You are in several workspaces. Run again with --workspace <name>:\n${names}` });
+      return yield* new CliError({ kind: "usage", message: `You are in several workspaces. Run again with --workspace <name>:\n${names}` });
     }
     return yield* postJson(`${apiUrl}/api/cli/token`, {
       pending_authentication_token: pending.pending_authentication_token,
@@ -155,7 +157,7 @@ export const leaveWorkspaceSession = () =>
 export function assertOwnServer(target: URL, apiUrl: string): Effect.Effect<void, CliError> {
   const api = new URL(apiUrl);
   if (target.protocol !== api.protocol || !(target.host === api.host || target.host.endsWith(`.${api.host}`))) {
-    return Effect.fail(new CliError({ message: `${target.origin} is not your htmlartifact server (${api.origin}).` }));
+    return Effect.fail(new CliError({ kind: "usage", message: `${target.origin} is not your htmlartifact server (${api.origin}).` }));
   }
   return Effect.void;
 }

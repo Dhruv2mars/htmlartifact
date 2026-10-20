@@ -510,7 +510,7 @@ export function* uploadSteps(
   if (tooLarge) {
     issues.push(
       uploadIssue("too-large", sizeMessage(totalBytes, maxBytes), {
-        fix: "Split the report into linked pages, or ask an admin for the large-uploads flag. Do not drop requested content."
+        fix: "The limit is for the whole upload, every page counted. Publish it as several artifacts that link to each other, or move large inline images or data out to https URLs. Do not drop requested content."
       })
     );
   }
@@ -571,7 +571,7 @@ function pagePathProblem(path: unknown): string | null {
 }
 
 function sizeMessage(bytes: number, maxBytes: number): string {
-  return `HTML is ${bytes} bytes (${formatBytes(bytes)}); the limit for this upload is ${maxBytes} bytes (${formatBytes(maxBytes)}).`;
+  return `HTML is ${bytes} bytes, ${bytes - maxBytes} ${bytes - maxBytes === 1 ? "byte" : "bytes"} over the ${formatBytes(maxBytes)} (${maxBytes}-byte) limit for this upload.`;
 }
 
 function uploadIssue(code: string, message: string, { fix }: { fix?: string } = {}): Issue {
