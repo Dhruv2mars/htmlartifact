@@ -71,8 +71,6 @@ export interface Config {
     maxPages: number;
     workspaceBytes: number;
     databaseBytes: number;
-    /** R2: HTML the bucket may hold, all workspaces. Null on D1 (databaseBytes guards it). */
-    storageBytes: number | null;
     /** D1 rows uploads may write per UTC day: the deployment's, and each workspace's. */
     rowsPerDay: number;
     workspaceRowsPerDay: number;

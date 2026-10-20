@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DAILY_BUDGET_SCHEMA } from "../src/budget.ts";
 
 const staging = process.argv.includes("--staging");
 const dryRun = process.argv.includes("--dry-run");
@@ -61,6 +62,7 @@ const keys = await d1<{ key: string; chunks: number; last: number }>(
 console.log(`${keys.length} object(s) in D1 ${database}${dryRun ? " (dry run)" : ""}`);
 if (dryRun || keys.length === 0) process.exit(0);
 
+await d1(DAILY_BUDGET_SCHEMA);
 const work = mkdtempSync(join(tmpdir(), "htmlartifact-migrate-"));
 let moved = 0;
 let failed = 0;
@@ -96,6 +98,10 @@ try {
         console.log(`dropped  ${key} (artifact deleted meanwhile)`);
         continue;
       }
+      // Count it against the bucket's cap (src/storage.ts), as an upload would.
+      await d1(
+        `INSERT INTO daily_budget (day, scope, used) VALUES ('total', 'r2:bytes', ${Buffer.byteLength(html, "utf8")}) ON CONFLICT (day, scope) DO UPDATE SET used = used + excluded.used`
+      );
       await d1(`DELETE FROM blobs WHERE key = '${key}'`);
       console.log(`moved    ${key}`);
       moved += 1;
