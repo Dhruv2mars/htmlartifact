@@ -107,7 +107,7 @@ Run 2 (live, CLI 0.1.1, MFA off, new accounts C dhruv+hae / D dhruv+haf):
 - [x] D opens `/join/<code>` signed out → "You're invited to a workspace" + `workspace join` command → sign-up → back on "Join Run Two"; before joining, `/d/<id>` → new 404 copy ("…a workspace you are not in… ask them for an invite"); Join → artifact opens
 - [x] **Found:** D `npx htmlartifact login` after joining in the browser → "You are not in a workspace yet" (the device flow reused the browser's pre-join AuthKit session, so the token has no organization; `workspace list` shows Run Two). Fixed in 0.1.2: login switches into the only workspace (or `--workspace`, or lists `workspace switch` commands); whoami says so. Verified live with the local build: "Workspace: Run Two"
 - [x] D CLI: `list --all` → `read <id> --out` (byte-identical) → `delete <C's id>` → "That artifact belongs to a teammate; only they or a workspace admin can delete it." → own upload → `delete <url>`; C `delete` → D `read` → 404 with hint
-- [ ] 0.1.2 on npm via Release; Deploy (new workflow) green on main; smoke green
+- [x] Shipped: PR #10 (Deploy after CI, Sol-reviewed in 2 rounds: tip check, FIFO `queue: max`, same-repo and main/staging-only dispatch, token scoped to the deploy step) → first run f106c90 deployed in 44 s, smoke 11/11; PR #11 (1af6c51) → Release published htmlartifact@0.1.2 with provenance, tag v0.1.2; Deploy green; `npx htmlartifact@latest --version` → 0.1.2; smoke 11/11
 
 WorkOS thread (Dhruv approved), after run 1: MFA turned off (SECURITY.md updated), AuthKit branded "htmlartifact" with the site icon, sign-out URI set. Not ours to change: Staging emails ("[STAGING]", welcome@workos.dev) and the `*.authkit.app` device link stay until the post-GA Production move.
 
@@ -184,9 +184,9 @@ provably removes its stored HTML (every version; D1 blobs).
 - Dropped by Dhruv: Vault/encryption, Audit Logs, Events API, Radar, extra roles, FGA, domain auto-join, export
 
 ## Blocked on Dhruv
-(nothing blocks GA; WorkOS Directory Provisioning request is with WorkOS support)
+(nothing blocks GA)
 - [x] Write WorkOS keys to `~/.config/htmlartifact/workos.env` (Staging; verified 2026-10-19)
-- [ ] WorkOS support asked 2026-10-19 to enable AuthKit Directory Provisioning (message sent, email follow-up pending); after confirmation set `HTMLARTIFACT_DIRECTORY_PROVISIONING=on` (deploy/app vars) and redeploy
+- [x] WorkOS Directory Provisioning: not wanted (Dhruv, 2026-10-19). Declined WorkOS support's follow-up; `HTMLARTIFACT_DIRECTORY_PROVISIONING` stays unset, so Directory Sync links stay refused
 
 ## Phase 4 — Production
 - [x] Pages configs `deploy/app`, `deploy/usercontent`, `deploy/ops`; `scripts/build-pages.ts` (verified with `wrangler pages dev`)
@@ -200,7 +200,7 @@ provably removes its stored HTML (every version; D1 blobs).
 - [x] package.json scripts: typecheck, build:pages, deploy:all, smoke
 - [x] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts`), MFA (dashboard)
 - [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
-- [ ] (Dhruv, after merging chore/oss-cleanup) First npm publish locally from `main` (`npm publish --access public`; claims the unclaimed `htmlartifact` name), then run the Release workflow to tag `v0.1.0`; add the repo + `release.yml` as trusted publisher (allow direct `npm publish`) only right before the next release, since unused configurations expire after 2 days (CONTRIBUTING.md → Releasing)
+- [x] First npm publish + trusted publishing: Dhruv published 0.1.0 locally (2026-10-19 16:29 UTC, no attestation), Release tagged `v0.1.0`; then trusted publishing on `release.yml` published 0.1.1 (Release run 39296478726) and 0.1.2 (run 39304532354), both with SLSA provenance. Evidence: `npm view htmlartifact versions` → 0.1.0, 0.1.1, 0.1.2; `gh release list` → v0.1.0, v0.1.1, v0.1.2 (Latest)
 - [x] workos-setup (redirect URI, webhook 7 events, secrets on both Pages projects + ops), deploy:all (D1 storage), smoke: all ok
 - [x] Production walkthrough with two real accounts (2026-10-19, htmlartifact.pages.dev, real CLI + browser):
   - A (dhruv+haa@swayu.io): CLI device login → sign-up, email code, MFA (TOTP) enrollment → `workspace create "GA Walkthrough"` → `workspace invite` → `upload --slug ga-plan` (v1)
