@@ -1,5 +1,10 @@
 # htmlartifact — GA checklist
 
+## GA blockers: workspace admins (2026-10-20, branch fix/last-admin-race)
+- [x] B1 two admins acting at once (self-demote, demote each other, both leave, remove each other) left 0 admins: per-workspace D1 lease (`admin_locks`, 30 s expiry) around role changes, removal and leave; live admin re-check inside; removal of the last admin refused (test/admins.test.js)
+- [x] Demotion now revokes the ex-admin's CI keys and the invite codes they issued (removal already did)
+- [x] B4 member list and admin checks read one WorkOS page (100): every page is read now
+
 ## Run 3 fixes → 0.2.0 (2026-10-20)
 Done = every R3-n finding below is fixed by a merged PR or marked skipped with
 the reason; htmlartifact@0.2.0 published with provenance and tagged v0.2.0;

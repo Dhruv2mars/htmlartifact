@@ -1,7 +1,7 @@
 import type { Context, Hono, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomToken, sha256 } from "./crypto.ts";
-import { FLAGS, bumpMembershipEpoch, databaseUsage, findWorkspace, findWorkspaceByHandle, isRevoked, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
+import { FLAGS, bumpMembershipEpoch, databaseUsage, findWorkspace, findWorkspaceByHandle, isRevoked, now, revokeAllInvites, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 // The Worker validates with the native HTMLRewriter (Workers Free CPU limits);
 // parse5 (src/html-policy.ts) stays in the CLI.
@@ -394,18 +394,15 @@ export function registerApi(app: Hono<AppEnv>): void {
   app.get("/api/workspaces/members", requireMember, async (c) => {
     const viewer = c.get("viewer");
     const { client } = workos(c.get("config"));
+    const organizationId = viewer.organization_id;
     const [users, memberships] = await Promise.all([
-      client.userManagement.listUsers({ organizationId: viewer.organization_id, limit: 100 }),
-      client.userManagement.listOrganizationMemberships({
-        organizationId: viewer.organization_id,
-        statuses: ["active"],
-        limit: 100
-      })
+      allPages((after) => client.userManagement.listUsers({ organizationId, limit: 100, after })),
+      activeMemberships(c, organizationId)
     ]);
-    const roles = new Map(memberships.data.map((m) => [m.userId, m.role?.slug || null]));
+    const roles = new Map(memberships.map((m) => [m.userId, m.role?.slug || null]));
     return c.json({
       ok: true,
-      members: users.data
+      members: users
         .filter((u) => roles.has(u.id))
         .map((u) => ({ id: u.id, name: displayName(u), email: u.email, role: roles.get(u.id) }))
     });
@@ -421,10 +418,16 @@ export function registerApi(app: Hono<AppEnv>): void {
     if (userId === viewer.account_id) {
       return c.json({ ok: false, error: "You cannot remove yourself. To leave this workspace, run: htmlartifact workspace leave" }, 422);
     }
-    const membership = await workosMembership(c, userId, viewer.organization_id);
-    if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
-    await endMembership(c, userId, viewer.organization_id, membership.id);
-    return c.json({ ok: true, invitesRevoked: true });
+    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
+      if (!isAdminIn(members, viewer.account_id)) return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
+      const membership = members.find((m) => m.userId === userId);
+      if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
+      if (membership.role?.slug === "admin" && !hasOtherAdmin(members, userId)) {
+        return c.json({ ok: false, error: "That is the workspace's last admin. Make someone else an admin first." }, 422);
+      }
+      await endMembership(c, userId, viewer.organization_id, membership.id, hold);
+      return c.json({ ok: true, invitesRevoked: true });
+    });
   });
 
   // Makes a member an admin, or an admin a member (admins only). A workspace
@@ -436,18 +439,31 @@ export function registerApi(app: Hono<AppEnv>): void {
     const body = await readJson(c, 16 * 1024);
     const role = body.role;
     if (role !== "admin" && role !== "member") return c.json({ ok: false, error: 'role must be "admin" or "member".' }, 422);
-    const membership = await workosMembership(c, userId, viewer.organization_id);
-    if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
-    if ((membership.role?.slug || "member") === role) return c.json({ ok: true, role, unchanged: true });
-    if (role === "member" && (await isLastAdmin(c, userId, viewer.organization_id))) {
-      return c.json({ ok: false, error: "That is the workspace's last admin. Make someone else an admin first." }, 422);
-    }
-    const config = c.get("config");
-    await workos(config).client.userManagement.updateOrganizationMembership(membership.id, { roleSlug: role });
-    // After the change: a re-check that started earlier may not cache the old role.
-    await bumpMembershipEpoch(c.env.DB, userId, viewer.organization_id);
-    if (role === "member") await revokePortalLinks(config, viewer.organization_id, userId);
-    return c.json({ ok: true, role, unchanged: false });
+    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
+      if (!isAdminIn(members, viewer.account_id)) return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
+      const membership = members.find((m) => m.userId === userId);
+      if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
+      const unchanged = (membership.role?.slug || "member") === role;
+      if (!unchanged && role === "member" && !hasOtherAdmin(members, userId)) {
+        return c.json({ ok: false, error: "That is the workspace's last admin. Make someone else an admin first." }, 422);
+      }
+      const config = c.get("config");
+      const db = c.env.DB;
+      if (!unchanged) {
+        await hold();
+        await workos(config).client.userManagement.updateOrganizationMembership(membership.id, { roleSlug: role });
+        // After the change: a re-check that started earlier may not cache the old role.
+        await bumpMembershipEpoch(db, userId, viewer.organization_id);
+      }
+      if (role === "member") {
+        // What only an admin could create ends with the role. Also when
+        // unchanged: a retry finishes what a failed demotion left.
+        await revokeInvitesBy(db, userId, viewer.organization_id);
+        await revokeCiKeysBy(db, userId, viewer.organization_id);
+        await revokePortalLinks(config, viewer.organization_id, userId);
+      }
+      return c.json({ ok: true, role, unchanged });
+    });
   });
 
   // Leaves the caller's current workspace. Its last admin cannot leave: they
@@ -455,19 +471,21 @@ export function registerApi(app: Hono<AppEnv>): void {
   app.post("/api/workspaces/leave", requireMember, perUser("leave", 10), async (c) => {
     const viewer = c.get("viewer");
     if (viewer.is_api_key) return c.json({ ok: false, error: "API keys cannot leave workspaces." }, 403);
-    const membership = await workosMembership(c, viewer.account_id, viewer.organization_id);
-    if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
-    if (membership.role?.slug === "admin" && (await isLastAdmin(c, viewer.account_id, viewer.organization_id))) {
-      return c.json(
-        {
-          ok: false,
-          error: `You are the last admin of "${viewer.workspace.name}". Make someone else an admin first (htmlartifact workspace promote <email>), or delete the workspace (htmlartifact workspace delete).`
-        },
-        422
-      );
-    }
-    await endMembership(c, viewer.account_id, viewer.organization_id, membership.id);
-    return c.json({ ok: true, workspace: workspaceJson(viewer.workspace) });
+    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
+      const membership = members.find((m) => m.userId === viewer.account_id);
+      if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
+      if (membership.role?.slug === "admin" && !hasOtherAdmin(members, viewer.account_id)) {
+        return c.json(
+          {
+            ok: false,
+            error: `You are the last admin of "${viewer.workspace.name}". Make someone else an admin first (htmlartifact workspace promote <email>), or delete the workspace (htmlartifact workspace delete).`
+          },
+          422
+        );
+      }
+      await endMembership(c, viewer.account_id, viewer.organization_id, membership.id, hold);
+      return c.json({ ok: true, workspace: workspaceJson(viewer.workspace) });
+    });
   });
 
   // Deletes the caller's current workspace (admins only), confirmed by its
@@ -787,42 +805,110 @@ async function removedFromName(db: D1Database, viewer: Viewer): Promise<string |
   return (await findWorkspace(db, viewer.removed_from))?.name ?? null;
 }
 
-// userId's WorkOS membership of organizationId with one of these statuses, live.
-async function workosMembership<E extends AppEnv>(
-  c: Context<E>,
-  userId: string,
-  organizationId: string,
-  statuses: ("active" | "inactive")[] = ["active"]
-) {
-  const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
-    userId,
-    organizationId,
-    statuses,
-    limit: 1
-  });
-  return page.data.find((m) => m.organizationId === organizationId) ?? null;
+// Every item of a WorkOS list, page by page (a workspace can outgrow one page).
+async function allPages<T>(page: (after: string | undefined) => Promise<{ data: T[]; listMetadata: { after?: string | null } }>): Promise<T[]> {
+  const items: T[] = [];
+  let after: string | undefined;
+  do {
+    const result = await page(after);
+    items.push(...result.data);
+    after = result.listMetadata.after ?? undefined;
+  } while (after);
+  return items;
 }
 
-// True when userId is the only active admin of organizationId.
-async function isLastAdmin<E extends AppEnv>(c: Context<E>, userId: string, organizationId: string): Promise<boolean> {
-  const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
-    organizationId,
-    statuses: ["active"],
-    limit: 100
-  });
-  return !page.data.some((m) => m.role?.slug === "admin" && m.userId !== userId);
+// Every active WorkOS membership of organizationId, live.
+function activeMemberships<E extends AppEnv>(c: Context<E>, organizationId: string) {
+  const { userManagement } = workos(c.get("config")).client;
+  return allPages((after) => userManagement.listOrganizationMemberships({ organizationId, statuses: ["active"], limit: 100, after }));
+}
+
+type Membership = Awaited<ReturnType<typeof activeMemberships>>[number];
+
+const isAdminIn = (members: Membership[], userId: string): boolean =>
+  members.some((m) => m.userId === userId && m.role?.slug === "admin");
+
+const hasOtherAdmin = (members: Membership[], userId: string): boolean =>
+  members.some((m) => m.userId !== userId && m.role?.slug === "admin");
+
+// How long a crashed holder can keep the admin lock, and how long a request
+// waits for it before answering 409.
+const ADMIN_LOCK_SECONDS = 30;
+const ADMIN_LOCK_WAIT_MS = 8_000;
+
+class LeaseLost extends Error {}
+
+// Runs `run` with the workspace's live memberships while holding its admin
+// lock: one D1 row per workspace, shared by every Worker instance. Role
+// changes, removals and leaving all take it, so the last-admin check and the
+// change it allows can't interleave with another (two admins demoting
+// themselves at once would otherwise leave none). The lease expires, so a
+// holder that dies mid-way can't wedge the workspace; `run` calls `hold()`
+// right before each WorkOS change, which renews the lease or, if it lapsed
+// (another request may have acted since), stops the change with a 409.
+async function withAdminLock<E extends AppEnv>(
+  c: Context<E>,
+  organizationId: string,
+  run: (members: Membership[], hold: () => Promise<void>) => Promise<Response>
+): Promise<Response> {
+  const db = c.env.DB;
+  const holder = crypto.randomUUID();
+  const deadline = Date.now() + ADMIN_LOCK_WAIT_MS;
+  for (let attempt = 0; ; attempt += 1) {
+    const claimed = await db
+      .prepare(
+        `INSERT INTO admin_locks (organization_id, holder, expires_at) VALUES (?, ?, unixepoch() + ?)
+         ON CONFLICT (organization_id) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at
+         WHERE admin_locks.expires_at <= unixepoch()
+         RETURNING holder`
+      )
+      .bind(organizationId, holder, ADMIN_LOCK_SECONDS)
+      .first<{ holder: string }>();
+    if (claimed?.holder === holder) break;
+    if (Date.now() >= deadline) {
+      return c.json({ ok: false, error: "Another member change in this workspace is in progress. Try again in a moment." }, 409);
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(100 * 2 ** attempt, 800) * (0.5 + Math.random())));
+  }
+  const hold = async () => {
+    const renewed = await db
+      .prepare("UPDATE admin_locks SET expires_at = unixepoch() + ? WHERE organization_id = ? AND holder = ? AND expires_at > unixepoch()")
+      .bind(ADMIN_LOCK_SECONDS, organizationId, holder)
+      .run();
+    if (!renewed.meta.changes) throw new LeaseLost();
+  };
+  try {
+    return await run(await activeMemberships(c, organizationId), hold);
+  } catch (error) {
+    if (!(error instanceof LeaseLost)) throw error;
+    return c.json({ ok: false, error: "That took too long and another member change may have happened meanwhile. Try again." }, 409);
+  } finally {
+    // A failed release only delays the next change until the lease expires.
+    await db
+      .prepare("DELETE FROM admin_locks WHERE organization_id = ? AND holder = ?")
+      .bind(organizationId, holder)
+      .run()
+      .catch(() => undefined);
+  }
 }
 
 // Ends a membership (a removal, or leaving). Access ends on the next request,
 // and every invite code the workspace issued until now is revoked: whoever
-// leaves may hold one.
-async function endMembership<E extends AppEnv>(c: Context<E>, userId: string, organizationId: string, membershipId: string): Promise<void> {
+// leaves may hold one. `hold` is withAdminLock's.
+async function endMembership<E extends AppEnv>(
+  c: Context<E>,
+  userId: string,
+  organizationId: string,
+  membershipId: string,
+  hold: () => Promise<void>
+): Promise<void> {
   const db = c.env.DB;
   // Portal sessions outlive AuthKit sessions: end them first (a failure
   // here changes nothing, so the request can simply be retried).
   await revokePortalLinks(c.get("config"), organizationId, userId);
   await revokeInvitesUpTo(db, organizationId, now());
   const epoch = await bumpMembershipEpoch(db, userId, organizationId);
+  await hold();
   await workos(c.get("config")).client.userManagement.deleteOrganizationMembership(membershipId);
   await setRevokedAtEpoch(db, userId, organizationId, true, epoch);
   // Again, for a code an in-flight request of theirs created meanwhile.
