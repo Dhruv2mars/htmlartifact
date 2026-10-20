@@ -56,6 +56,13 @@ CREATE TABLE IF NOT EXISTS joins (
   undone INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
+CREATE TABLE IF NOT EXISTS invite_joins (
+  code TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  joined_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (code, user_id)
+);
 CREATE TABLE IF NOT EXISTS workspace_usage (
   organization_id TEXT PRIMARY KEY,
   stored_bytes INTEGER NOT NULL DEFAULT 0
