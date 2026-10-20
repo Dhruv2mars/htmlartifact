@@ -98,11 +98,12 @@ try {
         console.log(`dropped  ${key} (artifact deleted meanwhile)`);
         continue;
       }
-      // Count it against the bucket's cap (src/storage.ts), as an upload would.
+      // Count it against the bucket's cap (src/storage.ts), as an upload
+      // would, in the same transaction (one command is one D1 batch) as
+      // dropping its rows, so a re-run never counts it twice.
       await d1(
-        `INSERT INTO daily_budget (day, scope, used) VALUES ('total', 'r2:bytes', ${Buffer.byteLength(html, "utf8")}) ON CONFLICT (day, scope) DO UPDATE SET used = used + excluded.used`
+        `INSERT INTO daily_budget (day, scope, used) VALUES ('total', 'r2:bytes', ${Buffer.byteLength(html, "utf8")}) ON CONFLICT (day, scope) DO UPDATE SET used = used + excluded.used; DELETE FROM blobs WHERE key = '${key}'`
       );
-      await d1(`DELETE FROM blobs WHERE key = '${key}'`);
       console.log(`moved    ${key}`);
       moved += 1;
     } catch (error) {
