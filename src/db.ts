@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS draft_versions (
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   UNIQUE (draft_id, version_number)
 );
+CREATE INDEX IF NOT EXISTS draft_versions_retention_idx ON draft_versions(created_at)
+  WHERE source_ip IS NOT NULL OR user_agent IS NOT NULL;
 CREATE TABLE IF NOT EXISTS draft_pages (
   draft_version_id TEXT NOT NULL,
   path TEXT NOT NULL,

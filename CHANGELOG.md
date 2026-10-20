@@ -7,6 +7,14 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+### Fixed
+
+- D1 Free quota use by the service: the 15-minute retention job reads an index
+  of versions still holding request metadata instead of scanning every version;
+  each cron run retries at most 20 queued deletions (within D1 Free's 50
+  queries per invocation) and a deletion failure no longer skips retention; a
+  signed-in page view no longer rewrites an unchanged cached profile.
+
 ## [0.2.0] - 2026-10-20
 
 Fixes and features from a third real-world run (a startup, a multi-workspace

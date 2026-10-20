@@ -4,6 +4,7 @@ import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { getPlatformProxy, unstable_dev } from "wrangler";
 import {
+  Browser,
   CI_KEY,
   STORAGE,
   accessToken,
@@ -1011,5 +1012,94 @@ describe(`artifact storage (${STORAGE})`, () => {
     assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${first.body.draftId}`)).status, 200);
     assert.deepEqual(await r2Keys(prefix), []);
     assert.equal(await count("SELECT COUNT(*) FROM blobs WHERE key >= ? AND key < ?", prefix, `${prefix}~`), 0);
+  });
+});
+
+describe("D1 Free quotas", () => {
+  // proxy.env.DB, recording each statement it runs and failing past `limit`
+  // queries, as D1 Free does past 50 in one Worker invocation.
+  function meteredDb(db, limit = 50) {
+    const queries = [];
+    const statement = (inner, sql) =>
+      new Proxy(inner, {
+        get(target, key) {
+          if (key === "bind") return (...args) => statement(target.bind(...args), sql);
+          if (["run", "all", "first", "raw"].includes(key)) {
+            return (...args) => {
+              queries.push(sql);
+              if (queries.length > limit) return Promise.reject(new Error("Too many API requests by single worker invocation."));
+              return target[key](...args);
+            };
+          }
+          const value = target[key];
+          return typeof value === "function" ? value.bind(target) : value;
+        }
+      });
+    const wrapped = new Proxy(db, {
+      get(target, key) {
+        if (key === "prepare") return (sql) => statement(target.prepare(sql), sql);
+        if (key === "batch") throw new Error("unexpected batch in the cron");
+        const value = target[key];
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+    });
+    return { db: wrapped, queries };
+  }
+
+  test("a deletion backlog stays within 50 queries per cron run and never skips retention; retention uses its index", async () => {
+    const { ensureSchema } = await import("../src/db.ts");
+    const { queueDeletion, runScheduledJobs } = await import("../src/purge.ts");
+    await ensureSchema(proxy.env.DB);
+    const day = 24 * 60 * 60;
+    const versionId = "QUOTAQUOTAQUOTAQUOTA";
+    await exec(
+      `INSERT INTO draft_versions (id, draft_id, version_number, object_key, content_hash, file_size, created_by, source_ip, user_agent, created_at)
+       VALUES (?, 'quota-draft', 1, 'orgs/org_quota/drafts/quota-draft/versions/x.html', 'h', 1, 'user_quota', '203.0.113.7', 'curl', ?)`,
+      versionId,
+      Math.floor(Date.now() / 1000) - 31 * day
+    );
+    // 100 queued deletions: what a burst of artifact deletions with storage down leaves.
+    for (let i = 0; i < 100; i += 1) await queueDeletion(proxy.env.DB, "r2_prefix", `orgs/org_backlog_${i}/`).run();
+    const backlog = () => count("SELECT COUNT(*) FROM pending_deletions WHERE target LIKE 'orgs/org_backlog_%'");
+    try {
+      const metered = meteredDb(proxy.env.DB);
+      const result = await runScheduledJobs({ DB: metered.db, ARTIFACTS: proxy.env.ARTIFACTS });
+      assert.ok(metered.queries.length <= 50, `${metered.queries.length} queries`);
+      assert.deepEqual(result.deletions, { done: 20, failed: 0 }, "one run takes 20 jobs");
+      assert.ok(result.erased >= 1, "retention ran");
+      assert.equal(await backlog(), 80, "the rest waits for the next runs");
+      const [row] = await rows("SELECT source_ip, user_agent FROM draft_versions WHERE id = ?", versionId);
+      assert.deepEqual({ ...row }, { source_ip: null, user_agent: null });
+
+      // The retention statement the cron ran searches the partial index
+      // (only versions still holding metadata), not the whole table.
+      const retention = metered.queries.find((sql) => sql.startsWith("UPDATE draft_versions SET source_ip = NULL"));
+      assert.ok(retention, metered.queries.join("\n"));
+      const plan = (await rows(`EXPLAIN QUERY PLAN ${retention}`, 0)).map((r) => r.detail).join("\n");
+      assert.match(plan, /SEARCH draft_versions USING INDEX draft_versions_retention_idx \(created_at<\?\)/, plan);
+      assert.doesNotMatch(plan, /SCAN draft_versions/, plan);
+    } finally {
+      await exec("DELETE FROM pending_deletions WHERE target LIKE 'orgs/org_backlog_%'");
+      await exec("DELETE FROM draft_versions WHERE id = ?", versionId);
+    }
+  });
+
+  test("a signed-in page view does not rewrite an unchanged cached profile", async () => {
+    const browser = new Browser(stack);
+    await browser.signIn("alice@acme.test", { workspace: "Acme" });
+    const alice = await findUser(stack.emulator, "alice@acme.test");
+    const [profile] = await rows("SELECT name, email, picture_url FROM accounts WHERE id = ?", alice.id);
+    const marker = Math.floor(Date.now() / 1000) - 60; // fresh (under an hour), and not "now"
+    await exec("UPDATE accounts SET updated_at = ? WHERE id = ?", marker, alice.id);
+    for (let i = 0; i < 3; i += 1) assert.equal((await browser.get("/docs")).status, 200);
+    const [unchanged] = await rows("SELECT name, email, picture_url, updated_at FROM accounts WHERE id = ?", alice.id);
+    assert.deepEqual({ ...unchanged }, { ...profile, updated_at: marker }, "no write for an unchanged profile");
+
+    // A changed profile (here: a stale cached name) is still written at once.
+    await exec("UPDATE accounts SET name = 'Stale name', updated_at = ? WHERE id = ?", marker, alice.id);
+    assert.equal((await browser.get("/docs")).status, 200);
+    const [rewritten] = await rows("SELECT name, updated_at FROM accounts WHERE id = ?", alice.id);
+    assert.equal(rewritten.name, profile.name);
+    assert.ok(rewritten.updated_at > marker);
   });
 });

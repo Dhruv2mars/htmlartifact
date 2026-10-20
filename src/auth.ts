@@ -97,12 +97,18 @@ export async function sessionViewer<E extends AppEnv>(
   const { user } = auth;
   // A deleted user's cookie may outlive them briefly: never re-cache their profile.
   if (await isRevoked(c.env.DB, [user.id], "*")) return null;
-  await saveAccount(c.env.DB, {
-    id: user.id,
-    name: displayName(user),
-    email: user.email,
-    pictureUrl: user.profilePictureUrl
-  });
+  // Rewrite the cached profile only when it changed or went stale (as
+  // ensureAccount does for bearer requests): not one D1 write per page view.
+  const profile = { id: user.id, name: displayName(user), email: user.email, pictureUrl: user.profilePictureUrl };
+  const cached = await findAccount(c.env.DB, user.id, PROFILE_CACHE_SECONDS);
+  if (
+    !cached ||
+    cached.name !== profile.name ||
+    cached.email !== (profile.email ?? null) ||
+    cached.picture_url !== (profile.pictureUrl ?? null)
+  ) {
+    await saveAccount(c.env.DB, profile);
+  }
   return buildViewer(c, {
     accountId: user.id,
     organizationId: auth.organizationId || null,
