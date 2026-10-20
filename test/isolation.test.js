@@ -436,7 +436,7 @@ const ROUTES = {
           assert.equal(res.json.workspace.id, B.noraOrg.id);
           assertClean(label, res.text);
           const landing = await B.noraBrowser.get(`/join/${res.json.code}`);
-          assert.match(landing.text_, /Join Nora Labs/);
+          assert.match(landing.text_, /<h1[^>]*>Nora Labs<\/h1>/, "nora is already a member");
           assertClean(`${label} landing`, landing.text_);
         } else {
           assertDenied(label, res);
@@ -562,6 +562,40 @@ const ROUTES = {
       }
     }
   },
+  "PATCH /api/workspaces/members/:userId": {
+    kind: "resource",
+    why: "takes a user ID; A's members' roles are not the caller's to change",
+    async run(key) {
+      for (const actor of apiActors()) {
+        for (const role of ["admin", "member"]) {
+          const missing = await call(actor, "PATCH", "/api/workspaces/members/user_01ZZZZZZZZZZZZZZZZZZZZZZZZ", { role });
+          for (const id of A.onlyMemberIds) {
+            const res = await call(actor, "PATCH", `/api/workspaces/members/${id}`, { role, organization_id: A.org.id });
+            assertDenied(`${key} ${id} ${role} as ${actor.name}`, res, { missing });
+          }
+        }
+      }
+      const members = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/members");
+      assert.equal(members.body.members.find((m) => m.id === A.alice.id).role, "admin");
+      assert.ok(members.body.members.filter((m) => m.id !== A.alice.id).every((m) => m.role === "member"), "A's roles unchanged");
+    }
+  },
+  "POST /api/workspaces/leave": {
+    kind: "self",
+    why: "leaves only the caller's current workspace; an organization in the body is ignored",
+    async run(key) {
+      const body = { organization_id: A.org.id, workspace: A.handle };
+      const before = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/members");
+      for (const actor of apiActors().filter((a) => a.token !== B.olivia)) {
+        const res = await call(actor, "POST", "/api/workspaces/leave", body);
+        // nora is Nora Labs' last admin: refused, naming only her own workspace.
+        assertDenied(`${key} as ${actor.name}`, res, actor.token === B.nora ? { status: 422 } : {});
+      }
+      assertDenied(`${key} signed out`, await call(null, "POST", "/api/workspaces/leave", body), { status: 401 });
+      const members = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/members");
+      assert.deepEqual(members.body.members, before.body.members, "A's members unchanged");
+    }
+  },
   "DELETE /api/workspaces/current": {
     kind: "resource",
     why: "deletes only the caller's workspace; confirming with A's name or id must not delete A",
@@ -661,6 +695,15 @@ const ROUTES = {
           }
           assertClean(label, res.text);
         }
+        // ?workspace= names another workspace: A's is refused exactly like a missing one.
+        for (const query of ["?workspace=", "?scope=workspace&workspace="]) {
+          const missing = await call(actor, "GET", `/api/drafts${query}org_01ZZZZZZZZZZZZZZZZZZZZZZZZ`);
+          for (const target of [A.org.id, A.handle]) {
+            const res = await call(actor, "GET", `/api/drafts${query}${encodeURIComponent(target)}`);
+            const label = `${key}${query}${target} as ${actor.name}`;
+            assertDenied(label, res, { missing });
+          }
+        }
       }
     }
   },
@@ -737,15 +780,30 @@ const ROUTES = {
       }
     }
   },
+  "GET /history/:draftId": {
+    kind: "resource",
+    why: "draft ID (version history, any member's artifact)",
+    async run(key) {
+      for (const actor of webActors()) {
+        const m = await actor.browser.get(`/history/${MISSING_DRAFT}`);
+        const missing = { status: m.status, text: m.text_ };
+        for (const target of [A.plan.draftId, A.bobDraft.draftId]) {
+          const r = await actor.browser.get(`/history/${target}`);
+          assertDenied(`${key} ${target} as ${actor.name}`, { status: r.status, text: r.text_ }, { status: 404, missing });
+        }
+      }
+    }
+  },
   "GET /mine/:draftId": {
     kind: "resource",
-    why: "draft ID (version history)",
+    why: "old history URL: redirects to /history/:draftId without looking the ID up",
     async run(key) {
       for (const actor of webActors()) {
         const m = await actor.browser.get(`/mine/${MISSING_DRAFT}`);
         const missing = { status: m.status, text: m.text_ };
         for (const target of [A.plan.draftId, A.bobDraft.draftId]) {
           const r = await actor.browser.get(`/mine/${target}`);
+          assert.equal(new URL(r.finalUrl).pathname, `/history/${target}`);
           assertDenied(`${key} ${target} as ${actor.name}`, { status: r.status, text: r.text_ }, { status: 404, missing });
         }
       }

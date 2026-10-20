@@ -1,13 +1,13 @@
 import { useDeferredValue, useEffect, useState } from "react";
 import type { ArtifactSummary } from "../page";
-import { ArrowUpRight, SearchIcon } from "./icons";
+import { SearchIcon } from "./icons";
 import { Seal } from "./Seal";
 import { Time } from "./Time";
 
 const SERVER_ROWS = 30;
 
-// A feed of artifacts. Titles open the artifact in a new tab; on "Mine",
-// each row also links to its version history.
+// A feed of artifacts. Titles open the artifact in a new tab; each row also
+// links to its version history.
 export function ArtifactList({ artifacts, mine = false }: { artifacts: ArtifactSummary[]; mine?: boolean }) {
   const [query, setQuery] = useState("");
   // The server renders the first rows only (Workers Free: 10 ms of CPU); the
@@ -56,16 +56,12 @@ export function ArtifactList({ artifacts, mine = false }: { artifacts: ArtifactS
               </p>
             </div>
             <Time iso={a.updatedAt} className="hidden shrink-0 text-[12.5px] text-fog sm:block" />
-            {mine ? (
-              <a
-                href={`/mine/${a.id}`}
-                className="press relative z-[1] shrink-0 rounded-full border border-rule px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-rule-2 hover:text-ink"
-              >
-                History
-              </a>
-            ) : (
-              <ArrowUpRight className="hidden size-4 shrink-0 text-fog opacity-0 transition-opacity duration-150 group-hover:opacity-100 sm:block" />
-            )}
+            <a
+              href={`/history/${a.id}`}
+              className="press relative z-[1] shrink-0 rounded-full border border-rule px-3 py-1.5 text-[12.5px] text-ink-2 hover:border-rule-2 hover:text-ink"
+            >
+              History
+            </a>
           </li>
         ))}
         {shown.length === 0 && <li className="px-5 py-10 text-center text-[14px] text-fog">No artifact matches “{query}”.</li>}

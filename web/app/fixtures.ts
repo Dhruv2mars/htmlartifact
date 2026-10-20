@@ -2,7 +2,8 @@ import type { ArtifactSummary, ArtifactVersion, Page, Session } from "./page";
 
 // Dev-only pages for `react-router dev` (the real Worker supplies these).
 // Pick one with ?page=<kind>; add &fixture=worst for break-ui data, or
-// &fixture=empty for empty states.
+// &fixture=empty for empty states. artifact takes &teammate; join takes
+// &member=current|other.
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
@@ -71,8 +72,8 @@ export function fixturePage(url: URL): Page {
         kind: "artifact",
         session: s,
         artifact: worst
-          ? { id: "aaaaaaaaaaaa", title: LONG, description: "y".repeat(300), url: worstArtifacts[0]!.url }
-          : { id: "k3j9x0a1b2c4", title: "Billing migration plan", description: "Six weeks from legacy invoices to the new ledger, with dual writes.", url: "https://htmlartifact.pages.dev/d/k3j9x0a1b2c4" },
+          ? { id: "aaaaaaaaaaaa", title: LONG, description: "y".repeat(300), url: worstArtifacts[0]!.url, author: worstSession.name, mine: false }
+          : { id: "k3j9x0a1b2c4", title: "Billing migration plan", description: "Six weeks from legacy invoices to the new ledger, with dual writes.", url: "https://htmlartifact.pages.dev/d/k3j9x0a1b2c4", author: "Marcus Lee", mine: !url.searchParams.has("teammate") },
         versions: versions(worst ? 60 : 3, worst)
       };
     case "workspaces":
@@ -83,7 +84,15 @@ export function fixturePage(url: URL): Page {
         next: url.searchParams.has("next") ? "/d/k3j9x0a1b2c4" : null
       };
     case "join":
-      return { kind: "join", session: s, code: "HA-7KQ2-MX9P-4TRA", workspaceName: worst ? worstSession.workspace!.name : "Northwind" };
+      return {
+        kind: "join",
+        session: s,
+        code: "HA-7KQ2-MX9P-4TRA",
+        workspace: { id: "org_01NWND", name: worst ? worstSession.workspace!.name : "Northwind" },
+        expiresAt: new Date(Date.now() + 6 * 86_400_000).toISOString(),
+        usesLeft: worst ? 1 : 49,
+        member: url.searchParams.get("member") === "current" ? "current" : url.searchParams.get("member") === "other" ? "other" : null
+      };
     default:
       return { kind: "landing", session: null };
   }

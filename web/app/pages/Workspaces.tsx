@@ -35,7 +35,7 @@ export function Workspaces({ session, workspaces, next }: { session: Session; wo
     </Panel>
   );
   const create = (
-    <Panel title="Start a workspace" body={<>You'll be its admin. Invite people from a terminal with <span className="whitespace-nowrap font-mono text-[12.5px]">htmlartifact workspace invite</span>.</>}>
+    <Panel title="Start a workspace" body={<>You'll be its admin. Invite people from a terminal with <span className="whitespace-nowrap font-mono text-[12.5px]">npx htmlartifact workspace invite</span>.</>}>
       <form method="post" action="/workspaces" className="flex flex-col gap-2.5 sm:flex-row">
         <label className="sr-only" htmlFor="name">
           Workspace name
@@ -106,8 +106,8 @@ export function Workspaces({ session, workspaces, next }: { session: Session; wo
           )}
         </div>
         <p className="mt-8 text-[13.5px] text-fog">
-          From a terminal or an agent: <code className="text-[12.5px] text-ink-2">htmlartifact workspace create "Northwind"</code> or{" "}
-          <code className="text-[12.5px] text-ink-2">htmlartifact workspace join &lt;code&gt;</code>
+          From a terminal or an agent: <code className="text-[12.5px] text-ink-2">npx htmlartifact workspace create "Northwind"</code> or{" "}
+          <code className="text-[12.5px] text-ink-2">npx htmlartifact workspace join &lt;code&gt;</code>
         </p>
       </main>
     </AppShell>

@@ -11,6 +11,8 @@ export interface DraftSummary {
   title: string;
   description: string | null;
   author: string | null;
+  // The author was removed from the workspace, left it, or was deleted.
+  authorFormer: boolean;
   repoOrg: string | null;
   repoName: string | null;
   repoHost: string | null;
@@ -31,6 +33,8 @@ export interface DraftWithVersions {
     draftId: string;
     title: string;
     description: string | null;
+    author: string | null;
+    mine: boolean;
     publicUrl: string;
     versionBaseUrl: string;
   };
@@ -77,6 +81,8 @@ async function listDrafts(
     .prepare(
       `SELECT d.id, d.slug, d.title, d.description, d.repo_org, d.repo_name, d.repo_host,
               d.created_at, d.updated_at, a.name AS author_name,
+              (d.account_id NOT LIKE 'api_key_%' AND EXISTS (SELECT 1 FROM revocations r
+                 WHERE r.subject = d.account_id AND r.organization_id IN (d.organization_id, '*'))) AS author_former,
               cv.version_number AS latest_version_number, cv.created_at AS latest_version_at,
               (SELECT COUNT(*) FROM draft_versions v WHERE v.draft_id = d.id) AS version_count
        FROM drafts d
@@ -95,6 +101,7 @@ async function listDrafts(
     title: row.title,
     description: row.description,
     author: row.author_name,
+    authorFormer: Boolean(row.author_former),
     repoOrg: row.repo_org,
     repoName: row.repo_name,
     repoHost: row.repo_host,
@@ -106,7 +113,8 @@ async function listDrafts(
   }));
 }
 
-export async function getMyDraftWithVersions(
+// One artifact of this workspace with its versions, whoever published it.
+export async function getDraftWithVersions(
   db: D1Database,
   {
     accountId,
@@ -118,10 +126,11 @@ export async function getMyDraftWithVersions(
 ): Promise<DraftWithVersions | null> {
   const draft = await db
     .prepare(
-      "SELECT * FROM drafts WHERE id = ? AND account_id = ? AND organization_id = ? AND deleted_at IS NULL"
+      `SELECT d.*, a.name AS author_name FROM drafts d LEFT JOIN accounts a ON a.id = d.account_id
+       WHERE d.id = ? AND d.organization_id = ? AND d.deleted_at IS NULL`
     )
-    .bind(draftId, accountId, organizationId)
-    .first<DraftRow>();
+    .bind(draftId, organizationId)
+    .first<DraftRow & { author_name: string | null }>();
   if (!draft) return null;
   const { results } = await db
     .prepare(
@@ -135,6 +144,8 @@ export async function getMyDraftWithVersions(
       draftId: draft.id,
       title: draft.title,
       description: draft.description,
+      author: draft.author_name,
+      mine: draft.account_id === accountId,
       publicUrl: draftUrl(origin, draft, handle),
       // Version links use the draft ID, which never moves to another draft.
       versionBaseUrl: `${origin}/d/${draft.id}`
