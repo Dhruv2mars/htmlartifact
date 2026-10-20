@@ -129,6 +129,35 @@ test("CI publishes with HTMLARTIFACT_TOKEN and no saved sign-in", async () => {
   assert.equal(receipt.workspace, "Acme");
 });
 
+test("prune keeps the latest versions; check and list show the workspace's storage; list says who updated", async () => {
+  const ci = await json(["upload", writeHtml(stack.tmp, "nightly.html", page("Nightly v1")), "--new"], {
+    HTMLARTIFACT_HOME: path.join(stack.tmp, "ci-home"),
+    HTMLARTIFACT_TOKEN: CI_KEY
+  });
+  // An admin publishing over someone else's artifact is told so.
+  const file = path.join(stack.tmp, "nightly-fix.html");
+  for (const n of [2, 3, 4]) {
+    fs.writeFileSync(file, page(`Nightly v${n}`));
+    const { stderr } = await cli(["upload", file, "--draft", ci.draftId]);
+    assert.match(stderr, /Warning: This artifact is Acme CI \(API key\)'s: you published version \d over their work/);
+  }
+  assert.match((await cli(["list", "--all"])).stdout, /Nightly v4 {2}· Acme CI \(API key\)\n.* · v4 · 4 versions · updated just now by Alice/);
+
+  await assert.rejects(cli(["prune", ci.draftId]), /--keep 5/);
+  const pruned = await json(["prune", ci.draftId, "--keep", "1"]);
+  assert.equal(pruned.deleted, 3);
+  assert.equal(pruned.versionCount, 1);
+  assert.equal(pruned.usage.remainingBytes, pruned.usage.limitBytes - pruned.usage.storedBytes);
+  assert.match((await cli(["prune", ci.draftId, "--keep", "1"])).stdout, /Nothing to prune: \w+ has 1 version\.\nStorage: .* of 50 MiB used \(.* left\)/);
+
+  const listed = await json(["list", "--all"]);
+  assert.ok(listed.drafts.some((d) => d.draftId === ci.draftId && d.updatedBy === "Alice" && d.versionCount === 1));
+  assert.deepEqual(listed.usage, pruned.usage);
+  assert.deepEqual((await json(["check"])).usage, pruned.usage);
+  assert.match((await cli(["check"])).stdout, /Storage: .* of 50 MiB used/);
+  assert.match((await cli(["list"])).stdout, /Storage: .* of 50 MiB used/);
+});
+
 test("upload checks the markup locally first: errors with line and column, nothing sent", async () => {
   const file = writeHtml(stack.tmp, "bad.html", `<!doctype html><title>Bad</title>\n<p>ok</p>\n<iframe src="https://x.test"></iframe>`);
   // An API URL nothing listens on: the local check must fail before any request.

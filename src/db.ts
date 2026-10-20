@@ -364,7 +364,8 @@ export async function revokeAllInvites(db: D1Database, organizationId: string): 
     .run();
 }
 
-// HTML bytes a workspace stores (every version and page). Kept as a counter,
+// HTML bytes a workspace stores (every version, all its pages: a version's
+// file_size is its upload's total). Kept as a counter,
 // moved in the same batches that add or delete versions; created on first use
 // from the rows themselves (workspaces from before the counter existed).
 export async function workspaceStoredBytes(db: D1Database, organizationId: string): Promise<number> {
@@ -374,7 +375,6 @@ export async function workspaceStoredBytes(db: D1Database, organizationId: strin
     .prepare(
       `INSERT INTO workspace_usage (organization_id, stored_bytes)
        SELECT ?1, (SELECT COALESCE(SUM(v.file_size), 0) FROM draft_versions v JOIN drafts d ON d.id = v.draft_id WHERE d.organization_id = ?1)
-                + (SELECT COALESCE(SUM(p.file_size), 0) FROM draft_pages p JOIN draft_versions v ON v.id = p.draft_version_id JOIN drafts d ON d.id = v.draft_id WHERE d.organization_id = ?1)
        ON CONFLICT (organization_id) DO NOTHING`
     )
     .bind(organizationId)
@@ -383,9 +383,14 @@ export async function workspaceStoredBytes(db: D1Database, organizationId: strin
   return created?.stored_bytes ?? 0;
 }
 
-// The D1 database's size in bytes, as D1 reports it with every query.
-export async function databaseBytes(db: D1Database): Promise<number | null> {
-  const { meta } = await db.prepare("SELECT 1").run();
+// The D1 database's size in bytes, as D1 reports it with every query, and
+// every workspace's counted bytes at that moment (one read, one snapshot).
+// The upload batch turns the two into an atomic guard: bytes counted since
+// this read are bytes the measured size does not include yet.
+export async function databaseUsage(db: D1Database): Promise<{ size: number | null; countedBytes: number }> {
+  const { meta, results } = await db
+    .prepare("SELECT COALESCE(SUM(stored_bytes), 0) AS counted FROM workspace_usage")
+    .run<{ counted: number }>();
   const size = (meta as { size_after?: unknown }).size_after;
-  return typeof size === "number" ? size : null;
+  return { size: typeof size === "number" ? size : null, countedBytes: results[0]?.counted ?? 0 };
 }

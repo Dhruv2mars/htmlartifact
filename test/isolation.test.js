@@ -630,6 +630,19 @@ const ROUTES = {
       }
     }
   },
+  "DELETE /api/drafts/:draftId/versions": {
+    kind: "resource",
+    why: "takes a draft ID",
+    async run(key) {
+      for (const actor of apiActors()) {
+        const missing = await call(actor, "DELETE", `/api/drafts/${MISSING_DRAFT}/versions?keepLatest=1`);
+        for (const target of [A.plan.draftId, A.bobDraft.draftId]) {
+          const res = await call(actor, "DELETE", `/api/drafts/${target}/versions?keepLatest=1`);
+          assertDenied(`${key} ${target} as ${actor.name}`, res, { missing });
+        }
+      }
+    }
+  },
 
   // serve.ts
   "GET /d/:id{[a-z0-9]{12}}": {

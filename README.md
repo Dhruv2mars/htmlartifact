@@ -40,6 +40,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `read <url-or-id>` | Download an artifact with your sign-in (how agents read links). `--out <file>` picks where |
 | `list [--all]` | Your artifacts, or the whole workspace's |
 | `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
+| `prune <id-or-url> --keep <n>` | Delete an artifact's old versions, keeping the latest `n`, to free workspace storage (`check` and `list` show what's used and left) |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |
 | `workspace sso` / `directory` / `domains` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC), SCIM directory, or domain verification (admins). SSO and directory links are off unless the deployment sets `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` (WorkOS bills each connection) |
 | `check <path>` | Validate against the rules without publishing |

@@ -7,9 +7,10 @@ import { Argument, Command } from "effect/cli";
 import { assertOwnServer, getAuth, resolveApiUrl } from "../auth.ts";
 import { CMD, USER_AGENT, VERSION } from "../env.ts";
 import { attempt, CliError, cliError, NetworkError, reason } from "../errors.ts";
-import { apiUrlFlag, jsonFlag, stringFlag, switchFlag } from "../flags.ts";
-import { formatIssue } from "../../src/html-policy.ts";
+import { apiUrlFlag, jsonFlag, numberFlag, stringFlag, switchFlag } from "../flags.ts";
+import { formatBytes, formatIssue } from "../../src/html-policy.ts";
 import {
+  formatUsage,
   offlineReport,
   printCheckReport,
   printJson,
@@ -268,13 +269,16 @@ export const list = Command.make(
     }
 
     const drafts: Json[] = body.drafts || [];
+    const usage = formatUsage(body.usage);
 
-    if (options.json) return yield* printJson(drafts);
+    if (options.json) return yield* printJson({ drafts, usage: body.usage ?? null });
 
     if (!drafts.length) {
-      return yield* Console.log(
+      yield* Console.log(
         options.all ? "Nothing published in this workspace yet." : `Nothing yet. Publish with: ${CMD} upload <file.html>`
       );
+      if (usage) yield* Console.log(usage);
+      return;
     }
 
     yield* Console.log(`Artifacts (${drafts.length})\n`);
@@ -284,14 +288,17 @@ export const list = Command.make(
       const count = `${draft.versionCount} version${draft.versionCount === 1 ? "" : "s"}`;
       const disabled = draft.disabled ? " · disabled" : "";
 
+      // Someone other than the author (an admin, a CI key) published the current version.
+      const updatedBy = draft.updatedBy && draft.updatedBy !== draft.author ? ` by ${draft.updatedBy}` : "";
       yield* Console.log(`${draft.title || "Untitled"}${options.all && draft.author ? `  · ${draft.author}` : ""}`);
-      yield* Console.log(`  ${repo} · ${version} · ${count} · updated ${timeAgo(draft.updatedAt)}${disabled}`);
+      yield* Console.log(`  ${repo} · ${version} · ${count} · updated ${timeAgo(draft.updatedAt)}${updatedBy}${disabled}`);
       yield* Console.log(`  ${draft.publicUrl}`);
       if (draft.description) {
         yield* Console.log(`  ${draft.description}`);
       }
       yield* Console.log("");
     }
+    if (usage) yield* Console.log(usage);
   })
 ).pipe(Command.withDescription("List your artifacts in the current workspace (--all: everyone's)."));
 
@@ -360,3 +367,48 @@ export const deleteDraft = Command.make(
     yield* Console.log(`Deleted ${draftId}. Its HTML (every version) is erased.`);
   })
 ).pipe(Command.withDescription("Delete an artifact and every version of its HTML."));
+
+export const prune = Command.make(
+  "prune",
+  {
+    target: Argument.String("draft-id-or-url").pipe(
+      Argument.withDescription("Artifact ID, or its /d/<id> or /w/<workspace>/<slug> URL")
+    ),
+    keep: numberFlag("keep", "How many of the latest versions to keep (at least 1)"),
+    json: jsonFlag(),
+    apiUrl: apiUrlFlag()
+  },
+  Effect.fn(function* (options) {
+    const keep = Option.getOrUndefined(options.keep);
+    if (keep === undefined || !Number.isInteger(keep) || keep < 1) {
+      return yield* new CliError({
+        message: `Say how many of the latest versions to keep, e.g.: ${CMD} prune ${options.target} --keep 5`
+      });
+    }
+    const apiUrlOverride = Option.getOrUndefined(options.apiUrl);
+    const parsed: DraftTarget = yield* parseDraftTarget(options.target, yield* resolveApiUrl(apiUrlOverride));
+    const { apiUrl, apiKey } = yield* getAuth(apiUrlOverride);
+    const draftId =
+      "draftId" in parsed ? parsed.draftId : yield* findDraftBySlugPath(apiUrl, apiKey, parsed.slugPath, options.target);
+
+    // The server prunes a long history in steps.
+    let deleted = 0;
+    let freedBytes = 0;
+    let result: Json;
+    do {
+      result = yield* api(apiUrl, `/api/drafts/${draftId}/versions?keepLatest=${keep}`, { apiKey, method: "DELETE" });
+      deleted += result.deleted;
+      freedBytes += result.freedBytes;
+    } while (result.more && result.deleted > 0);
+
+    const summary = { ok: true, draftId, deleted, freedBytes, versionCount: result.versionCount, usage: result.usage ?? null };
+    if (options.json) return yield* printJson(summary);
+    yield* Console.log(
+      deleted
+        ? `Pruned ${deleted} old version${deleted === 1 ? "" : "s"} of ${draftId} (freed ${formatBytes(freedBytes)}); ${result.versionCount} left.`
+        : `Nothing to prune: ${draftId} has ${result.versionCount} version${result.versionCount === 1 ? "" : "s"}.`
+    );
+    const usage = formatUsage(result.usage);
+    if (usage) yield* Console.log(usage);
+  })
+).pipe(Command.withDescription("Delete an artifact's old versions to free storage, keeping the latest --keep <n>."));

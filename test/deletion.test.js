@@ -221,6 +221,68 @@ describe("artifact deletion", () => {
     assert.equal((await callApi(stack, bob, "DELETE", `/api/drafts/${mine.body.draftId}`)).status, 200);
     assert.equal(await count("SELECT COUNT(*) FROM drafts WHERE id = ?", mine.body.draftId), 0);
   });
+
+  test("pruning keeps the latest versions, frees the rest (rows, objects, quota); same rights as delete", async () => {
+    const bob = await accessToken(stack, "bob@acme.test", "Acme");
+    const max = await accessToken(stack, "max@both.test", "Acme");
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    const org = await findOrganization(stack.emulator, "Acme");
+    const usage = async () => (await callApi(stack, bob, "POST", "/api/check", {})).body.usage.storedBytes;
+    const before = await usage();
+    const version = (n) => ({
+      slug: "prune-deck",
+      files: [
+        { path: "index.html", html: page(`Prune v${n}`, '<a href="notes.html">notes</a>') },
+        { path: "notes.html", html: page(`Prune v${n} notes`) }
+      ]
+    });
+    const receipts = [];
+    for (let n = 1; n <= 4; n += 1) receipts.push((await upload(bob, version(n))).body);
+    const { draftId } = receipts[0];
+    const added = receipts.reduce((sum, r) => sum + r.totalBytes, 0);
+    assert.equal(await usage(), before + added, "a version counts its pages once");
+    const prefix = `orgs/${org.id}/drafts/${draftId}/versions/`;
+
+    const prune = (token, query) => callApi(stack, token, "DELETE", `/api/drafts/${draftId}/versions${query}`);
+    assert.equal((await prune(max, "?keepLatest=1")).status, 403, "a plain member can't prune a teammate's");
+    for (const query of ["", "?keepLatest=0", "?keepLatest=-2", "?keepLatest=1.5", "?keepLatest=all"]) {
+      assert.equal((await prune(bob, query)).status, 422, query);
+    }
+    const olivia = await accessToken(stack, "olivia@other.test", "Other");
+    assert.equal((await prune(olivia, "?keepLatest=1")).status, 404);
+    assert.equal((await callApi(stack, bob, "DELETE", "/api/drafts/zzzzzzzzzzzz/versions?keepLatest=1")).status, 404);
+
+    const pruned = await prune(bob, "?keepLatest=2");
+    assert.equal(pruned.status, 200, JSON.stringify(pruned.body));
+    const freed = receipts[0].totalBytes + receipts[1].totalBytes;
+    assert.equal(pruned.body.deleted, 2);
+    assert.equal(pruned.body.freedBytes, freed);
+    assert.equal(pruned.body.more, false);
+    assert.equal(pruned.body.versionCount, 2);
+    assert.equal(pruned.body.usage.storedBytes, before + added - freed);
+    assert.equal(await usage(), before + added - freed);
+
+    // The old versions' objects and rows are gone; the newer two stay whole.
+    const keys = await r2Keys(prefix);
+    assert.deepEqual(keys, [2, 3].flatMap((i) => [`${prefix}${receipts[i].versionId}.html`, `${prefix}${receipts[i].versionId}/notes.html`]).sort());
+    assert.equal(await count("SELECT COUNT(*) FROM draft_pages WHERE draft_version_id IN (?, ?)", receipts[0].versionId, receipts[1].versionId), 0);
+    assert.equal(await count("SELECT COUNT(*) FROM pending_deletions"), 0);
+    assert.equal((await read(`${stack.baseUrl}/d/${draftId}/v/1/`, bob)).status, 404);
+    assert.equal((await read(`${stack.baseUrl}/d/${draftId}/v/3/notes`, bob)).status, 200);
+    assert.equal((await read(`${receipts[3].publicUrl}/`, bob)).status, 200);
+
+    // Nothing more to prune; numbering carries on; an admin may prune too.
+    assert.equal((await prune(bob, "?keepLatest=2")).body.deleted, 0);
+    assert.equal((await upload(bob, version(5))).body.versionNumber, 5);
+    const byAdmin = await prune(alice, "?keepLatest=1");
+    assert.equal(byAdmin.status, 200, JSON.stringify(byAdmin.body));
+    assert.equal(byAdmin.body.deleted, 2);
+    assert.equal(byAdmin.body.versionCount, 1);
+
+    // Deleting the artifact gives back exactly what is left of it.
+    assert.equal((await callApi(stack, bob, "DELETE", `/api/drafts/${draftId}`)).status, 200);
+    assert.equal(await usage(), before);
+  });
 });
 
 describe("ops Worker cron", () => {
@@ -388,6 +450,33 @@ describe("workspace deletion", () => {
     await eventually(async () => (await count("SELECT COUNT(*) FROM pending_deletions")) === 0, "nothing left queued");
   });
 
+  test("a deleted workspace leaves workspace list at once, while WorkOS still has it; its members stay signed in", async () => {
+    const max = await signInTokens(stack, "max@both.test", "Acme");
+    const created = await callApi(stack, max.accessToken, "POST", "/api/workspaces", { name: "Lagging Co" });
+    assert.equal(created.status, 201);
+    const { id } = created.body.workspace;
+    const lagging = await refreshInto(stack, max, id);
+    const restore = await breakWorkos(stack.emulator, "DELETE", `/organizations/${id}`);
+    try {
+      const deleted = await callApi(stack, lagging.accessToken, "DELETE", "/api/workspaces/current", { confirm: "Lagging Co" });
+      assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+      // WorkOS still lists the membership (its organization delete is queued).
+      const memberships = await workosApi(stack.emulator, "GET", `/user_management/organization_memberships?organization_id=${id}`);
+      assert.equal(memberships.data.length, 1);
+      const listed = await callApi(stack, lagging.accessToken, "GET", "/api/workspaces");
+      assert.equal(listed.status, 200);
+      assert.deepEqual(listed.body.workspaces.map((w) => w.name).sort(), ["Acme", "Other"]);
+      // Signed in, with no workspace: not "Not signed in".
+      const me = await callApi(stack, lagging.accessToken, "GET", "/api/me");
+      assert.equal(me.status, 200);
+      assert.equal(me.body.workspace, null);
+    } finally {
+      await restore();
+    }
+    await runCron();
+    await eventually(async () => (await count("SELECT COUNT(*) FROM pending_deletions")) === 0, "queued org deletion retried", runCron);
+  });
+
   test("an organization deleted in WorkOS directly takes its workspace with it", async () => {
     let olivia = await signInTokens(stack, "olivia@other.test", "Other");
     const created = await callApi(stack, olivia.accessToken, "POST", "/api/workspaces", { name: "Dashboard Deleted" });
@@ -402,6 +491,10 @@ describe("workspace deletion", () => {
       "organization.deleted webhook purges the workspace"
     );
     assert.equal((await read(art.body.publicUrl, olivia.accessToken)).status, 404);
+    // Its members stay signed in, with no workspace there (R3-6).
+    const me = await callApi(stack, olivia.accessToken, "GET", "/api/me");
+    assert.equal(me.status, 200);
+    assert.equal(me.body.workspace, null);
   });
 });
 
@@ -808,14 +901,26 @@ describe("review round 12", () => {
     const acme = await findOrganization(stack.emulator, "Acme");
     const bobs = await upload(bob, { html: page("Bob's report"), slug: "bob-report" });
     assert.equal(bobs.status, 201, JSON.stringify(bobs.body));
+    assert.deepEqual(bobs.body.warnings, [], "no warning on your own artifact");
     const byAdmin = await upload(alice, { html: page("Bob's report, fixed by an admin"), slug: "bob-report" });
     assert.equal(byAdmin.status, 200, JSON.stringify(byAdmin.body));
     assert.equal(byAdmin.body.draftId, bobs.body.draftId);
+    // The receipt says whose it is; the list says who updated it last.
+    assert.ok(byAdmin.body.warnings.some((w) => /This artifact is Bob's: you published version 2 over their work/.test(w)), JSON.stringify(byAdmin.body.warnings));
+    const feed = (await callApi(stack, alice, "GET", "/api/drafts?scope=workspace")).body.drafts;
+    const listed = feed.find((d) => d.draftId === bobs.body.draftId);
+    assert.equal(listed.author, "Bob");
+    assert.equal(listed.updatedBy, "Alice");
 
     const alices = await upload(alice, { html: page("Alice's plan"), slug: "alice-plan" });
+    assert.equal((await callApi(stack, alice, "GET", "/api/drafts")).body.drafts.find((d) => d.draftId === alices.body.draftId).updatedBy, "Alice");
+    // Like delete: a teammate's artifact is 403 (with why), not a conflict.
     const byMember = await upload(bob, { html: page("Bob overwriting"), slug: "alice-plan" });
-    assert.equal(byMember.status, 409);
-    assert.equal((await upload(bob, { html: page("Bob overwriting"), draftId: alices.body.draftId })).status, 409);
+    assert.equal(byMember.status, 403);
+    assert.match(byMember.body.error, /belongs to a teammate's artifact; only they or a workspace admin can update it/);
+    const byId = await upload(bob, { html: page("Bob overwriting"), draftId: alices.body.draftId });
+    assert.equal(byId.status, 403);
+    assert.match(byId.body.error, /belongs to a teammate/);
 
     const ci = await upload(CI_KEY, { html: page("Nightly"), slug: "nightly" });
     assert.equal(ci.status, 201, JSON.stringify(ci.body));
@@ -823,7 +928,7 @@ describe("review round 12", () => {
     const byNewKey = await upload(rotated, { html: page("Nightly, new key"), slug: "nightly" });
     assert.equal(byNewKey.status, 200, JSON.stringify(byNewKey.body));
     assert.equal(byNewKey.body.draftId, ci.body.draftId);
-    assert.equal((await upload(rotated, { html: page("Key over Bob"), slug: "bob-report" })).status, 409, "keys can't take over people's artifacts");
+    assert.equal((await upload(rotated, { html: page("Key over Bob"), slug: "bob-report" })).status, 403, "keys can't take over people's artifacts");
   });
 
   test("a valid fresh code reclaims a membership whose undo is still queued", async () => {
