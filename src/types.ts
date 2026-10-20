@@ -148,6 +148,17 @@ export interface WorkspaceRow {
   updated_at: number;
 }
 
+export interface CiKeyRow {
+  id: string;
+  organization_id: string;
+  name: string;
+  token_hash: string;
+  created_by: string;
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+
 export interface DraftRow {
   id: string;
   account_id: string;
