@@ -77,7 +77,7 @@ export function toArtifacts(drafts: DraftSummary[]): ArtifactSummary[] {
     id: d.draftId,
     title: d.title,
     description: d.description,
-    author: d.author,
+    author: d.author && d.authorFormer ? `${d.author} (former member)` : d.author,
     url: d.publicUrl,
     repo: d.repoOrg && d.repoName ? `${d.repoOrg}/${d.repoName}` : d.repoName,
     version: d.latestVersionNumber,

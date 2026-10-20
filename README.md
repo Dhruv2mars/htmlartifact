@@ -31,14 +31,16 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 |---|---|
 | `login` / `logout` / `whoami` | Sign in or create an account; show who you are and your current workspace |
 | `workspace create <name>` | New workspace; you are its admin |
-| `workspace invite` | Invite code + join link (admins). `--max-uses`, `--days` |
-| `workspace invites [--revoke <code\|all>]` | List live invite codes, or revoke one or all (admins) |
-| `workspace join <code>` | Join with a code |
+| `workspace invite` | Invite code + join link (admins). `--max-uses` (1 to 50), `--days` (1 to 30) |
+| `workspace invites [--all] [--revoke <code\|all>]` | List live invite codes (`--all`: every code, its status and who joined), or revoke one or all (admins) |
+| `workspace join <code-or-link>` | Join with a code or its `/join/` link |
 | `workspace list` / `switch <name>` | Your workspaces; change the current one |
 | `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately, and every invite code issued until then is revoked (they may hold one): share a fresh code with the team |
+| `workspace promote <email>` / `demote <email>` | Make a member an admin, or an admin a member (admins). One admin always remains |
+| `workspace leave` | Leave the current workspace (its last admin promotes someone first) |
 | `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace |
-| `read <url-or-id>` | Download an artifact with your sign-in (how agents read links). `--out <file>` picks where |
-| `list [--all]` | Your artifacts, or the whole workspace's |
+| `read <url-or-id>` | Download an artifact with your sign-in (how agents read links), from any workspace you are in. `--out <file>` picks where; `--workspace <name>` reads a custom URL name there |
+| `list [--all] [--workspace <name>]` | Your artifacts, or the whole workspace's; `--workspace` lists another of your workspaces |
 | `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
 | `workspace api-key create [--name <label>]` / `list` / `revoke <id>` | API keys for CI (admins). The key is shown once; it stops working when revoked, when the admin who created it leaves the workspace, or when the workspace is deleted |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |

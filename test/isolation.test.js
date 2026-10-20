@@ -562,6 +562,40 @@ const ROUTES = {
       }
     }
   },
+  "PATCH /api/workspaces/members/:userId": {
+    kind: "resource",
+    why: "takes a user ID; A's members' roles are not the caller's to change",
+    async run(key) {
+      for (const actor of apiActors()) {
+        for (const role of ["admin", "member"]) {
+          const missing = await call(actor, "PATCH", "/api/workspaces/members/user_01ZZZZZZZZZZZZZZZZZZZZZZZZ", { role });
+          for (const id of A.onlyMemberIds) {
+            const res = await call(actor, "PATCH", `/api/workspaces/members/${id}`, { role, organization_id: A.org.id });
+            assertDenied(`${key} ${id} ${role} as ${actor.name}`, res, { missing });
+          }
+        }
+      }
+      const members = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/members");
+      assert.equal(members.body.members.find((m) => m.id === A.alice.id).role, "admin");
+      assert.ok(members.body.members.filter((m) => m.id !== A.alice.id).every((m) => m.role === "member"), "A's roles unchanged");
+    }
+  },
+  "POST /api/workspaces/leave": {
+    kind: "self",
+    why: "leaves only the caller's current workspace; an organization in the body is ignored",
+    async run(key) {
+      const body = { organization_id: A.org.id, workspace: A.handle };
+      const before = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/members");
+      for (const actor of apiActors().filter((a) => a.token !== B.olivia)) {
+        const res = await call(actor, "POST", "/api/workspaces/leave", body);
+        // nora is Nora Labs' last admin: refused, naming only her own workspace.
+        assertDenied(`${key} as ${actor.name}`, res, actor.token === B.nora ? { status: 422 } : {});
+      }
+      assertDenied(`${key} signed out`, await call(null, "POST", "/api/workspaces/leave", body), { status: 401 });
+      const members = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/members");
+      assert.deepEqual(members.body.members, before.body.members, "A's members unchanged");
+    }
+  },
   "DELETE /api/workspaces/current": {
     kind: "resource",
     why: "deletes only the caller's workspace; confirming with A's name or id must not delete A",
@@ -660,6 +694,15 @@ const ROUTES = {
             assert.ok(actor.browser, `${label}: ${res.status}`);
           }
           assertClean(label, res.text);
+        }
+        // ?workspace= names another workspace: A's is refused exactly like a missing one.
+        for (const query of ["?workspace=", "?scope=workspace&workspace="]) {
+          const missing = await call(actor, "GET", `/api/drafts${query}org_01ZZZZZZZZZZZZZZZZZZZZZZZZ`);
+          for (const target of [A.org.id, A.handle]) {
+            const res = await call(actor, "GET", `/api/drafts${query}${encodeURIComponent(target)}`);
+            const label = `${key}${query}${target} as ${actor.name}`;
+            assertDenied(label, res, { missing });
+          }
         }
       }
     }

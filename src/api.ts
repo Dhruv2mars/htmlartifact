@@ -1,7 +1,7 @@
 import type { Context, Hono, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomToken, sha256 } from "./crypto.ts";
-import { FLAGS, bumpMembershipEpoch, databaseBytes, findWorkspace, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
+import { FLAGS, bumpMembershipEpoch, databaseBytes, findWorkspace, findWorkspaceByHandle, isRevoked, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 // The Worker validates with the native HTMLRewriter (Workers Free CPU limits);
 // parse5 (src/html-policy.ts) stays in the CLI.
@@ -10,7 +10,7 @@ import { validateUpload } from "./html-policy-server.ts";
 import { CI_KEY_PREFIX, newCiKeyId, newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
-import { activeMembership, bearerViewer } from "./auth.ts";
+import { activeMembership, bearerViewer, userStillMember } from "./auth.ts";
 import { deleteWorkspaceStatements, draftPrefix, membershipBeingUndone, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
 import { stageObjects } from "./storage.ts";
 import {
@@ -20,6 +20,7 @@ import {
   type DraftRow,
   type LimitKind,
   type MemberEnv,
+  type MemberViewer,
   type UserEnv,
   type VersionRow,
   type Viewer,
@@ -166,14 +167,15 @@ export function registerApi(app: Hono<AppEnv>): void {
   });
 
   // ---- Who am I. Works before joining any workspace.
-  app.get("/api/me", requireUser, (c) => {
+  app.get("/api/me", requireUser, async (c) => {
     const viewer = c.get("viewer");
     return c.json({
       ok: true,
       userId: viewer.account_id,
       name: viewer.account_name,
       email: viewer.email,
-      workspace: viewer.workspace ? workspaceJson(viewer.workspace, viewer.role) : null
+      workspace: viewer.workspace ? workspaceJson(viewer.workspace, viewer.role) : null,
+      removedFrom: await removedFromName(c.env.DB, viewer)
     });
   });
 
@@ -229,8 +231,10 @@ export function registerApi(app: Hono<AppEnv>): void {
     const viewer = c.get("viewer");
     const { invites } = c.get("config");
     const body = await readJson(c, 16 * 1024);
-    const maxUses = clampInt(body.maxUses, 1, invites.maxUses, invites.maxUses);
-    const ttlDays = clampInt(body.ttlDays, 1, 30, invites.ttlDays);
+    const maxUses = rangeInt(body.maxUses, 1, invites.maxUses, invites.maxUses);
+    const ttlDays = rangeInt(body.ttlDays, 1, MAX_INVITE_DAYS, invites.ttlDays);
+    if (maxUses === null) return c.json({ ok: false, error: `maxUses must be a whole number from 1 to ${invites.maxUses}.` }, 422);
+    if (ttlDays === null) return c.json({ ok: false, error: `ttlDays must be a whole number from 1 to ${MAX_INVITE_DAYS}.` }, 422);
     const code = newInviteCode();
     const expiresAt = Math.floor(Date.now() / 1000) + ttlDays * 86400;
     await c.env.DB.prepare(
@@ -251,20 +255,45 @@ export function registerApi(app: Hono<AppEnv>): void {
     );
   });
 
-  // The workspace's live invite codes (admins only).
+  // The workspace's live invite codes (admins only). ?all=1 adds spent,
+  // expired and revoked codes, each with its status and who joined with it.
   app.get("/api/workspaces/invites", requireMember, requireAdmin, async (c) => {
     const viewer = c.get("viewer");
-    const { results } = await c.env.DB.prepare(
-      `SELECT code, created_at, expires_at, max_uses, uses FROM invites
-       WHERE organization_id = ? AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses
-       ORDER BY created_at DESC LIMIT 100`
-    )
+    const db = c.env.DB;
+    const all = c.req.query("all") === "1";
+    const { results } = await db
+      .prepare(
+        `SELECT code, created_at, expires_at, max_uses, uses, revoked_at FROM invites
+         WHERE organization_id = ?${all ? "" : " AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses"}
+         ORDER BY created_at DESC LIMIT 100`
+      )
       .bind(viewer.organization_id)
-      .all<{ code: string; created_at: number; expires_at: number; max_uses: number; uses: number }>();
-    const iso = (seconds: number) => new Date(seconds * 1000).toISOString();
+      .all<{ code: string; created_at: number; expires_at: number; max_uses: number; uses: number; revoked_at: number | null }>();
+    const joined = new Map<string, { name: string | null; email: string | null; joinedAt: string }[]>();
+    if (all) {
+      const { results: rows } = await db
+        .prepare(
+          `SELECT j.code, j.joined_at, a.name, a.email FROM invite_joins j LEFT JOIN accounts a ON a.id = j.user_id
+           WHERE j.organization_id = ? ORDER BY j.joined_at`
+        )
+        .bind(viewer.organization_id)
+        .all<{ code: string; joined_at: number; name: string | null; email: string | null }>();
+      for (const row of rows) {
+        joined.set(row.code, [...(joined.get(row.code) || []), { name: row.name, email: row.email, joinedAt: iso(row.joined_at) }]);
+      }
+    }
+    const status = (i: (typeof results)[number]) =>
+      i.revoked_at ? "revoked" : i.uses >= i.max_uses ? "used up" : i.expires_at <= now() ? "expired" : "live";
     return c.json({
       ok: true,
-      invites: results.map((i) => ({ code: i.code, createdAt: iso(i.created_at), expiresAt: iso(i.expires_at), uses: i.uses, maxUses: i.max_uses }))
+      invites: results.map((i) => ({
+        code: i.code,
+        createdAt: iso(i.created_at),
+        expiresAt: iso(i.expires_at),
+        uses: i.uses,
+        maxUses: i.max_uses,
+        ...(all ? { status: status(i), joined: joined.get(i.code) || [] } : {})
+      }))
     });
   });
 
@@ -370,33 +399,63 @@ export function registerApi(app: Hono<AppEnv>): void {
     });
   });
 
-  // Removes a member (admins only). Access ends on their next request.
+  // Removes a member (admins only). Access ends on their next request, and
+  // every invite code issued until now is revoked (they may hold one).
   app.delete("/api/workspaces/members/:userId", requireMember, requireAdmin, async (c) => {
     const viewer = c.get("viewer");
     const userId = c.req.param("userId");
     // The route always captures :userId; the check satisfies the types.
     if (!userId) return c.json({ ok: false, error: "Not a member." }, 404);
     if (userId === viewer.account_id) {
-      return c.json({ ok: false, error: "You cannot remove yourself." }, 422);
+      return c.json({ ok: false, error: "You cannot remove yourself. To leave this workspace, run: htmlartifact workspace leave" }, 422);
     }
-    const { client } = workos(c.get("config"));
-    const page = await client.userManagement.listOrganizationMemberships({
-      userId,
-      organizationId: viewer.organization_id,
-      limit: 1
-    });
-    const [membership] = page.data;
+    const membership = await workosMembership(c, userId, viewer.organization_id);
     if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
-    // Portal sessions outlive AuthKit sessions: end them first (a failure
-    // here changes nothing, so the admin can simply retry).
-    await revokePortalLinks(c.get("config"), viewer.organization_id, userId);
-    await revokeInvitesUpTo(c.env.DB, viewer.organization_id, now());
-    const epoch = await bumpMembershipEpoch(c.env.DB, userId, viewer.organization_id);
-    await client.userManagement.deleteOrganizationMembership(membership.id);
-    await setRevokedAtEpoch(c.env.DB, userId, viewer.organization_id, true, epoch);
-    // Again, for a code an in-flight request of theirs created meanwhile.
-    await revokeInvitesUpTo(c.env.DB, viewer.organization_id, now());
-    return c.json({ ok: true });
+    await endMembership(c, userId, viewer.organization_id, membership.id);
+    return c.json({ ok: true, invitesRevoked: true });
+  });
+
+  // Makes a member an admin, or an admin a member (admins only). A workspace
+  // always keeps at least one admin.
+  app.patch("/api/workspaces/members/:userId", requireMember, requireAdmin, perUser("member-role", 30), async (c) => {
+    const viewer = c.get("viewer");
+    const userId = c.req.param("userId");
+    if (!userId) return c.json({ ok: false, error: "Not a member." }, 404);
+    const body = await readJson(c, 16 * 1024);
+    const role = body.role;
+    if (role !== "admin" && role !== "member") return c.json({ ok: false, error: 'role must be "admin" or "member".' }, 422);
+    const membership = await workosMembership(c, userId, viewer.organization_id);
+    if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
+    if ((membership.role?.slug || "member") === role) return c.json({ ok: true, role, unchanged: true });
+    if (role === "member" && (await isLastAdmin(c, userId, viewer.organization_id))) {
+      return c.json({ ok: false, error: "That is the workspace's last admin. Make someone else an admin first." }, 422);
+    }
+    const config = c.get("config");
+    await workos(config).client.userManagement.updateOrganizationMembership(membership.id, { roleSlug: role });
+    // After the change: a re-check that started earlier may not cache the old role.
+    await bumpMembershipEpoch(c.env.DB, userId, viewer.organization_id);
+    if (role === "member") await revokePortalLinks(config, viewer.organization_id, userId);
+    return c.json({ ok: true, role, unchanged: false });
+  });
+
+  // Leaves the caller's current workspace. Its last admin cannot leave: they
+  // make someone else an admin first, or delete the workspace.
+  app.post("/api/workspaces/leave", requireMember, perUser("leave", 10), async (c) => {
+    const viewer = c.get("viewer");
+    if (viewer.is_api_key) return c.json({ ok: false, error: "API keys cannot leave workspaces." }, 403);
+    const membership = await workosMembership(c, viewer.account_id, viewer.organization_id);
+    if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
+    if (membership.role?.slug === "admin" && (await isLastAdmin(c, viewer.account_id, viewer.organization_id))) {
+      return c.json(
+        {
+          ok: false,
+          error: `You are the last admin of "${viewer.workspace.name}". Make someone else an admin first (htmlartifact workspace promote <email>), or delete the workspace (htmlartifact workspace delete).`
+        },
+        422
+      );
+    }
+    await endMembership(c, viewer.account_id, viewer.organization_id, membership.id);
+    return c.json({ ok: true, workspace: workspaceJson(viewer.workspace) });
   });
 
   // Deletes the caller's current workspace (admins only), confirmed by its
@@ -469,8 +528,18 @@ export function registerApi(app: Hono<AppEnv>): void {
   app.post("/api/uploads", requireMember, perUser("upload", 30), handleUpload);
   app.post("/api/check", requireMember, perUser("check", 60), handleCheck);
 
-  app.get("/api/drafts", requireMember, async (c) => {
+  // ?workspace=<id or handle> lists another workspace the caller is an active
+  // member of (CLI sign-ins only; API keys stay in their own workspace).
+  app.get("/api/drafts", requireUser, async (c, next) => {
+    const wanted = c.req.query("workspace");
     const viewer = c.get("viewer");
+    if (!wanted) return isMember(viewer) ? next() : notMember(c, viewer);
+    const workspace = await readableWorkspace(c, viewer, wanted);
+    if (!workspace) return c.json({ ok: false, error: "You are not in that workspace. See: htmlartifact workspace list" }, 404);
+    c.set("viewer", { ...viewer, organization_id: workspace.organization_id, workspace });
+    return next();
+  }, async (c) => {
+    const viewer = c.get("viewer") as MemberViewer;
     const options = { origin: c.get("origin"), handle: viewer.workspace.handle, organizationId: viewer.organization_id };
     const drafts =
       c.req.query("scope") === "workspace"
@@ -494,7 +563,16 @@ export function registerApi(app: Hono<AppEnv>): void {
       : null;
     if (!draft) return c.json({ ok: false, error: "Artifact not found." }, 404);
     if (draft.account_id !== viewer.account_id && viewer.role !== "admin") {
-      return c.json({ ok: false, error: "That artifact belongs to a teammate; only they or a workspace admin can delete it." }, 403);
+      const former = await isRevoked(c.env.DB, [draft.account_id], viewer.organization_id) || (await isRevoked(c.env.DB, [draft.account_id], "*"));
+      return c.json(
+        {
+          ok: false,
+          error: former
+            ? "That artifact's author is no longer in this workspace; only a workspace admin can delete it."
+            : "That artifact belongs to a teammate; only they or a workspace admin can delete it."
+        },
+        403
+      );
     }
     // R2 is purged before responding; if it fails, the queued prefix is retried by the cron.
     await purgeDraft(c.env, viewer.organization_id, draft.id);
@@ -519,6 +597,17 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
         .first<{ organization_id: string; created_at: number }>()
     : null;
   if (!reserved) {
+    // Spent, revoked or expired, but they are already in its workspace: say so.
+    const invite = code
+      ? await db.prepare("SELECT organization_id FROM invites WHERE code = ?").bind(code).first<{ organization_id: string }>()
+      : null;
+    if (invite && !viewer.is_api_key && (await userStillMember(c, viewer.account_id, invite.organization_id, viewer.credential_id))) {
+      const workspace = await findWorkspace(db, invite.organization_id);
+      return {
+        status: 200,
+        body: { ok: true, alreadyMember: true, workspace: { id: invite.organization_id, name: workspace?.name, handle: workspace?.handle } }
+      };
+    }
     return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
   }
   const organizationId = reserved.organization_id;
@@ -579,6 +668,11 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
           return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
         }
         await setRevokedAtEpoch(db, viewer.account_id, organizationId, false, epoch);
+        // Who joined with which code, for `workspace invites --all`.
+        await db
+          .prepare("INSERT INTO invite_joins (code, user_id, organization_id) VALUES (?, ?, ?) ON CONFLICT (code, user_id) DO UPDATE SET joined_at = unixepoch()")
+          .bind(code, viewer.account_id, organizationId)
+          .run();
       } catch (error) {
         // Never leave a membership behind that no join row accounts for.
         await undoJoin(c.env, membershipId).catch(() => undefined);
@@ -612,23 +706,89 @@ async function requireUser(c: Context<UserEnv>, next: Next): Promise<Response | 
 async function requireMember(c: Context<MemberEnv>, next: Next): Promise<Response | void> {
   const viewer = await bearerViewer(c);
   if (!viewer) return notSignedIn(c);
-  if (!isMember(viewer)) {
-    return c.json(
-      {
-        ok: false,
-        error:
-          "You are not in a workspace yet. Create one (htmlartifact workspace create <name>) or join one (htmlartifact workspace join <code>)."
-      },
-      403
-    );
-  }
+  if (!isMember(viewer)) return notMember(c, viewer);
   c.set("viewer", viewer);
   return next();
+}
+
+// A signed-in caller with no current workspace: a removed member is told
+// which workspace they lost, not to start a new one.
+async function notMember<E extends AppEnv>(c: Context<E>, viewer: Viewer): Promise<Response> {
+  const removedFrom = await removedFromName(c.env.DB, viewer);
+  return c.json(
+    {
+      ok: false,
+      error: removedFrom
+        ? `You no longer have access to "${removedFrom}". Ask one of its admins for a new invite, or see your other workspaces: htmlartifact workspace list`
+        : "You are not in a workspace yet. Create one (htmlartifact workspace create <name>) or join one (htmlartifact workspace join <code>)."
+    },
+    403
+  );
+}
+
+// A workspace (by organization ID or handle) the caller may read: their
+// current one, or for a CLI sign-in any they are an active member of.
+async function readableWorkspace<E extends AppEnv>(c: Context<E>, viewer: Viewer, wanted: string): Promise<WorkspaceRow | null> {
+  const db = c.env.DB;
+  const workspace = (await findWorkspace(db, wanted)) ?? (await findWorkspaceByHandle(db, wanted.toLowerCase()));
+  if (!workspace) return null;
+  if (workspace.organization_id === viewer.organization_id) return workspace;
+  if (viewer.is_api_key) return null;
+  return (await userStillMember(c, viewer.account_id, workspace.organization_id, viewer.credential_id)) ? workspace : null;
 }
 
 function notSignedIn<E extends AppEnv>(c: Context<E>): Response {
   c.header("WWW-Authenticate", 'Bearer realm="htmlartifact"');
   return c.json({ ok: false, error: "Not signed in. Run: htmlartifact login" }, 401);
+}
+
+// The name of the workspace the caller's credential names but they were
+// removed from (or left), or null.
+async function removedFromName(db: D1Database, viewer: Viewer): Promise<string | null> {
+  if (!viewer.removed_from) return null;
+  return (await findWorkspace(db, viewer.removed_from))?.name ?? null;
+}
+
+// userId's WorkOS membership of organizationId with one of these statuses, live.
+async function workosMembership<E extends AppEnv>(
+  c: Context<E>,
+  userId: string,
+  organizationId: string,
+  statuses: ("active" | "inactive")[] = ["active"]
+) {
+  const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
+    userId,
+    organizationId,
+    statuses,
+    limit: 1
+  });
+  return page.data.find((m) => m.organizationId === organizationId) ?? null;
+}
+
+// True when userId is the only active admin of organizationId.
+async function isLastAdmin<E extends AppEnv>(c: Context<E>, userId: string, organizationId: string): Promise<boolean> {
+  const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
+    organizationId,
+    statuses: ["active"],
+    limit: 100
+  });
+  return !page.data.some((m) => m.role?.slug === "admin" && m.userId !== userId);
+}
+
+// Ends a membership (a removal, or leaving). Access ends on the next request,
+// and every invite code the workspace issued until now is revoked: whoever
+// leaves may hold one.
+async function endMembership<E extends AppEnv>(c: Context<E>, userId: string, organizationId: string, membershipId: string): Promise<void> {
+  const db = c.env.DB;
+  // Portal sessions outlive AuthKit sessions: end them first (a failure
+  // here changes nothing, so the request can simply be retried).
+  await revokePortalLinks(c.get("config"), organizationId, userId);
+  await revokeInvitesUpTo(db, organizationId, now());
+  const epoch = await bumpMembershipEpoch(db, userId, organizationId);
+  await workos(c.get("config")).client.userManagement.deleteOrganizationMembership(membershipId);
+  await setRevokedAtEpoch(db, userId, organizationId, true, epoch);
+  // Again, for a code an in-flight request of theirs created meanwhile.
+  await revokeInvitesUpTo(db, organizationId, now());
 }
 
 // Who may publish a new version of an artifact: its author, a workspace
@@ -1101,10 +1261,18 @@ function isContentfulStatus(status: number): status is ContentfulStatusCode {
   return status >= 200 && status <= 599 && status !== 204 && status !== 205 && status !== 304;
 }
 
-function clampInt(value: unknown, min: number, max: number, fallback: number): number {
-  const number = Number(value);
-  if (!Number.isInteger(number)) return fallback;
-  return Math.min(max, Math.max(min, number));
+// How long an invite code can live.
+const MAX_INVITE_DAYS = 30;
+
+// `fallback` when value is absent, the whole number when it is in min..max, else null.
+function rangeInt(value: unknown, min: number, max: number, fallback: number): number | null {
+  if (value === undefined || value === null) return fallback;
+  const number = typeof value === "number" || typeof value === "string" ? Number(value) : NaN;
+  return Number.isInteger(number) && number >= min && number <= max ? number : null;
+}
+
+function iso(seconds: number): string {
+  return new Date(seconds * 1000).toISOString();
 }
 
 function cleanText(value: unknown, maxLength = 255): string | null {
