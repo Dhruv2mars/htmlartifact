@@ -5,10 +5,10 @@ import { Console, Effect, Option } from "effect";
 import { Argument, Command } from "effect/cli";
 
 import { assertOwnServer, getAuth, resolveApiUrl } from "../auth.ts";
-import { CMD, USER_AGENT, VERSION } from "../env.ts";
-import { attempt, CliError, cliError, NetworkError, reason } from "../errors.ts";
+import { CMD, envToken, USER_AGENT, VERSION } from "../env.ts";
+import { attempt, CliError, cliError, EXIT_CODES, kindForStatus, NetworkError, reason } from "../errors.ts";
 import { apiUrlFlag, jsonFlag, stringFlag, switchFlag } from "../flags.ts";
-import { formatIssue } from "../../src/html-policy.ts";
+import { formatIssue, type Issue } from "../../src/html-policy.ts";
 import {
   offlineReport,
   printCheckReport,
@@ -19,22 +19,18 @@ import {
   validateLocally,
   type Receipt
 } from "../format.ts";
-import { api, requestJson, serverErrorMessage } from "../http.ts";
+import { api, httpError, rejectedEnvToken, requestJson } from "../http.ts";
 import { collectCiMetadata, collectGitMetadata } from "../metadata.ts";
-import { readUploadSource } from "../source.ts";
+import { readUploadSource, type UploadSource } from "../source.ts";
 import { findDraftMapping, removeDraftMappings, saveDraftMapping, sha256, type Json } from "../state.ts";
 
 const DRAFT_ID_PATTERN = /^[a-z0-9]{12}$/;
-
-const setFailureExitCode = Effect.sync(() => {
-  process.exitCode = 1;
-});
 
 // An artifact URL, or a bare artifact ID (as `list` and `upload` print it).
 const parseUrl = (value: string, apiUrl: string) =>
   DRAFT_ID_PATTERN.test(value)
     ? Effect.succeed(new URL(`/d/${value}`, apiUrl))
-    : Effect.try({ try: () => new URL(value), catch: () => cliError(`Not an artifact URL or ID: ${value}`) });
+    : Effect.try({ try: () => new URL(value), catch: () => cliError(`Not an artifact URL or ID: ${value}`, "usage") });
 
 // The path as the user would type it: relative when it's under the current directory.
 const displayPath = (resolved: string) => {
@@ -46,7 +42,8 @@ export const read = Command.make(
   "read",
   {
     url: Argument.String("url").pipe(Argument.withDescription("An artifact URL from this server, or its artifact ID")),
-    out: stringFlag("out", "file", "Write the HTML here instead of a new temp file")
+    out: stringFlag("out", "file", "Write the HTML here instead of a new temp file"),
+    json: jsonFlag("Print where the HTML was written as JSON")
   },
   Effect.fn(function* (options) {
     const { apiUrl, apiKey } = yield* getAuth();
@@ -62,23 +59,29 @@ export const read = Command.make(
         }),
       catch: (error) => new NetworkError({ message: `Could not reach ${target.origin}: ${reason(error)}` })
     });
-    const html = yield* Effect.tryPromise({
-      try: () => response.text(),
+    // The bytes as stored: a byte order mark or any other byte is kept.
+    const bytes = yield* Effect.tryPromise({
+      try: () => response.arrayBuffer().then((buffer) => Buffer.from(buffer)),
       catch: (error) => new NetworkError({ message: `Lost the connection to ${target.origin}: ${reason(error)}` })
     });
     if (!response.ok) {
+      if (response.status === 401 && envToken()) return yield* rejectedEnvToken();
       const hint = response.status === 404 ? " Not found in your current workspace (see: htmlartifact workspace list)." : "";
-      return yield* new CliError({ message: `HTTP ${response.status} for ${target}.${hint}` });
+      return yield* new CliError({ message: `HTTP ${response.status} for ${target}.${hint}`, kind: kindForStatus(response.status) });
     }
     const out = yield* attempt(() => {
       const file = Option.isSome(options.out)
         ? path.resolve(options.out.value)
         : path.join(fs.mkdtempSync(path.join(os.tmpdir(), "htmlartifact-")), "artifact.html");
-      fs.writeFileSync(file, html);
+      fs.writeFileSync(file, bytes);
       return file;
     });
+    const version = Number(response.headers.get("x-htmlartifact-draft-version")) || null;
+    if (options.json) {
+      return yield* printJson({ ok: true, url: response.url, version, file: out, bytes: bytes.length });
+    }
     yield* Console.log(`URL: ${response.url}`);
-    yield* Console.log(`Version: ${response.headers.get("x-htmlartifact-draft-version") || "unknown"}`);
+    yield* Console.log(`Version: ${version ?? "unknown"}`);
     yield* Console.log(`File: ${out}`);
   })
 ).pipe(Command.withDescription("Download an artifact's HTML (for agents; uses your sign-in)."));
@@ -96,6 +99,7 @@ export const upload = Command.make(
     ),
     draft: stringFlag("draft", "draft-id", "Update a specific artifact (by ID)"),
     new: switchFlag("new", "Always create a new artifact"),
+    force: switchFlag("force", "With --slug: update the artifact it names even if this path was published to another"),
     description: stringFlag("description", "text", "Set a short description for the artifact"),
     json: jsonFlag("Print the publication receipt as JSON"),
     apiUrl: apiUrlFlag()
@@ -105,6 +109,7 @@ export const upload = Command.make(
     const draft = Option.getOrUndefined(options.draft);
     if (options.new && (draft || slug !== undefined)) {
       return yield* new CliError({
+        kind: "usage",
         message:
           "--new cannot be combined with --draft or --slug: those name an existing draft. Use an unused slug to create a new draft at a custom URL."
       });
@@ -116,30 +121,29 @@ export const upload = Command.make(
     // would fail on the server too. Nothing is sent.
     const local = validateLocally(source);
     if (!local.ok) {
-      const errors = local.issues.filter((issue) => issue.level === "error");
-      if (options.json) {
-        yield* printJson({
-          ok: false,
+      const errors = local.issues.filter((issue) => issue.level === "error").map(formatIssue);
+      return yield* new CliError({
+        kind: "validation",
+        message: `Not uploaded: the HTML failed htmlartifact validation (checked locally).\n- ${errors.join("\n- ")}`,
+        details: {
           status: null,
           checkedLocally: true,
           error: "HTML failed htmlartifact validation. Nothing was uploaded.",
-          errors: errors.map(formatIssue),
+          errors,
           issues: local.issues
-        });
-        return yield* setFailureExitCode;
-      }
-      return yield* new CliError({
-        message: `Not uploaded: the HTML failed htmlartifact validation (checked locally).\n- ${errors.map(formatIssue).join("\n- ")}`
+        }
       });
     }
     // A slug names the draft by itself, so the saved mapping for this path is
     // only used without one. `--draft <id> --slug <name>` renames a draft.
-    const mappedDraftId =
-      options.new || draft || slug !== undefined
-        ? null
-        : (yield* findDraftMapping(apiUrl, source.resolved))?.draftId || null;
+    const mapping = options.new || draft ? null : yield* findDraftMapping(apiUrl, source.resolved);
+    const mappedDraftId = slug === undefined ? mapping?.draftId || null : null;
     const draftId = draft || mappedDraftId;
+    if (slug !== undefined && mapping?.draftId && mapping.slug !== slug.trim().toLowerCase() && !options.force) {
+      yield* refuseSlugOfAnotherArtifact(apiUrl, apiKey, slug, mapping.draftId, displayPath(source.resolved));
+    }
 
+    const ci = collectCiMetadata();
     const payload = {
       ...source.body,
       filename: source.filename,
@@ -148,7 +152,7 @@ export const upload = Command.make(
       description: Option.getOrUndefined(options.description),
       metadata: {
         ...collectGitMetadata(source.dir),
-        ...collectCiMetadata(),
+        ...ci,
         cliVersion: VERSION,
         ...(source.body.html ? { fileSha256: sha256(source.body.html) } : {})
       }
@@ -174,11 +178,33 @@ export const upload = Command.make(
       const hint = staleMapping
         ? "\nThe saved artifact for this path is in another workspace or was deleted. Re-run with --new to publish a new one."
         : "";
-      if (options.json) {
-        yield* printJson({ ok: false, status, error: body.error || null, errors: body.errors || [], issues: body.issues || [] });
-        return yield* setFailureExitCode;
-      }
-      return yield* new CliError({ message: `Upload rejected (HTTP ${status}): ${serverErrorMessage(body)}${hint}` });
+      const error = httpError(result, `Upload rejected (HTTP ${status}): `);
+      return yield* new CliError({
+        kind: error.kind,
+        message: `${error.message}${hint}`,
+        // The server's own message, unless it was about HTMLARTIFACT_TOKEN.
+        details: {
+          status,
+          error: status === 401 && envToken() ? error.message : body.error || null,
+          errors: body.errors || [],
+          issues: body.issues || []
+        }
+      });
+    }
+
+    const warnings: string[] = body.warnings || [];
+    // An explicit slug never moves this path's mapping: a plain upload of it
+    // keeps updating the artifact it was bound to.
+    const keepMapping = slug !== undefined && !!mapping?.draftId && mapping.draftId !== body.draftId;
+    if (keepMapping) {
+      warnings.push(
+        `${displayPath(source.resolved)} still updates artifact ${mapping!.draftId} when uploaded without --slug; --slug ${slug} published to ${body.draftId}.`
+      );
+    }
+    if (ci.ciProvider && slug === undefined && !draft && !mappedDraftId && !options.new) {
+      warnings.push(
+        "In CI without --slug or --draft, every run publishes a new artifact at a new URL (the path's mapping lives in ~/.htmlartifact, which CI does not keep). Pass --slug <name> to update one stable URL."
+      );
     }
 
     const receipt: Receipt = {
@@ -199,12 +225,13 @@ export const upload = Command.make(
       // The draft ID never moves; a slug can be renamed and reused by
       // another draft, so it would not reliably name this one.
       updateCommand: [`${CMD} upload`, shellQuote(displayPath(source.resolved)), `--draft ${body.draftId}`].join(" "),
-      warnings: body.warnings || []
+      warnings
     };
 
     // Print the receipt before touching local state: the page is already
     // published, and a failed map write must not hide where it went.
     yield* options.json ? printJson(receipt) : printReceipt(receipt);
+    if (keepMapping) return;
 
     yield* saveDraftMapping(apiUrl, source.resolved, {
       draftId: receipt.draftId,
@@ -220,6 +247,24 @@ export const upload = Command.make(
   })
 ).pipe(Command.withDescription("Publish an artifact, or a new version of one."));
 
+// `--slug` updates whichever artifact the slug names. When that is not the one
+// this path was published to (and that one still exists), stop: the upload
+// would silently replace another artifact's content. `--force` goes ahead.
+const refuseSlugOfAnotherArtifact = (apiUrl: string, apiKey: string, slug: string, mappedDraftId: string, shownPath: string) =>
+  Effect.gen(function* () {
+    const wanted = slug.trim().toLowerCase();
+    const { drafts = [] } = (yield* api(apiUrl, "/api/drafts?scope=workspace", { apiKey })) as { drafts?: Json[] };
+    const named = drafts.find((d) => d.slug === wanted);
+    if (!named || named.draftId === mappedDraftId || !drafts.some((d) => d.draftId === mappedDraftId)) return;
+    return yield* new CliError({
+      kind: "usage",
+      message: [
+        `--slug ${wanted} names artifact ${named.draftId} ("${named.title || "Untitled"}"), but ${shownPath} was published to ${mappedDraftId}.`,
+        `Uploading would replace ${named.draftId}'s content with this file. Pick another slug, or re-run with --force to replace it.`
+      ].join("\n")
+    });
+  });
+
 export const check = Command.make(
   "check",
   {
@@ -232,25 +277,61 @@ export const check = Command.make(
     apiUrl: apiUrlFlag()
   },
   Effect.fn(function* (options) {
-    const { apiUrl, apiKey } = yield* getAuth(Option.getOrUndefined(options.apiUrl));
+    const apiUrlOverride = Option.getOrUndefined(options.apiUrl);
     const source = Option.isSome(options.target) ? yield* readUploadSource(options.target.value) : null;
-
-    const checked: Json = yield* requestJson(`${apiUrl}/api/check`, {
-      apiKey,
-      body: { ...source?.body, slug: Option.getOrUndefined(options.slug) },
-      timeoutMs: 60_000
-    }).pipe(
-      Effect.map(({ ok, status, body }) =>
-        ok ? { ...body, offline: false } : { ok: false, offline: false, status, errors: body.errors || [body.error] }
-      ),
-      Effect.catchTag("NetworkError", (error) => Effect.succeed(offlineReport(source, error.message)))
+    // Signed out, a page is still checked: locally, like when offline.
+    const auth = yield* getAuth(apiUrlOverride).pipe(
+      Effect.catchTag("CliError", (error) => (source && error.kind === "auth" ? Effect.succeed(error) : Effect.fail(error)))
     );
 
+    const checked: Json =
+      auth instanceof CliError
+        ? offlineReport(source, { signedOut: auth.message })
+        : yield* requestJson(`${auth.apiUrl}/api/check`, {
+            apiKey: auth.apiKey,
+            body: { ...source?.body, slug: Option.getOrUndefined(options.slug) },
+            timeoutMs: 60_000
+          }).pipe(
+            Effect.map(({ ok, status, body }) =>
+              ok
+                ? withLocalPositions({ ...body, offline: false }, source)
+                : { ok: false, offline: false, status, errors: body.errors || [body.error] }
+            ),
+            Effect.catchTag("NetworkError", (error) => Effect.succeed(offlineReport(source, { networkError: error.message })))
+          );
+
+    const apiUrl = auth instanceof CliError ? yield* resolveApiUrl(apiUrlOverride) : auth.apiUrl;
     const report: Json = { cliVersion: VERSION, apiUrl, path: source?.resolved || null, ...checked };
     yield* options.json ? printJson(report) : printCheckReport(report);
-    if (!report.ok) yield* setFailureExitCode;
+    if (!report.ok) {
+      const kind = report.markupOk === false || report.issues?.length ? "validation"
+        : report.signedOut ? "auth"
+        : report.networkError ? "network"
+        : report.status ? kindForStatus(report.status)
+        : "validation";
+      yield* Effect.sync(() => {
+        process.exitCode = EXIT_CODES[kind];
+      });
+    }
   })
 ).pipe(Command.withDescription("Check account, limits, and capabilities, and validate a page. Never publishes."));
+
+// The server's issues carry no line or column (it streams the HTML); the
+// local parse5 check has them. Each server issue takes the position of the
+// next local issue with the same code on the same page.
+function withLocalPositions(report: Json, source: UploadSource | null): Json {
+  if (!source || !Array.isArray(report.issues)) return report;
+  const local = validateLocally(source).issues.filter((issue) => issue.line);
+  const issues = (report.issues as Issue[]).map((issue) => {
+    if (issue.line) return issue;
+    const index = local.findIndex((l) => l.code === issue.code && l.path === issue.path);
+    if (index < 0) return issue;
+    const [match] = local.splice(index, 1);
+    return { ...issue, line: match!.line, column: match!.column };
+  });
+  const formatted = (level: string) => issues.filter((issue) => issue.level === level).map(formatIssue);
+  return { ...report, issues, errors: formatted("error"), warnings: formatted("warning") };
+}
 
 export const list = Command.make(
   "list",
@@ -262,11 +343,7 @@ export const list = Command.make(
   Effect.fn(function* (options) {
     const { apiUrl, apiKey } = yield* getAuth(Option.getOrUndefined(options.apiUrl));
     const scope = options.all ? "?scope=workspace" : "";
-    const { ok, body } = yield* requestJson(`${apiUrl}/api/drafts${scope}`, { apiKey });
-    if (!ok) {
-      return yield* new CliError({ message: body.error || "Failed to list artifacts." });
-    }
-
+    const body = yield* api(apiUrl, `/api/drafts${scope}`, { apiKey });
     const drafts: Json[] = body.drafts || [];
 
     if (options.json) return yield* printJson(drafts);
@@ -307,13 +384,13 @@ const parseDraftTarget = (input: string, apiUrl: string) =>
     if (DRAFT_ID_PATTERN.test(input)) return { draftId: input } satisfies DraftTarget;
     const target = yield* Effect.try({
       try: () => new URL(input),
-      catch: () => cliError(`Not an artifact ID or URL: ${input}`)
+      catch: () => cliError(`Not an artifact ID or URL: ${input}`, "usage")
     });
     yield* assertOwnServer(target, apiUrl);
     const [kind, first, second] = target.pathname.split("/").filter(Boolean);
     if (kind === "d" && first && DRAFT_ID_PATTERN.test(first)) return { draftId: first } satisfies DraftTarget;
     if (kind === "w" && first && second) return { slugPath: `/w/${first}/${second}` } satisfies DraftTarget;
-    return yield* new CliError({ message: `Not an artifact URL: ${input}` });
+    return yield* new CliError({ kind: "usage", message: `Not an artifact URL: ${input}` });
   });
 
 // Custom URLs are looked up in the current workspace's list by publicUrl.
@@ -328,7 +405,7 @@ const findDraftBySlugPath = (apiUrl: string, apiKey: string, slugPath: string, i
       }
     });
     if (!match) {
-      return yield* new CliError({ message: `No artifact at ${input} in your current workspace (see: htmlartifact list --all).` });
+      return yield* new CliError({ kind: "notFound", message: `No artifact at ${input} in your current workspace (see: htmlartifact list --all).` });
     }
     return match.draftId as string;
   });

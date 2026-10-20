@@ -58,7 +58,8 @@ const invites = Command.make(
     const { apiUrl, apiKey } = yield* getAuth();
     const revoke = Option.getOrUndefined(options.revoke);
     if (revoke) {
-      yield* api(apiUrl, `/api/workspaces/invites/${encodeURIComponent(revoke)}`, { apiKey, method: "DELETE" });
+      const revoked = yield* api(apiUrl, `/api/workspaces/invites/${encodeURIComponent(revoke)}`, { apiKey, method: "DELETE" });
+      if (options.json) return yield* printJson(revoked);
       return yield* Console.log(revoke === "all" ? "Revoked every live invite code." : `Revoked ${revoke}.`);
     }
     const result = (yield* api(apiUrl, "/api/workspaces/invites", { apiKey })) as { invites: Json[] };
@@ -101,16 +102,20 @@ const list = Command.make(
 
 const switchCommand = Command.make(
   "switch",
-  { name: Argument.String("name").pipe(Argument.withDescription("Workspace name or ID")) },
-  Effect.fn(function* ({ name }) {
+  { name: Argument.String("name").pipe(Argument.withDescription("Workspace name or ID")), json: jsonFlag() },
+  Effect.fn(function* ({ name, json }) {
     const { apiUrl, apiKey } = yield* getAuth();
     const { workspaces } = (yield* api(apiUrl, "/api/workspaces", { apiKey })) as { workspaces: Json[] };
     const wanted = name.toLowerCase();
     const match = workspaces.find((w) => w.id === name || w.handle === wanted || w.name?.toLowerCase() === wanted);
     if (!match) {
-      return yield* new CliError({ message: `You are not in a workspace named "${name}". See: htmlartifact workspace list` });
+      return yield* new CliError({
+        kind: "notFound",
+        message: `You are not in a workspace named "${name}". See: htmlartifact workspace list`
+      });
     }
     yield* switchSession(match.id);
+    if (json) return yield* printJson({ ok: true, workspace: { ...match, current: true } });
     yield* Console.log(`Switched to "${match.name}".`);
   })
 ).pipe(Command.withDescription("Make another of your workspaces the current one."));
@@ -128,13 +133,14 @@ const members = Command.make(
 
 const remove = Command.make(
   "remove",
-  { email: Argument.String("email").pipe(Argument.withDescription("Member to remove")) },
-  Effect.fn(function* ({ email }) {
+  { email: Argument.String("email").pipe(Argument.withDescription("Member to remove")), json: jsonFlag() },
+  Effect.fn(function* ({ email, json }) {
     const { apiUrl, apiKey } = yield* getAuth();
     const { members } = (yield* api(apiUrl, "/api/workspaces/members", { apiKey })) as { members: Json[] };
     const member = members.find((m) => m.email?.toLowerCase() === email.toLowerCase());
-    if (!member) return yield* new CliError({ message: `${email} is not a member of this workspace.` });
-    yield* api(apiUrl, `/api/workspaces/members/${member.id}`, { apiKey, method: "DELETE" });
+    if (!member) return yield* new CliError({ kind: "notFound", message: `${email} is not a member of this workspace.` });
+    const removed = yield* api(apiUrl, `/api/workspaces/members/${member.id}`, { apiKey, method: "DELETE" });
+    if (json) return yield* printJson(removed);
     yield* Console.log(`Removed ${email}.`);
   })
 ).pipe(Command.withDescription("Remove someone from your current workspace (admins). Their access ends immediately."));
@@ -151,6 +157,7 @@ const deleteWorkspace = Command.make(
       const me = yield* api(apiUrl, "/api/me", { apiKey });
       const name: string = me.workspace?.name || "<workspace name>";
       return yield* new CliError({
+        kind: "usage",
         message: [
           `Deleting a workspace erases every artifact in it (every version) and cannot be undone.`,
           `To confirm, run: htmlartifact workspace delete --confirm ${shellQuote(name)}`

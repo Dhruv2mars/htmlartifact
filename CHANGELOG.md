@@ -7,6 +7,34 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+### Changed
+
+- The CLI exits with a distinct code per kind of failure: 2 usage, 3 auth,
+  4 not found, 5 validation, 6 network, 7 rate-limited (README → Exit codes).
+- Every command takes `--json`, including `read`, `login`, `logout`,
+  `workspace switch` and `workspace remove`, and under `--json` errors are a
+  JSON object on stdout too.
+- `upload --slug` that names a different artifact than the one the path was
+  published to stops and says so (`--force` goes ahead), and an explicit slug
+  never rebinds the path.
+- `upload` in CI without `--slug` or `--draft` warns that every run publishes
+  a new URL.
+- `check <path>` works signed out (markup only) and reports line:column for
+  each issue.
+- A 429 is retried once after its `Retry-After`.
+
+### Fixed
+
+- `read --out` writes the stored bytes exactly (a UTF-8 byte order mark was
+  dropped). `upload` refuses a file that is not UTF-8 instead of altering it.
+- A rejected `HTMLARTIFACT_TOKEN` says the token was rejected, not "Not
+  signed in", and `--json` errors say `npx htmlartifact` when run through npx.
+- An expired sign-in link says "The sign-in link expired. Run: htmlartifact
+  login" instead of "Sign-in failed: expired_token".
+- The too-large message says by how much an upload is over ("1 byte over the
+  1 MiB limit", not "1 MiB … limit 1 MiB"), and its fix no longer points at a
+  flag no admin can set.
+
 ## [0.1.2]
 
 ### Fixed

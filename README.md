@@ -36,16 +36,34 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `workspace join <code>` | Join with a code |
 | `workspace list` / `switch <name>` | Your workspaces; change the current one |
 | `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately, and every invite code issued until then is revoked (they may hold one): share a fresh code with the team |
-| `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace |
+| `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace (a slug that names another artifact than the path was published to needs `--force`) |
 | `read <url-or-id>` | Download an artifact with your sign-in (how agents read links). `--out <file>` picks where |
 | `list [--all]` | Your artifacts, or the whole workspace's |
 | `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |
 | `workspace sso` / `directory` / `domains` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC), SCIM directory, or domain verification (admins). SSO and directory links are off unless the deployment sets `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` (WorkOS bills each connection) |
-| `check <path>` | Validate against the rules without publishing |
+| `check <path>` | Validate against the rules without publishing (signed out or offline: markup only) |
 
-Every command takes `--json` for agents. In CI, set `HTMLARTIFACT_TOKEN` to a
-WorkOS organization API key instead of logging in.
+Every command takes `--json` for agents: stdout is then one JSON object (an
+error too: `{ "ok": false, "error", "kind", "exitCode" }`), and anything else
+goes to stderr.
+
+In CI, set `HTMLARTIFACT_TOKEN` to a WorkOS organization API key instead of
+logging in. Also pass `--slug <name>` (or `--draft <id>`): a re-upload finds
+its artifact through a path mapping kept in `~/.htmlartifact`, which a CI run
+throws away, so without one every run publishes a new artifact at a new URL
+(the CLI warns when it detects CI).
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Any other failure (server error, conflict, local file) |
+| 2 | Usage: bad arguments or flags |
+| 3 | Auth: not signed in, sign-in expired, token rejected, or not allowed |
+| 4 | Not found: no such artifact, workspace, member or path |
+| 5 | Validation: the HTML (or another input) was refused |
+| 6 | Network: htmlartifact could not be reached |
+| 7 | Rate-limited: still refused after waiting out `Retry-After` once |
 
 The web app has the same flow for people who prefer a browser: sign in, see
 the workspace's artifacts, and join with a code or a `/join/<code>` link.
