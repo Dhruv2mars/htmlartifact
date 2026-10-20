@@ -91,8 +91,9 @@ export async function runDeletion(env: PurgeEnv, kind: DeletionKind, target: str
 
 /**
  * Retry queued deletions (oldest first). Returns counts for logging. Each job
- * is about 2 D1 queries and D1 Free allows 50 per invocation, so one cron run
- * takes 20; a backlog drains over several runs.
+ * is about 2 D1 queries (4 on R2: its list's Class A budget and the bytes it
+ * frees) and D1 Free allows 50 per invocation, so one cron run takes 20 (10
+ * on R2); a backlog drains over several runs.
  */
 async function drainPendingDeletions(env: PurgeEnv, max = 20): Promise<{ done: number; failed: number }> {
   const { results } = await env.DB.prepare(
@@ -303,8 +304,10 @@ export async function runScheduledJobs(env: PurgeEnv) {
     return null;
   };
   const erased = await eraseExpiredRequestMetadata(env.DB).catch(failed("retention"));
-  const deletions = await env.DB.batch([env.DB.prepare(PENDING_DELETIONS_SCHEMA), env.DB.prepare(DAILY_BUDGET_SCHEMA)])
-    .then(() => drainPendingDeletions(env))
+  const deletions = await env.DB.prepare(PENDING_DELETIONS_SCHEMA)
+    .run()
+    .then(() => env.DB.prepare(DAILY_BUDGET_SCHEMA).run())
+    .then(() => drainPendingDeletions(env, env.ARTIFACTS ? 10 : 20))
     .catch(failed("deletions"));
   return { deletions, erased };
 }

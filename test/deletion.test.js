@@ -1065,9 +1065,11 @@ describe("D1 Free quotas", () => {
       const metered = meteredDb(proxy.env.DB);
       const result = await runScheduledJobs({ DB: metered.db, ARTIFACTS: proxy.env.ARTIFACTS });
       assert.ok(metered.queries.length <= 50, `${metered.queries.length} queries`);
-      assert.deepEqual(result.deletions, { done: 20, failed: 0 }, "one run takes 20 jobs");
+      // An R2 job also reserves its list (Class A) and gives back the bytes it frees.
+      const perRun = STORAGE === "r2" ? 10 : 20;
+      assert.deepEqual(result.deletions, { done: perRun, failed: 0 }, `one run takes ${perRun} jobs`);
       assert.ok(result.erased >= 1, "retention ran");
-      assert.equal(await backlog(), 80, "the rest waits for the next runs");
+      assert.equal(await backlog(), 100 - perRun, "the rest waits for the next runs");
       const [row] = await rows("SELECT source_ip, user_agent FROM draft_versions WHERE id = ?", versionId);
       assert.deepEqual({ ...row }, { source_ip: null, user_agent: null });
 
