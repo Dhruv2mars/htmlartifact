@@ -12,7 +12,8 @@ import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
 import { activeMembership, bearerViewer, userStillMember } from "./auth.ts";
 import { deleteWorkspaceStatements, draftPrefix, isWorkspaceDeleted, membershipBeingUndone, pruneVersions, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
-import { stageObjects } from "./storage.ts";
+import { reserveBudget, secondsUntilUtcMidnight } from "./budget.ts";
+import { reserveR2Writes, stageObjects, StorageFullError, storageKind } from "./storage.ts";
 import {
   isMember,
   type AppEnv,
@@ -1003,7 +1004,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   };
 
   // Free-tier storage guards (src/config.ts): the workspace's share, then the
-  // whole database's headroom (D1 Free caps a database at 500 MB). Checked
+  // whole database's headroom (D1 Free caps a database at 500 MB). (On R2,
+  // stageObjects also caps the bytes in the bucket.) Checked
   // here for a clear answer, and again inside the batch (`fits`), where the
   // check and the counter's increment are one transaction: concurrent uploads
   // cannot all pass on the same reading.
@@ -1027,6 +1029,16 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     ];
   }
 
+  // Daily budgets (src/budget.ts): D1 rows written (D1 Free locks every
+  // workspace out for the rest of the day past 100,000), the workspace's
+  // share first; then, on R2, one Class A operation per object. Unchanged
+  // content still writes its metadata, so it counts as an upload of no pages.
+  const over = await overDailyBudget(c, unchanged ? [] : validation.pages);
+  if (over) {
+    c.header("Retry-After", String(secondsUntilUtcMidnight()));
+    return c.json({ ok: false, error: `${over} Try again after 00:00 UTC.` }, 429);
+  }
+
   const statements: D1PreparedStatement[] = [];
   let blobStatements: D1PreparedStatement[] = [];
   if (!unchanged) {
@@ -1048,6 +1060,9 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
         ...extraPages.map((page) => ({ key: pageKey(page), html: page.html }))
       ]);
     } catch (error) {
+      if (error instanceof StorageFullError) {
+        return c.json({ ok: false, error: error.message }, 507);
+      }
       await discard();
       throw error;
     }
@@ -1287,6 +1302,28 @@ async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
 
 // A 507 if `bytes` more would overflow the workspace's share or the
 // database's headroom; otherwise the database reading it checked.
+// D1 rows an upload writes, doubled for index entries: the artifact, version,
+// usage counter and final update, plus a row per extra page and, on D1
+// storage, per ≤ 1 MB chunk.
+function uploadRows(c: Context<MemberEnv>, pages: { bytes: number }[]): number {
+  const chunks = storageKind(c.env) === "d1" ? pages.reduce((n, page) => n + Math.max(1, Math.ceil(page.bytes / 1_000_000)), 0) : 0;
+  return 2 * (4 + pages.length + chunks);
+}
+
+/** Why an upload doesn't fit today's budgets, or null once they are reserved. */
+async function overDailyBudget(c: Context<MemberEnv>, pages: { bytes: number }[]): Promise<string | null> {
+  const { workspaceRowsPerDay, rowsPerDay } = c.get("config").limits;
+  const rows = uploadRows(c, pages);
+  const db = c.env.DB;
+  if (!(await reserveBudget(db, `d1:rows:${c.get("viewer").organization_id}`, rows, workspaceRowsPerDay))) {
+    return "This workspace has reached today's upload limit.";
+  }
+  if (!(await reserveBudget(db, "d1:rows", rows, rowsPerDay)) || !(await reserveR2Writes(c.env, pages.length))) {
+    return "This htmlartifact deployment has reached today's upload limit.";
+  }
+  return null;
+}
+
 async function storageFull(c: Context<MemberEnv>, bytes: number): Promise<Response | Awaited<ReturnType<typeof databaseUsage>>> {
   const { workspaceBytes, databaseBytes: databaseLimit } = c.get("config").limits;
   const used = await workspaceStoredBytes(c.env.DB, c.get("viewer").organization_id);

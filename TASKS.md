@@ -1,9 +1,27 @@
 # htmlartifact — GA checklist
 
-## GA blockers: workspace admins (2026-10-20, branch fix/last-admin-race)
-- [x] B1 two admins acting at once (self-demote, demote each other, both leave, remove each other) left 0 admins: per-workspace D1 lease (`admin_locks`, 30 s expiry) around role changes, removal and leave; live admin re-check inside; removal of the last admin refused (test/admins.test.js)
-- [x] Demotion now revokes the ex-admin's CI keys and the invite codes they issued (removal already did)
-- [x] B4 member list and admin checks read one WorkOS page (100): every page is read now
+## R2 behind an architectural $0 cap + GA (2026-10-20, full send)
+Done = rule reworded (card OK only where overage is impossible, math in
+README); R2 code path caps stored bytes (9 GB) and Class A ops (30k/day) in
+D1, with tests that fail without the guards; suite green on D1 and R2; PR
+merged; R2 enabled on the account by Dhruv, binding deployed, `migrate:r2`
+run, `/healthz` says r2, smoke green; GA audit findings verified and the
+blockers fixed.
+- [x] Rule: CLAUDE.md/AGENTS.md (architectural cap allowed; never upgrade plans; WorkOS Production is Dhruv's move)
+- [x] R2 budget: daily Class A budget in `daily_budget` (uploads 429 + Retry-After; deletions stay queued), 9 GB cap on the bytes actually in the bucket (reserved before each put, released only for objects a deletion listed and removed; Sol round 1), ≤1 R2 read per request, list loop stops on `!truncated`
+- [x] Limits: 1 MiB / 10 pages on either storage (CPU-bound); workspace quota 250 MiB on R2
+- [x] GA-B2: D1 rows-written daily budget for uploads (deployment 40k, workspace 4k; 429 + Retry-After), same `daily_budget` table as R2 Class A; unchanged content counts its metadata write (Sol round 1)
+- [x] Deploy guard: refuses a public bucket (r2.dev or custom domain); staging stays on D1
+- [x] README: Why R2 can't bill (math), other free quotas; CHANGELOG
+- [ ] PR #21: CI, Sol loop, merge
+- [ ] Dhruv: add the card and enable R2 (Standard storage) on the Cloudflare account; deploy token needs R2 read
+- [ ] Create bucket `htmlartifact-artifacts`, uncomment the bindings (app, usercontent, ops), deploy, `migrate:r2`, smoke
+- [x] GA audit: Codex delegate hit its usage limit; redone with two Claude Opus agents (reconcile + security), findings spot-checked in source (B1, B3, B4)
+- [x] GA-B1 last-admin race (all four variants) + B4 member paging >100 + demotion revokes admin-made keys/invites: #26 (per-workspace D1 lease `admin_locks`, renewed before each WorkOS change; Sol 2 rounds)
+- [x] GA-B3 retention index, cron batch 20, saveAccount freshness: #25
+- [x] GA-B5 /docs CI section, B6 /privacy, B7 THIRD_PARTY_LICENSES, dev:local build: #24
+- [ ] Rate limits on WorkOS-calling routes (GET /api/workspaces, /members, /auth/callback, /workspaces, /workspaces/switch) and per-IP session refreshes: #23
+- Follow-ups (post-GA, not blocking): feed pagination >200, sign-in retry keeps `next`, /history across workspaces, web workspace list hides deleted, restore runbook vs revoked CI keys, Pages logs in incident runbook, workos-setup/smoke self-host hardcodes, pin Actions SHAs + npm version, drop `s` from capability token, app CSP/frame-ancestors, theme `__name` on dynamic pages
 
 ## Run 3 fixes → 0.2.0 (2026-10-20)
 Done = every R3-n finding below is fixed by a merged PR or marked skipped with

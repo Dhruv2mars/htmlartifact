@@ -34,6 +34,13 @@ export interface Env {
   // which uploads stop (D1 Free caps a database at 500 MB).
   HTMLARTIFACT_WORKSPACE_QUOTA_BYTES?: string;
   HTMLARTIFACT_DATABASE_LIMIT_BYTES?: string;
+  // R2 only (README: Free-tier budget): HTML stored in the bucket (bytes),
+  // and R2 Class A operations (puts, lists) per UTC day.
+  HTMLARTIFACT_STORAGE_LIMIT_BYTES?: string;
+  HTMLARTIFACT_R2_CLASS_A_PER_DAY?: string;
+  // D1 rows written by uploads per UTC day: the deployment's and each workspace's.
+  HTMLARTIFACT_UPLOAD_ROWS_PER_DAY?: string;
+  HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY?: string;
   // Service binding to the ops Worker's `Ops` entrypoint (src/ops.ts). When
   // absent (local dev, tests), rate limits fall back to an in-memory window.
   OPS?: OpsService;
@@ -58,7 +65,16 @@ export interface Config {
   publicBaseUrl: string | null;
   sandboxOrigin: string | null;
   cookiePassword: string;
-  limits: { accountBytes: number; largeBytes: number; maxPages: number; workspaceBytes: number; databaseBytes: number };
+  limits: {
+    accountBytes: number;
+    largeBytes: number;
+    maxPages: number;
+    workspaceBytes: number;
+    databaseBytes: number;
+    /** D1 rows uploads may write per UTC day: the deployment's, and each workspace's. */
+    rowsPerDay: number;
+    workspaceRowsPerDay: number;
+  };
   workos: {
     apiKey: string;
     clientId: string;

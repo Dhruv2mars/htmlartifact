@@ -159,39 +159,62 @@ as Alice.
 
 ## Storage and the free-tier budget
 
-htmlartifact runs entirely on Cloudflare's free plans (Workers Free, Pages, D1)
-and WorkOS Staging, with no payment card on the Cloudflare account, so it
-cannot be billed: past a quota, Cloudflare returns errors until the daily reset
-(00:00 UTC) instead of charging. See `CLAUDE.md` (zero spend).
+htmlartifact runs entirely on free tiers: Cloudflare Workers Free, Pages, D1
+and R2's free tier, and WorkOS's free tier. It must never be billed
+(`CLAUDE.md`, zero spend). Past a Workers or D1 quota, Cloudflare returns
+errors until the daily reset (00:00 UTC) instead of charging.
 
-Artifact HTML lives in D1 (`src/storage.ts`): each object is split into
-≤ 1 MB rows of a `blobs` table, written in the same atomic batch as the version
-that references them, so a fresh artifact opens for teammates immediately (D1,
-not KV: KV is eventually consistent). Deleting an artifact or workspace
-deletes every chunk of every version.
+Artifact HTML lives in R2 when the `ARTIFACTS` bucket is bound, and in D1
+otherwise (`src/storage.ts`). Metadata (workspaces, versions, counters) is
+always in D1. On D1, each object is split into ≤ 1 MB rows of a `blobs` table,
+written in the same atomic batch as the version that references them. Either
+way a fresh artifact opens for teammates at once (not KV: KV is eventually
+consistent), and deleting an artifact or workspace deletes every object of
+every version.
 
-The app's own limits keep usage inside the free quotas (numbers from
+### Why R2 can't bill
+
+R2 needs a payment card and has no spending cap: past its free tier it bills.
+So the cap is built into the architecture, and every R2 cost is bounded below
+the free tier (R2 pricing, checked 2026-10-20):
+
+| R2 free tier (per month) | Bound |
+|---|---|
+| 10 GB-month of storage (average of each day's peak) | A running total in D1 of the bytes in the bucket, capped at 8 GB (`HTMLARTIFACT_STORAGE_LIMIT_BYTES` can only lower it); each object also counts 1 KiB for its key and metadata. Each upload reserves its bytes in one conditional update before it writes, so concurrent uploads can't overshoot it; bytes are given back only for objects a deletion has listed and removed, so a deletion still queued keeps counting. `bun run migrate:r2` adds what it copies |
+| 1,000,000 Class A operations (PutObject, ListObjects, …) | A daily budget in D1 (`daily_budget`): 25,000 a day (`HTMLARTIFACT_R2_CLASS_A_PER_DAY` can only lower it), so at most 31 × 25,000 = 775,000 a month, leaving room for the dashboard and `migrate:r2`. Each page an upload writes is one; each list a deletion makes is one. An upload that doesn't fit is refused before anything is written (HTTP 429, `Retry-After` to 00:00 UTC); a deletion that doesn't fit stays queued and the ops cron retries it |
+| 10,000,000 Class B operations (GetObject, HeadObject) | Not counted, bounded by construction: only the Worker can reach the bucket, every request makes at most one R2 read (serving a page, or `/healthz`), and Workers Free stops at 100,000 requests a day for the whole account (Pages Functions included). So at most 31 × 100,000 = 3,100,000 a month |
+| DeleteObject, egress | Free |
+
+The bound holds only while the Worker is the only way in. So, on the
+Cloudflare account:
+
+- The bucket stays private: no `r2.dev` URL and no custom domain
+  (`bun run deploy:all` refuses to deploy otherwise).
+- No R2 S3 API tokens, and no other bucket on the account (the free tier is
+  per account; staging stays on D1).
+- Standard storage only (Infrequent Access has no free tier), and Workers
+  stays on the Free plan.
+
+`bun run migrate:r2` moves HTML already in D1 into R2 once (about one Class A
+and one Class B operation per object, outside the daily budget; a few hundred
+objects at most).
+
+### Other free quotas
+
+The app's own limits keep usage inside the other free quotas (numbers from
 Cloudflare's docs: Workers limits, D1 limits and pricing, Pages Functions
 pricing, checked 2026-10-19):
 
 | Free quota | App limit or usage |
 |---|---|
-| D1: 500 MB per database (5 GB per account) | Uploads stop when the database would pass 450 MB (`HTMLARTIFACT_DATABASE_LIMIT_BYTES`); each workspace holds at most 50 MiB of HTML, every version counted (`HTMLARTIFACT_WORKSPACE_QUOTA_BYTES`); 1 MiB per upload (2 MiB flagged), 10 pages |
-| D1: 50 queries per request | An upload is one batch of ~2 statements per page + 1 per MB + ~8 |
-| D1: 100,000 rows written, 5 million rows read per day | An upload writes ~6–30 rows (artifact, version, pages, chunks, counters); opening an artifact reads ~10 |
-| Workers: 10 ms CPU per request (with a burst allowance) | The server validates HTML with the native HTMLRewriter (`src/html-policy-server.ts`); the CLI checks pages locally first (`src/html-policy.ts`, with line numbers). Measured in production: 1 MB pages pass even after the burst allowance is spent. If heavy uploads exhaust it, Cloudflare answers 503 for a few seconds and the CLI retries |
+| D1: 500 MB per database (5 GB per account) | Uploads stop when the database would pass 450 MB (`HTMLARTIFACT_DATABASE_LIMIT_BYTES`); each workspace holds at most 50 MiB of HTML on D1, 250 MiB on R2, every version counted (`HTMLARTIFACT_WORKSPACE_QUOTA_BYTES`); 1 MiB per upload (2 MiB flagged), 10 pages |
+| D1: 50 queries per request | An upload is one batch of ~2 statements per page + 1 per MB (D1 storage) + ~8 |
+| D1: 100,000 rows written, 5 million rows read per day; past either, every query fails until 00:00 UTC | Uploads draw on a daily budget of rows written (`daily_budget`): 40,000 for the deployment (`HTMLARTIFACT_UPLOAD_ROWS_PER_DAY`) and 4,000 per workspace (`HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY`), counted as 2 × (4 + pages + D1 chunks) per upload to cover index entries: ~300 one-page uploads per workspace a day. Past it, HTTP 429 with `Retry-After` to 00:00 UTC, so no tenant can use up the day for everyone. Opening an artifact reads ~10 rows |
+| Workers: 10 ms CPU per request (with a burst allowance) | The server validates HTML with the native HTMLRewriter (`src/html-policy-server.ts`); the CLI checks pages locally first (`src/html-policy.ts`, with line numbers). Measured in production: 1 MB pages pass even after the burst allowance is spent. If heavy uploads exhaust it, Cloudflare answers 503 for a few seconds and the CLI retries. CPU, not storage, sets the upload limits, so they are the same on R2 |
 | Workers + Pages Functions: 100,000 requests per day, shared by the app, the sandbox and the ops Worker | Opening an artifact in a browser is 2 requests (app page + sandbox frame); per-user rate limits (uploads 30/min, checks 60/min, sign-in polling per device code) and per-IP limits on API-key validation; the ops cron runs every 15 minutes (96/day) |
 | Cron triggers: 5 per account | 1 |
-| D1 Time Travel: 7 days | Deleted HTML stays restorable for 7 days (SECURITY.md) |
+| D1 Time Travel: 7 days | Deleted HTML stored in D1 stays restorable for 7 days (SECURITY.md); R2 deletes are immediate |
 | Pages static assets: unlimited | — |
-
-R2 is not used: it needs a payment card and Cloudflare documents no hard
-spending cap for it (only billing at listed rates past the free tier), so it
-does not meet the zero-spend rule. The code still supports an `ARTIFACTS` R2
-binding (reads fall back to D1; `bun run migrate:r2` copies D1 blobs into R2
-with SHA-256 verification), and the suite tests both backends, but enabling
-R2 is optional future work only if Cloudflare ever offers a hard cap that
-guarantees $0.
 
 ## Deploying
 

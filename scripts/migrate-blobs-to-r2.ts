@@ -1,5 +1,5 @@
-// Moves artifact HTML from D1 (`blobs`) into R2. Optional future work: R2 is not
-// used under the zero-spend rule (no hard spending cap; README).
+// Moves artifact HTML from D1 (`blobs`) into R2, once, after production is
+// deployed with the ARTIFACTS binding (README: Why R2 can't bill).
 //   bun run migrate:r2              -> production
 //   bun run migrate:r2 -- --staging -> staging
 //   add --dry-run to only report what would move
@@ -21,6 +21,8 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DAILY_BUDGET_SCHEMA } from "../src/budget.ts";
+import { R2_OBJECT_OVERHEAD } from "../src/storage.ts";
 
 const staging = process.argv.includes("--staging");
 const dryRun = process.argv.includes("--dry-run");
@@ -61,6 +63,7 @@ const keys = await d1<{ key: string; chunks: number; last: number }>(
 console.log(`${keys.length} object(s) in D1 ${database}${dryRun ? " (dry run)" : ""}`);
 if (dryRun || keys.length === 0) process.exit(0);
 
+await d1(DAILY_BUDGET_SCHEMA);
 const work = mkdtempSync(join(tmpdir(), "htmlartifact-migrate-"));
 let moved = 0;
 let failed = 0;
@@ -96,7 +99,12 @@ try {
         console.log(`dropped  ${key} (artifact deleted meanwhile)`);
         continue;
       }
-      await d1(`DELETE FROM blobs WHERE key = '${key}'`);
+      // Count it against the bucket's cap (src/storage.ts), as an upload
+      // would, in the same transaction (one command is one D1 batch) as
+      // dropping its rows, so a re-run never counts it twice.
+      await d1(
+        `INSERT INTO daily_budget (day, scope, used) VALUES ('total', 'r2:bytes', ${Buffer.byteLength(html, "utf8") + R2_OBJECT_OVERHEAD}) ON CONFLICT (day, scope) DO UPDATE SET used = used + excluded.used; DELETE FROM blobs WHERE key = '${key}'`
+      );
       console.log(`moved    ${key}`);
       moved += 1;
     } catch (error) {

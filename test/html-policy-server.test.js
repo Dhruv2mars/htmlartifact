@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { validateHtml } from "../src/html-policy.ts";
 import { corpus, realisticPage, rng } from "./html-corpus.js";
-import { STORAGE, accessToken, callApi, startStack } from "./helpers.js";
+import { accessToken, callApi, startStack } from "./helpers.js";
 
 // The server validates with the Workers runtime's HTMLRewriter
 // (src/html-policy-server.ts); the CLI with parse5 (src/html-policy.ts).
@@ -18,7 +18,7 @@ import { STORAGE, accessToken, callApi, startStack } from "./helpers.js";
 //     misses an error parse5 reports otherwise, and never says a page has no
 //     scripts when parse5 says it has.
 
-const MAX_PAGES = STORAGE === "r2" ? 50 : 10;
+const MAX_PAGES = 10;
 // parse5's own resource limits; the server has others (see "Limits" there).
 const RESOURCE_CODES = new Set(["too-deep", "too-many-attributes"]);
 // The server stopped trusting the rest of the page.
@@ -153,8 +153,8 @@ describe("validation cost on the server", () => {
     return parts.join("\n").slice(0, bytes - 20) + "</body></html>";
   }
 
-  test("a page at the upload limit (2 MiB here; 1 MiB on D1) checks in well under a second, with the same verdict as parse5", async () => {
-    const html = bigReport((STORAGE === "r2" ? 2 : 1) * 1024 * 1024 - 64 * 1024);
+  test("a page at the upload limit (1 MiB) checks in well under a second, with the same verdict as parse5", async () => {
+    const html = bigReport(1024 * 1024 - 64 * 1024);
     const mine = validateHtml(html);
     const started = performance.now();
     const res = await callApi(stack, tokens[0], "POST", "/api/check", { html });

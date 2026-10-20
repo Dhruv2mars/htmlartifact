@@ -35,31 +35,28 @@ export function getConfig(env: Env): Config {
     // under the CSP sandbox.
     sandboxOrigin,
     cookiePassword,
-    // Defaults depend on where HTML is stored. D1 (no R2 bucket bound, the
-    // zero-cost setup on Workers Free): an upload is one D1 batch of ~2
-    // statements per page plus one per MB (50 D1 queries per request allowed),
-    // and Workers Free allows 10 ms of CPU per request with a burst allowance.
+    // Upload limits are the same on either storage: what bounds them is CPU.
+    // Workers Free allows 10 ms of CPU per request with a burst allowance.
     // Measured in production: 1 MB pages pass even after the burst allowance
     // is spent; back-to-back 2 MB uploads do not. So 1 MiB (2 MiB flagged) and
-    // 10 pages. R2 (not used: no hard spending cap; see README): 50 pages, 4 MiB.
+    // 10 pages (on D1, an upload is one batch of ~2 statements per page plus
+    // one per MB; 50 D1 queries per request allowed).
     limits: {
+      accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 1024 * 1024),
+      largeBytes: Number(env.MAX_LARGE_HTML_BYTES || 2 * 1024 * 1024),
+      maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 10),
       // D1 Free caps one database at 500 MB, and a full database refuses every
-      // write (metadata included): uploads stop at 450 MB, and each workspace
-      // holds at most 50 MiB of HTML (all versions), so no single workspace
-      // fills it for everyone.
-      workspaceBytes: Number(env.HTMLARTIFACT_WORKSPACE_QUOTA_BYTES || 50 * 1024 * 1024),
+      // write (metadata included): uploads stop at 450 MB. Each workspace's
+      // share keeps one workspace from filling the deployment for everyone:
+      // 50 MiB of HTML (all versions) on D1, 250 MiB on R2.
+      workspaceBytes: Number(env.HTMLARTIFACT_WORKSPACE_QUOTA_BYTES || (env.ARTIFACTS ? 250 : 50) * 1024 * 1024),
       databaseBytes: Number(env.HTMLARTIFACT_DATABASE_LIMIT_BYTES || 450_000_000),
-      ...(env.ARTIFACTS
-      ? {
-          accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 4 * 1024 * 1024),
-          largeBytes: Number(env.MAX_LARGE_HTML_BYTES || 16 * 1024 * 1024),
-          maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 50)
-        }
-      : {
-          accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 1024 * 1024),
-          largeBytes: Number(env.MAX_LARGE_HTML_BYTES || 2 * 1024 * 1024),
-          maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 10)
-        })
+      // D1 Free allows 100,000 rows written a day, then refuses every write
+      // until 00:00 UTC. Uploads may use 40,000 of them (~2,000–4,000
+      // uploads), and one workspace 4,000 (~200–400), so no tenant can use up
+      // the day for everyone; sign-ins, invites and webhooks keep the rest.
+      rowsPerDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_DAY || 40_000),
+      workspaceRowsPerDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY || 4_000)
     },
     workos: {
       apiKey,

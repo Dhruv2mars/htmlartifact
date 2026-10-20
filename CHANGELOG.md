@@ -9,11 +9,27 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ### Added
 
+- R2 storage with a built-in $0 cap (README → Why R2 can't bill): uploads stop
+  at 8 GB of stored HTML across the deployment (each object also counts
+  1 KiB for its key and metadata), and R2 writes and lists draw on a daily
+  budget (25,000) kept in D1; settings can only lower these. An upload over today's budget gets
+  HTTP 429 with `Retry-After` until 00:00 UTC; a deletion over it stays queued
+  for the cron. On R2, each workspace holds 250 MiB (50 MiB on D1).
+- Uploads draw on a daily budget of D1 rows written: 40,000 for the
+  deployment and 4,000 per workspace (about 300 one-page uploads), so one
+  workspace can no longer use up D1 Free's 100,000 daily writes and lock
+  everyone out until 00:00 UTC. Past it, HTTP 429 with `Retry-After`.
+- `bun run deploy:all` refuses to deploy over a public R2 bucket.
 - A privacy notice for the hosted service at `/privacy`, linked from the
   footer: what is stored and why, retention, processors (Cloudflare, WorkOS),
   and how to ask for access, correction or deletion.
 - The npm package ships `THIRD_PARTY_LICENSES`, generated at build time from
   the packages bundled into `dist/htmlartifact.js`.
+
+### Changed
+
+- Upload limits are 1 MiB (2 MiB flagged) and 10 pages on either storage:
+  Workers Free CPU, not storage, bounds them.
 
 ### Fixed
 

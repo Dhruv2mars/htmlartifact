@@ -5,7 +5,10 @@ import http from "node:http";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
-import { CI_KEY, callApi, page, refreshInto, signInTokens, startStack, writeHtml } from "./helpers.js";
+import { CI_KEY, STORAGE, callApi, page, refreshInto, signInTokens, startStack, writeHtml } from "./helpers.js";
+
+// The default workspace quota for this run's storage (src/config.ts).
+const QUOTA = STORAGE === "r2" ? "250 MiB" : "50 MiB";
 
 // The whole agent workflow through the built CLI (dist/htmlartifact.js), against a local
 // Worker and the WorkOS emulator. Every command is what an agent would run.
@@ -153,14 +156,14 @@ test("prune keeps the latest versions; check and list show the workspace's stora
   assert.equal(pruned.deleted, 3);
   assert.equal(pruned.versionCount, 1);
   assert.equal(pruned.usage.remainingBytes, pruned.usage.limitBytes - pruned.usage.storedBytes);
-  assert.match((await cli(["prune", ci.draftId, "--keep", "1"])).stdout, /Nothing to prune: \w+ has 1 version\.\nStorage: .* of 50 MiB used \(.* left\)/);
+  assert.match((await cli(["prune", ci.draftId, "--keep", "1"])).stdout, new RegExp(`Nothing to prune: \\w+ has 1 version\\.\nStorage: .* of ${QUOTA} used \\(.* left\\)`));
 
   const listed = await json(["list", "--all"]);
   assert.ok(listed.drafts.some((d) => d.draftId === ci.draftId && d.updatedBy === "Alice" && d.versionCount === 1));
   assert.deepEqual(listed.usage, pruned.usage);
   assert.deepEqual((await json(["check"])).usage, pruned.usage);
-  assert.match((await cli(["check"])).stdout, /Storage: .* of 50 MiB used/);
-  assert.match((await cli(["list"])).stdout, /Storage: .* of 50 MiB used/);
+  assert.match((await cli(["check"])).stdout, new RegExp(`Storage: .* of ${QUOTA} used`));
+  assert.match((await cli(["list"])).stdout, new RegExp(`Storage: .* of ${QUOTA} used`));
 });
 
 test("upload checks the markup locally first: errors with line and column, nothing sent", async () => {
