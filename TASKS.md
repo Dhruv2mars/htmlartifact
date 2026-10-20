@@ -108,9 +108,9 @@ provably removes its stored HTML (every version; D1 blobs).
 - Dropped by Dhruv: Vault/encryption, Audit Logs, Events API, Radar, extra roles, FGA, domain auto-join, export
 
 ## Blocked on Dhruv
-(nothing blocks GA; WorkOS Directory Provisioning request is with WorkOS support)
+(nothing blocks GA)
 - [x] Write WorkOS keys to `~/.config/htmlartifact/workos.env` (Staging; verified 2026-10-19)
-- [ ] WorkOS support asked 2026-10-19 to enable AuthKit Directory Provisioning (message sent, email follow-up pending); after confirmation set `HTMLARTIFACT_DIRECTORY_PROVISIONING=on` (deploy/app vars) and redeploy
+- [x] WorkOS Directory Provisioning: not wanted (Dhruv, 2026-10-19). Declined WorkOS support's follow-up; `HTMLARTIFACT_DIRECTORY_PROVISIONING` stays unset, so Directory Sync links stay refused
 
 ## Phase 4 — Production
 - [x] Pages configs `deploy/app`, `deploy/usercontent`, `deploy/ops`; `scripts/build-pages.ts` (verified with `wrangler pages dev`)
@@ -124,7 +124,7 @@ provably removes its stored HTML (every version; D1 blobs).
 - [x] package.json scripts: typecheck, build:pages, deploy:all, smoke
 - [x] Real WorkOS env: redirect URI, webhooks (`scripts/workos-setup.ts`), MFA (dashboard)
 - [x] `DEFAULT_API_URL` = https://htmlartifact.pages.dev
-- [ ] (Dhruv, after merging chore/oss-cleanup) First npm publish locally from `main` (`npm publish --access public`; claims the unclaimed `htmlartifact` name), then run the Release workflow to tag `v0.1.0`; add the repo + `release.yml` as trusted publisher (allow direct `npm publish`) only right before the next release, since unused configurations expire after 2 days (CONTRIBUTING.md → Releasing)
+- [x] First npm publish + trusted publishing: Dhruv published 0.1.0 locally (2026-10-19 16:29 UTC, no attestation), Release tagged `v0.1.0`; then trusted publishing on `release.yml` published 0.1.1 (Release run 39296478726) and 0.1.2 (run 39304532354), both with SLSA provenance. Evidence: `npm view htmlartifact versions` → 0.1.0, 0.1.1, 0.1.2; `gh release list` → v0.1.0, v0.1.1, v0.1.2 (Latest)
 - [x] workos-setup (redirect URI, webhook 7 events, secrets on both Pages projects + ops), deploy:all (D1 storage), smoke: all ok
 - [x] Production walkthrough with two real accounts (2026-10-19, htmlartifact.pages.dev, real CLI + browser):
   - A (dhruv+haa@swayu.io): CLI device login → sign-up, email code, MFA (TOTP) enrollment → `workspace create "GA Walkthrough"` → `workspace invite` → `upload --slug ga-plan` (v1)
