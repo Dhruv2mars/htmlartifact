@@ -38,11 +38,12 @@ GitHub Actions bumps, #9 WorkOS notes, #12 TASKS.
 - [x] R3-27 admin overwrite keeps member as author: #15 (`updatedBy`, receipt warning)
 - [x] R3-28 `Retry-After` ignored; update conflict 409: #15 (403) + #17 (one retry)
 - [x] R3-29 large-uploads message: #17
-- [ ] Release PR (0.2.0 bump, CHANGELOG, TASKS, README exit code 130) merged with green `test`
-- [ ] Release workflow: htmlartifact@0.2.0 published with provenance, tag v0.2.0
-- [ ] `npx htmlartifact@latest --version` → 0.2.0
-- [ ] Deploy green on main; live smoke passes
-- [ ] Sanity pass (throwaway HOME): `login --help`, `check` on a bad file signed out, `--version`
+- [x] Release PR #19 (0.2.0 bump, CHANGELOG, TASKS, README exit code 130) merged with green `test` (26e4e38)
+- [x] Release workflow (run 39387102116): htmlartifact@0.2.0 published with SLSA provenance (sigstore logIndex 3333168543), tag v0.2.0 and GitHub release on 26e4e38; suite 216/216 in the publish step. npm's "bin[htmlartifact] … invalid and removed" warning also appeared for 0.1.2; the registry keeps `bin` for both
+- [x] `npx htmlartifact@latest --version` → 0.2.0 (fresh HOME and npm cache)
+- [x] Deploy green on main (run 39387926557); `bun run smoke` 11/11
+- [x] Sanity pass (throwaway HOME): `login --help` ok; signed-out `check` on a file with an external script → "Checked markup locally", `line 6:1`, exit 5 (`--json` too: `offline: true`, line/column); `whoami` → exit 3
+- [ ] Nit (found in the sanity pass): `check --json` signed out has `signedOut: "Not signed in. Run: htmlartifact login"` without `npx` (the human output says `npx htmlartifact login`)
 
 ## Real-world run 3 (2026-10-20, branch test/real-world-run3)
 Done = three delegates (A startup of 5, B multi-level org, C engineering/CI) finish

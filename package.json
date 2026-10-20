@@ -28,7 +28,7 @@
     "LICENSE"
   ],
   "bin": {
-    "htmlartifact": "./dist/htmlartifact.js"
+    "htmlartifact": "dist/htmlartifact.js"
   },
   "scripts": {
     "build": "bun build cli/main.ts --target=node --minify-syntax --minify-whitespace --outfile dist/htmlartifact.js",
