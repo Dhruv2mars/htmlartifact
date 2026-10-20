@@ -62,6 +62,8 @@ export async function bearerViewer<E extends AppEnv>(c: Context<E>): Promise<Vie
 // Browser session → viewer, or null. Refreshes an expired access token and,
 // when `organizationId` names another workspace the user belongs to, moves
 // the session there. Updated cookies are set on the response.
+const SESSION_REFRESHES = { windowMs: 60_000, max: 60, keyPrefix: "session-refresh", kind: "auth-ip" } as const;
+
 export async function sessionViewer<E extends AppEnv>(
   c: Context<E>,
   { organizationId }: { organizationId?: string | undefined } = {}
@@ -82,6 +84,13 @@ export async function sessionViewer<E extends AppEnv>(
     auth.organizationId !== organizationId &&
     Boolean(await activeMembership(c, auth.user.id, organizationId));
   if (!auth.authenticated || wantsSwitch) {
+    // Each refresh is a WorkOS call, and a stale cookie can be replayed on any
+    // page: limited per network before WorkOS is asked.
+    const verdict = await checkLimit(c, SESSION_REFRESHES, clientIp(c));
+    if (!verdict.ok) {
+      c.header("Retry-After", String(verdict.retryAfter));
+      throw new RateLimitedError();
+    }
     const refreshed: SessionAuth = await session
       .refresh(wantsSwitch ? { organizationId } : undefined)
       .catch(() => ({ authenticated: false as const }));
