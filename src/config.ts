@@ -53,7 +53,13 @@ export function getConfig(env: Env): Config {
       databaseBytes: Number(env.HTMLARTIFACT_DATABASE_LIMIT_BYTES || 450_000_000),
       // R2 Free stores 10 GB-month; uploads stop at 9 GB of HTML (README:
       // Free-tier budget), leaving room for objects not yet counted.
-      storageBytes: env.ARTIFACTS ? Number(env.HTMLARTIFACT_STORAGE_LIMIT_BYTES || 9_000_000_000) : null
+      storageBytes: env.ARTIFACTS ? Number(env.HTMLARTIFACT_STORAGE_LIMIT_BYTES || 9_000_000_000) : null,
+      // D1 Free allows 100,000 rows written a day, then refuses every write
+      // until 00:00 UTC. Uploads may use 40,000 of them (~2,000–4,000
+      // uploads), and one workspace 4,000 (~200–400), so no tenant can use up
+      // the day for everyone; sign-ins, invites and webhooks keep the rest.
+      rowsPerDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_DAY || 40_000),
+      workspaceRowsPerDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY || 4_000)
     },
     workos: {
       apiKey,

@@ -9,12 +9,14 @@
 //     the bucket is reachable only through this Worker, which Workers Free
 //     stops at 100,000 requests a day; every request makes at most one R2 read
 //     (Class B); writes and lists (Class A) draw on a daily budget kept in D1
-//     (`r2_ops`); stored bytes are capped by the upload guards (src/api.ts).
+//     (`daily_budget`); stored bytes are capped by the upload guards (src/api.ts).
 //   - D1 otherwise: each object is split into ≤ 1 MB chunks of UTF-8 (D1 rows
 //     are capped at 2 MB), stored as rows of `blobs`, and written in the same
 //     atomic batch as the version row that references them. D1, not KV: a
 //     fresh artifact must open for teammates at once, and KV is eventually
 //     consistent.
+
+import { reserveBudget } from "./budget.ts";
 
 export const BLOBS_SCHEMA = `CREATE TABLE IF NOT EXISTS blobs (
   key TEXT NOT NULL,
@@ -24,12 +26,6 @@ export const BLOBS_SCHEMA = `CREATE TABLE IF NOT EXISTS blobs (
 )`;
 
 const CHUNK_BYTES = 1_000_000;
-
-// R2 Class A operations (put, list) used per UTC day.
-export const R2_OPS_SCHEMA = `CREATE TABLE IF NOT EXISTS r2_ops (
-  day TEXT PRIMARY KEY,
-  class_a INTEGER NOT NULL
-)`;
 
 /** R2 Class A operations allowed per UTC day (R2 Free: 1,000,000 a month; 31 × 30,000 = 930,000). */
 const R2_CLASS_A_PER_DAY = 30_000;
@@ -44,26 +40,13 @@ export type StorageKind = "r2" | "d1";
 
 export const storageKind = (env: StorageEnv): StorageKind => (env.ARTIFACTS ? "r2" : "d1");
 
-/** Seconds until the daily R2 budget resets (00:00 UTC). */
-export const secondsUntilUtcMidnight = (now = Date.now()): number =>
-  Math.max(1, Math.ceil((86_400_000 - (now % 86_400_000)) / 1000));
-
 /**
- * Takes `count` R2 Class A operations from today's budget. False, and nothing
- * taken, when they don't fit: the caller must not make them. One conditional
- * upsert, so concurrent requests cannot overdraw it. Always true on D1.
+ * Takes `count` R2 Class A operations from today's budget (src/budget.ts).
+ * False when they don't fit: the caller must not make them. Always true on D1.
  */
 export async function reserveR2Writes(env: StorageEnv, count: number): Promise<boolean> {
-  if (!env.ARTIFACTS || count <= 0) return true;
-  const perDay = Number(env.HTMLARTIFACT_R2_CLASS_A_PER_DAY || R2_CLASS_A_PER_DAY);
-  const day = new Date().toISOString().slice(0, 10);
-  const result = await env.DB.prepare(
-    `INSERT INTO r2_ops (day, class_a) SELECT ?1, ?2 WHERE ?2 <= ?3
-     ON CONFLICT (day) DO UPDATE SET class_a = class_a + excluded.class_a WHERE class_a + excluded.class_a <= ?3`
-  )
-    .bind(day, count, perDay)
-    .run();
-  return (result.meta.changes ?? 0) > 0;
+  if (!env.ARTIFACTS) return true;
+  return reserveBudget(env.DB, "r2:class_a", count, Number(env.HTMLARTIFACT_R2_CLASS_A_PER_DAY || R2_CLASS_A_PER_DAY));
 }
 
 class R2BudgetError extends Error {

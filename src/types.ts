@@ -38,6 +38,9 @@ export interface Env {
   // and R2 Class A operations (puts, lists) per UTC day.
   HTMLARTIFACT_STORAGE_LIMIT_BYTES?: string;
   HTMLARTIFACT_R2_CLASS_A_PER_DAY?: string;
+  // D1 rows written by uploads per UTC day: the deployment's and each workspace's.
+  HTMLARTIFACT_UPLOAD_ROWS_PER_DAY?: string;
+  HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY?: string;
   // Service binding to the ops Worker's `Ops` entrypoint (src/ops.ts). When
   // absent (local dev, tests), rate limits fall back to an in-memory window.
   OPS?: OpsService;
@@ -70,6 +73,9 @@ export interface Config {
     databaseBytes: number;
     /** R2: HTML the bucket may hold, all workspaces. Null on D1 (databaseBytes guards it). */
     storageBytes: number | null;
+    /** D1 rows uploads may write per UTC day: the deployment's, and each workspace's. */
+    rowsPerDay: number;
+    workspaceRowsPerDay: number;
   };
   workos: {
     apiKey: string;

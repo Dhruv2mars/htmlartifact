@@ -12,7 +12,8 @@ import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
 import { activeMembership, bearerViewer, userStillMember } from "./auth.ts";
 import { deleteWorkspaceStatements, draftPrefix, isWorkspaceDeleted, membershipBeingUndone, pruneVersions, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
-import { reserveR2Writes, secondsUntilUtcMidnight, stageObjects } from "./storage.ts";
+import { reserveBudget, secondsUntilUtcMidnight } from "./budget.ts";
+import { reserveR2Writes, stageObjects, storageKind } from "./storage.ts";
 import {
   isMember,
   type AppEnv,
@@ -958,14 +959,13 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     const prefix = draftPrefix(viewer.organization_id, id);
     const objectKey = `${prefix}versions/${versionId}.html`;
     const pageKey = (page: { path: string }) => `${prefix}versions/${versionId}/${page.path}`;
-    // R2: each object is one Class A operation from today's budget (src/storage.ts).
-    if (!(await reserveR2Writes(c.env, pages.length))) {
-      const retryAfter = secondsUntilUtcMidnight();
-      c.header("Retry-After", String(retryAfter));
-      return c.json(
-        { ok: false, error: "This htmlartifact deployment has reached today's upload limit. Try again after 00:00 UTC." },
-        503
-      );
+    // Daily budgets (src/budget.ts): D1 rows written (D1 Free locks every
+    // workspace out for the rest of the day past 100,000), the workspace's
+    // share first; then, on R2, one Class A operation per object.
+    const over = await overDailyBudget(c, pages);
+    if (over) {
+      c.header("Retry-After", String(secondsUntilUtcMidnight()));
+      return c.json({ ok: false, error: `${over} Try again after 00:00 UTC.` }, 429);
     }
     written = versionPrefix(viewer.organization_id, id, versionId);
     // R2: written now. D1: chunk inserts that join this batch after the
@@ -1215,6 +1215,28 @@ async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
 
 // A 507 if `bytes` more would overflow the workspace's share or the
 // database's headroom; otherwise the database reading it checked.
+// D1 rows an upload writes, doubled for index entries: the artifact, version,
+// usage counter and final update, plus a row per extra page and, on D1
+// storage, per ≤ 1 MB chunk.
+function uploadRows(c: Context<MemberEnv>, pages: { bytes: number }[]): number {
+  const chunks = storageKind(c.env) === "d1" ? pages.reduce((n, page) => n + Math.max(1, Math.ceil(page.bytes / 1_000_000)), 0) : 0;
+  return 2 * (4 + pages.length + chunks);
+}
+
+/** Why an upload doesn't fit today's budgets, or null once they are reserved. */
+async function overDailyBudget(c: Context<MemberEnv>, pages: { bytes: number }[]): Promise<string | null> {
+  const { workspaceRowsPerDay, rowsPerDay } = c.get("config").limits;
+  const rows = uploadRows(c, pages);
+  const db = c.env.DB;
+  if (!(await reserveBudget(db, `d1:rows:${c.get("viewer").organization_id}`, rows, workspaceRowsPerDay))) {
+    return "This workspace has reached today's upload limit.";
+  }
+  if (!(await reserveBudget(db, "d1:rows", rows, rowsPerDay)) || !(await reserveR2Writes(c.env, pages.length))) {
+    return "This htmlartifact deployment has reached today's upload limit.";
+  }
+  return null;
+}
+
 async function storageFull(c: Context<MemberEnv>, bytes: number): Promise<Response | Awaited<ReturnType<typeof databaseUsage>>> {
   const { workspaceBytes, databaseBytes: databaseLimit } = c.get("config").limits;
   const used = await workspaceStoredBytes(c.env.DB, c.get("viewer").organization_id);

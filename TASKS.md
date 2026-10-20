@@ -10,12 +10,18 @@ blockers fixed.
 - [x] Rule: CLAUDE.md/AGENTS.md (architectural cap allowed; never upgrade plans; WorkOS Production is Dhruv's move)
 - [x] R2 budget: `r2_ops` daily Class A budget (uploads 503 + Retry-After; deletions stay queued), 9 GB storage cap in the version's transaction, ≤1 R2 read per request, list loop stops on `!truncated`
 - [x] Limits: 1 MiB / 10 pages on either storage (CPU-bound); workspace quota 250 MiB on R2
+- [x] GA-B2: D1 rows-written daily budget for uploads (deployment 40k, workspace 4k; 429 + Retry-After), same `daily_budget` table as R2 Class A
 - [x] Deploy guard: refuses a public bucket (r2.dev or custom domain); staging stays on D1
 - [x] README: Why R2 can't bill (math), other free quotas; CHANGELOG
 - [ ] PR: CI, Sol loop, merge
 - [ ] Dhruv: add the card and enable R2 (Standard storage) on the Cloudflare account; deploy token needs R2 read
 - [ ] Create bucket `htmlartifact-artifacts`, uncomment the bindings (app, usercontent, ops), deploy, `migrate:r2`, smoke
-- [ ] GA audit (Sol delegate): verify findings, fix blockers
+- [x] GA audit: Codex delegate hit its usage limit; redone with two Claude Opus agents (reconcile + security), findings spot-checked in source (B1, B3, B4)
+- [ ] GA-B1 last-admin race (all four variants) + B4 member paging >100 + demotion revokes admin-made keys/invites: agent PR
+- [ ] GA-B3 retention index, cron batch 20, saveAccount freshness: agent PR
+- [ ] GA-B5 /docs CI section, B6 /privacy, B7 THIRD_PARTY_LICENSES, dev:local build: agent PR
+- [ ] Rate limits on WorkOS-calling routes (GET /api/workspaces, /members, /auth/callback, /workspaces, /workspaces/switch)
+- Follow-ups (post-GA, not blocking): feed pagination >200, sign-in retry keeps `next`, /history across workspaces, web workspace list hides deleted, restore runbook vs revoked CI keys, Pages logs in incident runbook, workos-setup/smoke self-host hardcodes, pin Actions SHAs + npm version, drop `s` from capability token, app CSP/frame-ancestors, theme `__name` on dynamic pages
 
 ## Run 3 fixes → 0.2.0 (2026-10-20)
 Done = every R3-n finding below is fixed by a merged PR or marked skipped with

@@ -4,7 +4,7 @@
 //   - Ops.limit(): the Workers rate-limit binding, called by Pages over RPC.
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { drainPendingDeletions, eraseExpiredRequestMetadata, PENDING_DELETIONS_SCHEMA, type PurgeEnv } from "./purge.ts";
-import { R2_OPS_SCHEMA } from "./storage.ts";
+import { DAILY_BUDGET_SCHEMA } from "./budget.ts";
 import type { LimitKind, OpsService } from "./types.ts";
 
 export interface OpsEnv extends PurgeEnv {
@@ -34,7 +34,7 @@ export class Ops extends WorkerEntrypoint<OpsEnv> implements OpsService {
 }
 
 export async function runScheduledJobs(env: PurgeEnv) {
-  await env.DB.batch([env.DB.prepare(PENDING_DELETIONS_SCHEMA), env.DB.prepare(R2_OPS_SCHEMA)]);
+  await env.DB.batch([env.DB.prepare(PENDING_DELETIONS_SCHEMA), env.DB.prepare(DAILY_BUDGET_SCHEMA)]);
   const deletions = await drainPendingDeletions(env);
   const erased = await eraseExpiredRequestMetadata(env.DB);
   return { deletions, erased };
