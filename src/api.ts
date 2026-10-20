@@ -189,7 +189,7 @@ export function registerApi(app: Hono<AppEnv>): void {
   });
 
   // ---- Workspaces
-  app.get("/api/workspaces", requireUser, async (c) => {
+  app.get("/api/workspaces", requireUser, perUser("workspaces", 60), async (c) => {
     const viewer = c.get("viewer");
     if (viewer.is_api_key) {
       return c.json({ ok: true, workspaces: [{ ...workspaceJson(viewer.workspace), current: true }] });
@@ -391,7 +391,7 @@ export function registerApi(app: Hono<AppEnv>): void {
     return c.json(result.body, result.status);
   });
 
-  app.get("/api/workspaces/members", requireMember, async (c) => {
+  app.get("/api/workspaces/members", requireMember, perUser("members", 60), async (c) => {
     const viewer = c.get("viewer");
     const { client } = workos(c.get("config"));
     const [users, memberships] = await Promise.all([

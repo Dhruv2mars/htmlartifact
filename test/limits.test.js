@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { after, before, test } from "node:test";
-import { CI_KEY, OTHER_CI_KEY, callApi, signInTokens, startStack } from "./helpers.js";
+import { CI_KEY, OTHER_CI_KEY, accessToken, callApi, signInTokens, startStack } from "./helpers.js";
 
 // Rate limits that hold up for offices and agents, and that strangers cannot
 // spend: WorkOS's rate limit is shared by every tenant, so random bearer
@@ -198,4 +198,22 @@ test("a chunked body with no Content-Length is cut off at the limit, not buffere
   }
   assert.equal(response.status, 413);
   assert.match((await response.json()).error, /Request is over the .* limit\./);
+});
+
+test("routes that call WorkOS on every request are limited, so one caller can't spend the shared WorkOS limit", async () => {
+  const alice = await accessToken(stack, "alice@acme.test", "Acme");
+  for (const path of ["/api/workspaces", "/api/workspaces/members"]) {
+    const statuses = [];
+    for (let i = 0; i < 61; i++) statuses.push((await callApi(stack, alice, "GET", path)).status);
+    assert.ok(!statuses.slice(0, 60).includes(429), `${path}: ${statuses.join(",")}`);
+    assert.equal(statuses[60], 429, path);
+  }
+  // Signed out: a replayed callback would make a WorkOS code exchange each time.
+  const callbacks = [];
+  for (let i = 0; i < 61; i++) {
+    const response = await fetch(`${stack.baseUrl}/auth/callback?code=${random()}&state=${random()}`, { redirect: "manual" });
+    callbacks.push(response.status);
+  }
+  assert.ok(!callbacks.slice(0, 60).includes(429), callbacks.join(","));
+  assert.equal(callbacks[60], 429);
 });
