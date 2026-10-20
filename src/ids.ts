@@ -40,3 +40,16 @@ export function normalizeInviteCode(value: unknown): string | null {
   const raw = cleaned.length === 14 && cleaned.startsWith("HA") ? cleaned.slice(2) : cleaned;
   return raw.length === 12 ? `HA-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}` : null;
 }
+
+// Workspace CI keys (src/db.ts): the secret is "htmlartifact_ci_" plus 256
+// random bits; the ID shares WorkOS's "api_key_" prefix, so artifacts a CI
+// key publishes stay updatable by the workspace's other keys (src/api.ts).
+export const CI_KEY_PREFIX = "htmlartifact_ci_";
+
+export function newCiKeyId(): string {
+  return `api_key_ci_${internalId()}`;
+}
+
+export function looksLikeCiKey(value: string): boolean {
+  return value.startsWith(CI_KEY_PREFIX) && /^[A-Za-z0-9_-]{40,128}$/.test(value.slice(CI_KEY_PREFIX.length));
+}
