@@ -136,6 +136,11 @@ CREATE TABLE IF NOT EXISTS ci_keys (
 );
 CREATE INDEX IF NOT EXISTS ci_keys_org_idx ON ci_keys(organization_id);
 CREATE INDEX IF NOT EXISTS ci_keys_creator_idx ON ci_keys(created_by, organization_id);
+CREATE TABLE IF NOT EXISTS admin_locks (
+  organization_id TEXT PRIMARY KEY,
+  holder TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS deleted_workspaces (
   organization_id TEXT PRIMARY KEY,
   deleted_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -398,6 +403,14 @@ export async function revokeInvitesUpTo(db: D1Database, organizationId: string, 
   await db
     .prepare("UPDATE invites SET revoked_at = unixepoch() WHERE organization_id = ? AND revoked_at IS NULL AND created_at <= ?")
     .bind(organizationId, at)
+    .run();
+}
+
+// The live invite codes createdBy issued in organizationId (on demotion).
+export async function revokeInvitesBy(db: D1Database, createdBy: string, organizationId: string): Promise<void> {
+  await db
+    .prepare("UPDATE invites SET revoked_at = unixepoch() WHERE created_by = ? AND organization_id = ? AND revoked_at IS NULL")
+    .bind(createdBy, organizationId)
     .run();
 }
 
