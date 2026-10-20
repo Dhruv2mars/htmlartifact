@@ -246,6 +246,30 @@ async function proxy(intercept) {
 const isRefresh = (pathname, body) => pathname === "/api/cli/token" && typeof body?.refresh_token === "string";
 const RATE_LIMITED = { ok: false, error: "Rate limit exceeded. Slow down." };
 
+test("login with no current workspace, but already in some: uses --workspace, or the only one", async () => {
+  // As after joining in the browser, then signing in here with that browser
+  // session: the first /api/me has no workspace.
+  let fresh = 0;
+  const p = await proxy((pathname) => {
+    if (pathname === "/api/me" && fresh < 2) {
+      fresh += 1;
+      return { status: 200, body: { ok: true, name: "Alice", email: "alice@acme.test", workspace: null } };
+    }
+    return null;
+  });
+  try {
+    const picked = await cli(["login", "--workspace", "Acme"], { HTMLARTIFACT_HOME: path.join(stack.tmp, "pick-home"), HTMLARTIFACT_API_URL: p.url });
+    assert.match(picked.stdout, /Workspace: Acme\n.*upload/);
+    // Alice is only in Acme by now: that one becomes current.
+    const home = path.join(stack.tmp, "only-home");
+    const only = await cli(["login"], { HTMLARTIFACT_HOME: home, HTMLARTIFACT_API_URL: p.url, npm_command: "exec" });
+    assert.match(only.stdout, /Workspace: Acme\nNext, publish a page: npx htmlartifact upload/);
+    assert.equal(JSON.parse((await cli(["whoami", "--json"], { HTMLARTIFACT_HOME: home, HTMLARTIFACT_API_URL: p.url })).stdout).workspace.name, "Acme");
+  } finally {
+    await p.close();
+  }
+});
+
 test("login keeps polling through a 429, backing off like slow_down", async () => {
   let limited = 0;
   const p = await proxy((pathname, body) => {

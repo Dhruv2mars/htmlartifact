@@ -1,13 +1,13 @@
 import { Console, Duration, Effect, Option } from "effect";
 import { Command } from "effect/cli";
 
-import { getAuth, refreshSession, resolveApiUrl, selectWorkspace, tokenExpiresAt } from "../auth.ts";
+import { getAuth, refreshSession, resolveApiUrl, selectWorkspace, switchSession, tokenExpiresAt } from "../auth.ts";
 import { CMD, CREDENTIALS_PATH } from "../env.ts";
 import { CliError, reason } from "../errors.ts";
 import { apiUrlFlag, jsonFlag, stringFlag } from "../flags.ts";
-import { printJson } from "../format.ts";
+import { printJson, shellQuote } from "../format.ts";
 import { api, postJson, requestJson } from "../http.ts";
-import { readJson, removeCredentials, saveSession, type Session } from "../state.ts";
+import { readJson, removeCredentials, saveSession, type Json, type Session } from "../state.ts";
 
 const MAX_POLL_INTERVAL_MS = 60_000;
 
@@ -52,9 +52,32 @@ export const login = Command.make(
         const session = yield* saveSession(apiUrl, poll.body);
         const me = yield* api(apiUrl, "/api/me", { apiKey: session.accessToken });
         yield* Console.log(`\nSigned in as ${me.email || me.name}.`);
-        if (me.workspace) {
-          yield* Console.log(`Workspace: ${me.workspace.name}`);
+        // Signed in without a current workspace, but already in some (e.g.
+        // joined in the browser, then signed in here with that browser
+        // session): use the only one, or say how to pick.
+        let workspace = me.workspace as Json | null;
+        let others: Json[] = [];
+        if (!workspace) {
+          const { workspaces } = (yield* api(apiUrl, "/api/workspaces", { apiKey: session.accessToken })) as {
+            workspaces: Json[];
+          };
+          const wanted = Option.getOrUndefined(options.workspace)?.toLowerCase();
+          const match =
+            workspaces.find((w) => wanted !== undefined && (w.id === wanted || w.handle === wanted || w.name?.toLowerCase() === wanted)) ||
+            (workspaces.length === 1 ? workspaces[0] : undefined);
+          if (match) {
+            yield* switchSession(match.id);
+            workspace = match;
+          } else {
+            others = workspaces;
+          }
+        }
+        if (workspace) {
+          yield* Console.log(`Workspace: ${workspace.name}`);
           yield* Console.log(`Next, publish a page: ${CMD} upload <file.html>`);
+        } else if (others.length) {
+          yield* Console.log(`You are in ${others.length} workspaces. Pick one:`);
+          for (const w of others) yield* Console.log(`  ${CMD} workspace switch ${shellQuote(w.name)}`);
         } else {
           yield* Console.log("You are not in a workspace yet. Next, either:");
           yield* Console.log(`  ${CMD} workspace create "<name>"   start one and invite people`);
@@ -122,11 +145,16 @@ export const whoami = Command.make(
     const me = yield* api(apiUrl, "/api/me", { apiKey });
     if (options.json) return yield* printJson({ ...me, apiUrl });
     yield* Console.log(`User: ${me.name}${me.email ? ` <${me.email}>` : ""}`);
-    yield* Console.log(
-      me.workspace
-        ? `Workspace: ${me.workspace.name} (${me.workspace.role || "member"})`
-        : `Workspace: none yet (${CMD} workspace create <name> | workspace join <code>)`
-    );
+    if (me.workspace) {
+      yield* Console.log(`Workspace: ${me.workspace.name} (${me.workspace.role || "member"})`);
+    } else {
+      const { workspaces } = (yield* api(apiUrl, "/api/workspaces", { apiKey })) as { workspaces: Json[] };
+      yield* Console.log(
+        workspaces.length
+          ? `Workspace: none selected (${CMD} workspace switch <name>; you are in ${workspaces.map((w) => w.name).join(", ")})`
+          : `Workspace: none yet (${CMD} workspace create <name> | workspace join <code>)`
+      );
+    }
     yield* Console.log(`Service: ${apiUrl}`);
   })
 ).pipe(Command.withDescription("Show who you are signed in as, and your current workspace."));
