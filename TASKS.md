@@ -172,7 +172,6 @@ CI is green on the PR, and the PR is open and ready for Dhruv to merge.
 - [x] CodeQL alerts on main triaged: #1 (polynomial ReDoS in `trimSlash`) and #2 (identity replace in a test) fixed in 597f4b0; #3, #4 dismissed as false positives and #5 as test-only, each with a reason (`gh api .../code-scanning/alerts`); Sol round 3 approved
 - [x] Deploy workflow fixed: run 39253023896 (535b8be) was cancelled at the 15-minute limit after two ops-cron tests hung 300 s each in the test step. The step now runs the D1 suite only (production backend; CI runs D1 + R2 on every PR), pins Node 24 like CI, and has a 30-minute timeout. Locally from a clean build: 173/173 in 112 s
 - [x] Green Deploy run on main after PR #4 merged (3da6fa5: tests, deploy:all, smoke); htmlartifact@0.1.0 published by Dhruv, Release tagged v0.1.0 (was PR #7, folded in here)
-- [ ] Social preview (web/public/og.png, 1200×630): no API; needs a signed-in GitHub browser session (Settings → Social preview)
 
 ## Dashboard setup (2026-10-19)
 Done = requested WorkOS credentials saved and checked without exposing values, MFA saved, support request sent, and Cloudflare GitHub secrets listed; any blocked step records its exact stopping point.
