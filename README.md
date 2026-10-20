@@ -40,6 +40,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `read <url-or-id>` | Download an artifact with your sign-in (how agents read links). `--out <file>` picks where |
 | `list [--all]` | Your artifacts, or the whole workspace's |
 | `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
+| `workspace api-key create [--name <label>]` / `list` / `revoke <id>` | API keys for CI (admins). The key is shown once; it stops working when revoked, when the admin who created it leaves the workspace, or when the workspace is deleted |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |
 | `workspace sso` / `directory` / `domains` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC), SCIM directory, or domain verification (admins). SSO and directory links are off unless the deployment sets `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` (WorkOS bills each connection) |
 | `check <path>` | Validate against the rules without publishing (signed out or offline: markup only) |
@@ -47,12 +48,6 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 Every command takes `--json` for agents: stdout is then one JSON object (an
 error too: `{ "ok": false, "error", "kind", "exitCode" }`), and anything else
 goes to stderr.
-
-In CI, set `HTMLARTIFACT_TOKEN` to a WorkOS organization API key instead of
-logging in. Also pass `--slug <name>` (or `--draft <id>`): a re-upload finds
-its artifact through a path mapping kept in `~/.htmlartifact`, which a CI run
-throws away, so without one every run publishes a new artifact at a new URL
-(the CLI warns when it detects CI).
 
 | Exit code | Meaning |
 |---|---|
@@ -64,6 +59,46 @@ throws away, so without one every run publishes a new artifact at a new URL
 | 5 | Validation: the HTML (or another input) was refused |
 | 6 | Network: htmlartifact could not be reached |
 | 7 | Rate-limited: still refused after waiting out `Retry-After` once |
+
+### Publishing from CI
+
+In CI, set `HTMLARTIFACT_TOKEN` to a workspace API key instead of logging in.
+A workspace admin creates one (it is shown only once):
+
+```sh
+npx htmlartifact workspace api-key create --name "GitHub Actions"
+```
+
+Save it as a repository secret named `HTMLARTIFACT_TOKEN` (Settings → Secrets
+and variables → Actions), then publish from a workflow. Give the upload a
+`--slug` (or `--draft <id>`) so every run updates the same URL: a re-upload
+otherwise finds its artifact through a path mapping kept in `~/.htmlartifact`,
+which a CI run throws away, so each run would publish a new artifact at a new
+URL (the CLI warns when it detects CI):
+
+```yaml
+# .github/workflows/publish-report.yml
+name: Publish report
+on:
+  push:
+    branches: [main]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npx --yes htmlartifact upload report.html --slug weekly-report
+        env:
+          HTMLARTIFACT_TOKEN: ${{ secrets.HTMLARTIFACT_TOKEN }}
+```
+
+The key publishes as the workspace (artifacts show the key's name), can't
+manage the workspace, and works until it's revoked (`workspace api-key list`,
+`workspace api-key revoke <id>`). A WorkOS organization API key also works as
+`HTMLARTIFACT_TOKEN`.
 
 The web app has the same flow for people who prefer a browser: sign in, see
 the workspace's artifacts, and join with a code or a `/join/<code>` link.

@@ -116,7 +116,7 @@ export const rejectedEnvToken = () =>
   new CliError({
     kind: "auth",
     message:
-      "HTMLARTIFACT_TOKEN was rejected (HTTP 401). Set it to a valid WorkOS organization API key, or unset it to use your own sign-in (htmlartifact login)."
+      "HTMLARTIFACT_TOKEN was rejected (HTTP 401): it may be revoked or mistyped. Set it to a valid workspace API key (htmlartifact workspace api-key create), or unset it to use your own sign-in (htmlartifact login)."
   });
 
 // The error for a refused request: the server's message, with an exit code

@@ -218,7 +218,55 @@ const domains = portal(
   "Get a WorkOS Admin Portal link to verify your workspace's domain (admins)."
 );
 
+const apiKeyCreate = Command.make(
+  "create",
+  { name: stringFlag("name", "name", 'A label, e.g. "GitHub Actions" (default "CI")'), json: jsonFlag() },
+  Effect.fn(function* (options) {
+    const { apiUrl, apiKey } = yield* getAuth();
+    const result = yield* api(apiUrl, "/api/workspaces/api-keys", {
+      apiKey,
+      body: { name: Option.getOrUndefined(options.name) }
+    });
+    if (options.json) return yield* printJson(result);
+    yield* Console.log(`Created API key "${result.key.name}" (${result.key.id}) for "${result.workspace.name}".\n`);
+    yield* Console.log(`  ${result.token}\n`);
+    yield* Console.log("This is the only time it is shown. Store it as the HTMLARTIFACT_TOKEN secret in CI.");
+    yield* Console.log(`It stops working if you leave the workspace. Revoke it with: ${CMD} workspace api-key revoke ${result.key.id}`);
+  })
+).pipe(Command.withDescription("Create an API key for CI (HTMLARTIFACT_TOKEN) in your current workspace (admins)."));
+
+const apiKeyList = Command.make(
+  "list",
+  { json: jsonFlag() },
+  Effect.fn(function* ({ json }) {
+    const { apiUrl, apiKey } = yield* getAuth();
+    const { keys } = (yield* api(apiUrl, "/api/workspaces/api-keys", { apiKey })) as { keys: Json[] };
+    if (json) return yield* printJson(keys);
+    if (!keys.length) return yield* Console.log(`No API keys. Create one with: ${CMD} workspace api-key create`);
+    for (const k of keys) {
+      const used = k.lastUsedAt ? `last used ${String(k.lastUsedAt).slice(0, 10)}` : "never used";
+      yield* Console.log(`${k.id}  ${k.name}  by ${k.createdBy?.name || k.createdBy?.id}, created ${String(k.createdAt).slice(0, 10)}, ${used}`);
+    }
+  })
+).pipe(Command.withDescription("List your current workspace's live API keys (admins)."));
+
+const apiKeyRevoke = Command.make(
+  "revoke",
+  { id: Argument.String("id").pipe(Argument.withDescription("Key ID, from: workspace api-key list")), json: jsonFlag() },
+  Effect.fn(function* ({ id, json }) {
+    const { apiUrl, apiKey } = yield* getAuth();
+    const result = yield* api(apiUrl, `/api/workspaces/api-keys/${encodeURIComponent(id)}`, { apiKey, method: "DELETE" });
+    if (json) return yield* printJson(result);
+    yield* Console.log(`Revoked ${id}. CI jobs using it stop working now.`);
+  })
+).pipe(Command.withDescription("Revoke an API key (admins)."));
+
+const apiKeyCommand = Command.make("api-key").pipe(
+  Command.withDescription("Create, list, and revoke API keys for CI (admins)."),
+  Command.withSubcommands([apiKeyCreate, apiKeyList, apiKeyRevoke])
+);
+
 export const workspace = Command.make("workspace").pipe(
   Command.withDescription("Create, join, and manage workspaces."),
-  Command.withSubcommands([create, invite, invites, join, list, switchCommand, members, remove, deleteWorkspace, sso, directory, domains])
+  Command.withSubcommands([create, invite, invites, join, list, switchCommand, members, remove, deleteWorkspace, apiKeyCommand, sso, directory, domains])
 );
