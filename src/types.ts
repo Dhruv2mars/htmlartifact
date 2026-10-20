@@ -98,6 +98,8 @@ export interface Viewer {
   flags: string[];
   credential_id: string | null;
   is_api_key: boolean;
+  // The organization the credential names, when this user was removed from it.
+  removed_from: string | null;
 }
 
 // A viewer inside a workspace: what requireMember and inWorkspace let through.
@@ -216,6 +218,7 @@ export interface DraftListRow
   > {
   author_name: string | null;
   updated_by_name: string | null;
+  author_former: number;
   latest_version_number: number | null;
   latest_version_at: number | null;
   version_count: number;

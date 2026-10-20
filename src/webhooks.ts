@@ -137,6 +137,7 @@ async function applyEvent(
         .all<{ organization_id: string }>();
       for (const { organization_id } of results) await revokeInvitesUpTo(db, organization_id, eventTime(createdAt));
       await db.prepare("DELETE FROM joins WHERE user_id = ?").bind(id).run();
+      await db.prepare("DELETE FROM invite_joins WHERE user_id = ?").bind(id).run();
       await db.batch(scrubUserStatements(db, id));
       return;
     }

@@ -239,6 +239,7 @@ export function deleteWorkspaceStatements(db: D1Database, organizationId: string
     org("DELETE FROM membership_epochs WHERE organization_id = ?"),
     org("DELETE FROM revocations WHERE organization_id = ?"),
     org("DELETE FROM joins WHERE organization_id = ?"),
+    org("DELETE FROM invite_joins WHERE organization_id = ?"),
     org("DELETE FROM workspace_usage WHERE organization_id = ?"),
     org("DELETE FROM workspaces WHERE organization_id = ?")
   ];

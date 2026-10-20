@@ -14,6 +14,14 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   only as a hash. It stops working when revoked, when the admin who created it
   leaves the workspace, or when the workspace is deleted. The README's CI
   section has a GitHub Actions example.
+- `workspace leave`, and `workspace promote <email>` / `demote <email>`
+  (admins). A workspace always keeps one admin: its last admin can't leave
+  or be demoted.
+- `workspace invites --all` also lists used-up, expired and revoked codes,
+  with each code's status and who joined with it.
+- `list --workspace <name>` lists another of your workspaces without
+  switching; `read <custom-url-name> --workspace <name>` opens an artifact by
+  its custom URL there.
 - `prune <id-or-url> --keep <n>` deletes an artifact's old versions to free
   workspace storage, keeping the latest `n` (the URL and current version
   stay). Its author or a workspace admin can prune (API:
@@ -26,6 +34,9 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ### Changed
 
+- `read` (and any CLI sign-in) opens artifacts in every workspace you are an
+  active member of, as the browser does; uploads and deletes still act only
+  on your current workspace. API keys still read only their own workspace.
 - `list --json` prints `{ "drafts": [...], "usage": {...} }` instead of a bare
   array.
 - Updating a teammate's artifact (by `--draft` or their `--slug`) is refused
@@ -33,6 +44,19 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ### Fixed
 
+- `workspace join` takes the full `/join/` link that `workspace invite`
+  prints, not just the code.
+- Joining with a used-up or revoked code of a workspace you are already in
+  says "Already in …" instead of "invalid, expired, or used up".
+- `workspace invite` refuses `--days` or `--max-uses` outside the allowed
+  range (HTTP 422 with the range) instead of silently clamping them, and says
+  "1 person" for a single use.
+- `workspace remove` says that every earlier invite code was revoked, and how
+  to create a new one.
+- A removed member is told "You no longer have access to <workspace>"
+  instead of "You are not in a workspace yet". Their artifacts are marked
+  "(former member)" in `list --all` and the web feed, and deleting one as a
+  plain member says only an admin can.
 - Parallel uploads can no longer overshoot the workspace's storage quota or
   the database size guard: the check and the counter now commit in one
   transaction with the version.

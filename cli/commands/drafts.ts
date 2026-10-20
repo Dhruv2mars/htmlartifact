@@ -21,6 +21,7 @@ import {
   type Receipt
 } from "../format.ts";
 import { api, requestJson, serverErrorMessage } from "../http.ts";
+import { resolveWorkspace } from "./workspace.ts";
 import { collectCiMetadata, collectGitMetadata } from "../metadata.ts";
 import { readUploadSource } from "../source.ts";
 import { findDraftMapping, removeDraftMappings, saveDraftMapping, sha256, type Json } from "../state.ts";
@@ -46,12 +47,19 @@ const displayPath = (resolved: string) => {
 export const read = Command.make(
   "read",
   {
-    url: Argument.String("url").pipe(Argument.withDescription("An artifact URL from this server, or its artifact ID")),
-    out: stringFlag("out", "file", "Write the HTML here instead of a new temp file")
+    url: Argument.String("url").pipe(
+      Argument.withDescription("An artifact URL from this server, its artifact ID, or with --workspace its custom URL name")
+    ),
+    out: stringFlag("out", "file", "Write the HTML here instead of a new temp file"),
+    workspace: stringFlag("workspace", "name", "Look up a custom URL name in this workspace (any you are in)")
   },
   Effect.fn(function* (options) {
     const { apiUrl, apiKey } = yield* getAuth();
-    const target = yield* parseUrl(options.url, apiUrl);
+    const workspace = Option.isSome(options.workspace) ? yield* resolveWorkspace(apiUrl, apiKey, options.workspace.value) : null;
+    const slug = workspace && !DRAFT_ID_PATTERN.test(options.url) && !/^https?:/i.test(options.url) ? options.url : null;
+    const target = workspace && slug
+      ? new URL(`/w/${encodeURIComponent(workspace.handle)}/${encodeURIComponent(slug.toLowerCase())}`, apiUrl)
+      : yield* parseUrl(options.url, apiUrl);
     target.hash = "";
     yield* assertOwnServer(target, apiUrl);
 
@@ -68,7 +76,8 @@ export const read = Command.make(
       catch: (error) => new NetworkError({ message: `Lost the connection to ${target.origin}: ${reason(error)}` })
     });
     if (!response.ok) {
-      const hint = response.status === 404 ? " Not found in your current workspace (see: htmlartifact workspace list)." : "";
+      const hint =
+        response.status === 404 ? " Not found in any workspace you are in (see: htmlartifact workspace list)." : "";
       return yield* new CliError({ message: `HTTP ${response.status} for ${target}.${hint}` });
     }
     const out = yield* attempt(() => {
@@ -257,13 +266,15 @@ export const list = Command.make(
   "list",
   {
     all: switchFlag("all", "List everything published in your workspace"),
+    workspace: stringFlag("workspace", "name", "List another of your workspaces instead of the current one"),
     apiUrl: apiUrlFlag(),
     json: jsonFlag("Print the raw JSON response")
   },
   Effect.fn(function* (options) {
     const { apiUrl, apiKey } = yield* getAuth(Option.getOrUndefined(options.apiUrl));
-    const scope = options.all ? "?scope=workspace" : "";
-    const { ok, body } = yield* requestJson(`${apiUrl}/api/drafts${scope}`, { apiKey });
+    const workspace = Option.isSome(options.workspace) ? yield* resolveWorkspace(apiUrl, apiKey, options.workspace.value) : null;
+    const query = new URLSearchParams({ ...(options.all ? { scope: "workspace" } : {}), ...(workspace ? { workspace: workspace.id } : {}) });
+    const { ok, body } = yield* requestJson(`${apiUrl}/api/drafts${query.size ? `?${query}` : ""}`, { apiKey });
     if (!ok) {
       return yield* new CliError({ message: body.error || "Failed to list artifacts." });
     }
@@ -275,7 +286,7 @@ export const list = Command.make(
 
     if (!drafts.length) {
       yield* Console.log(
-        options.all ? "Nothing published in this workspace yet." : `Nothing yet. Publish with: ${CMD} upload <file.html>`
+        options.all ? `Nothing published in ${workspace ? `"${workspace.name}"` : "this workspace"} yet.` : `Nothing yet. Publish with: ${CMD} upload <file.html>`
       );
       if (usage) yield* Console.log(usage);
       return;
@@ -290,7 +301,8 @@ export const list = Command.make(
 
       // Someone other than the author (an admin, a CI key) published the current version.
       const updatedBy = draft.updatedBy && draft.updatedBy !== draft.author ? ` by ${draft.updatedBy}` : "";
-      yield* Console.log(`${draft.title || "Untitled"}${options.all && draft.author ? `  · ${draft.author}` : ""}`);
+      const author = draft.author && `${draft.author}${draft.authorFormer ? " (former member)" : ""}`;
+      yield* Console.log(`${draft.title || "Untitled"}${options.all && author ? `  · ${author}` : ""}`);
       yield* Console.log(`  ${repo} · ${version} · ${count} · updated ${timeAgo(draft.updatedAt)}${updatedBy}${disabled}`);
       yield* Console.log(`  ${draft.publicUrl}`);
       if (draft.description) {
