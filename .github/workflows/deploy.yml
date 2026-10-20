@@ -41,7 +41,7 @@ jobs:
       - if: env.HAS_TOKEN != 'true'
         run: echo "::notice::CLOUDFLARE_API_TOKEN not set; skipping deploy."
       - if: env.HAS_TOKEN == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.SHA }}
       # Only the branch tip, and only once CI passed on it: a late or re-run CI
@@ -63,7 +63,7 @@ jobs:
       - if: env.GO == 'true'
         uses: oven-sh/setup-bun@v2
       - if: env.GO == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 24
       - if: env.GO == 'true'
