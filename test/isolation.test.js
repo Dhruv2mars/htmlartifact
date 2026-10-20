@@ -477,6 +477,53 @@ const ROUTES = {
       assert.ok(live.body.invites.some((i) => i.code === A.liveCode), "A's live code survives");
     }
   },
+  "POST /api/workspaces/api-keys": {
+    kind: "resource",
+    why: "a CI key is minted for the caller's workspace only, whatever the body says",
+    async run(key) {
+      for (const actor of apiActors()) {
+        const res = await call(actor, "POST", "/api/workspaces/api-keys", { organization_id: A.org.id, workspace: A.handle });
+        const label = `${key} as ${actor.name}`;
+        if (actor.token === B.nora) {
+          assert.equal(res.status, 201, res.text);
+          assert.equal(res.json.workspace.id, B.noraOrg.id);
+          assertClean(label, res.text);
+          assert.equal((await call({ token: res.json.token }, "GET", "/api/me")).json.workspace.id, B.noraOrg.id);
+          assert.equal((await read({ token: res.json.token }, A.plan.publicUrl)).status, 404, "the key cannot open A's artifacts");
+        } else {
+          assertDenied(label, res);
+        }
+      }
+    }
+  },
+  "GET /api/workspaces/api-keys": {
+    kind: "list",
+    why: "lists the caller's workspace's CI keys only",
+    async run(key) {
+      for (const actor of apiActors()) {
+        const res = await call(actor, "GET", "/api/workspaces/api-keys");
+        const label = `${key} as ${actor.name}`;
+        if (actor.token === B.nora) {
+          assert.equal(res.status, 200, res.text);
+          assertClean(label, res.text);
+        } else {
+          assertDenied(label, res);
+        }
+      }
+    }
+  },
+  "DELETE /api/workspaces/api-keys/:id": {
+    kind: "resource",
+    why: "takes a key ID; A's CI key is not the caller's to revoke",
+    async run(key) {
+      for (const actor of apiActors()) {
+        const res = await call(actor, "DELETE", `/api/workspaces/api-keys/${A.ciKeyId}`);
+        const missing = await call(actor, "DELETE", "/api/workspaces/api-keys/api_key_ci_ZZZZZZZZZZZZZZZZZZZZ");
+        assertDenied(`${key} as ${actor.name}`, res, { missing });
+      }
+      assert.equal((await call({ token: A.ciKey }, "GET", "/api/me")).status, 200, "A's CI key survives");
+    }
+  },
   "POST /api/workspaces/join": {
     kind: "resource",
     why: "takes an invite code; A's used-up code must not admit anyone",
@@ -982,6 +1029,12 @@ before(async () => {
   // A live invite of A's: only A's admins may see or revoke it.
   A.liveCode = (await callApi(stack, A.aliceToken, "POST", "/api/workspaces/invites", {})).body.code;
 
+  // A CI key of A's: only A's admins may see or revoke it.
+  const ciKey = await callApi(stack, A.aliceToken, "POST", "/api/workspaces/api-keys", { name: "Acme nightly" });
+  assert.equal(ciKey.status, 201);
+  A.ciKeyId = ciKey.body.key.id;
+  A.ciKey = ciKey.body.token;
+
   A.bobBrowser = new Browser(stack);
   await A.bobBrowser.signIn("bob@acme.test", { workspace: "Acme" });
 
@@ -1028,7 +1081,9 @@ before(async () => {
     "bob@acme.test",
     "sam@new.test",
     A.usedCode,
-    A.liveCode
+    A.liveCode,
+    A.ciKeyId,
+    A.ciKey
   ];
   for (const s of SECRETS) assert.ok(typeof s === "string" && s.length >= 4, `secret ${s}`);
 

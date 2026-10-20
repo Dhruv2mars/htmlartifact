@@ -1,16 +1,20 @@
 import type { User } from "@workos-inc/node";
 import type { Context } from "hono";
+import { sha256 } from "./crypto.ts";
 import {
   findAccount,
+  findCiKey,
   findWorkspace,
   hasFreshMembership,
   isRevoked,
   membershipEpoch,
+  now,
+  revokeCiKeysBy,
   saveAccount,
   saveMembership,
   saveWorkspace
 } from "./db.ts";
-import { workspaceHandle } from "./ids.ts";
+import { looksLikeCiKey, workspaceHandle } from "./ids.ts";
 import { isWorkspaceDeleted, membershipBeingUndone } from "./purge.ts";
 import type { AppEnv, DraftRow, Viewer, WorkspaceRow } from "./types.ts";
 import { clearSessionCookie, readCookie, SESSION_COOKIE, sessionCookie } from "./web-auth.ts";
@@ -29,7 +33,8 @@ import {
 // Who is calling. Three credentials resolve to the same viewer shape:
 //   browser → WorkOS sealed-session cookie (AuthKit sign-in)
 //   CLI     → Bearer WorkOS access token (device sign-in, relayed by us)
-//   CI      → Bearer WorkOS organization API key
+//   CI      → Bearer workspace CI key (issued here by an admin) or WorkOS
+//             organization API key
 //
 // viewer = { account_id, account_name, email, picture_url, organization_id,
 //            workspace, role, flags, credential_id }
@@ -49,7 +54,9 @@ type SessionAuth =
 export async function bearerViewer<E extends AppEnv>(c: Context<E>): Promise<Viewer | null> {
   const token = bearerToken(c);
   if (!token) return null;
-  return looksLikeJwt(token) ? viewerFromAccessToken(c, token) : viewerFromApiKey(c, token);
+  if (looksLikeJwt(token)) return viewerFromAccessToken(c, token);
+  if (looksLikeCiKey(token)) return viewerFromCiKey(c, token);
+  return viewerFromApiKey(c, token);
 }
 
 // Browser session → viewer, or null. Refreshes an expired access token and,
@@ -241,6 +248,38 @@ async function viewerFromApiKey<E extends AppEnv>(c: Context<E>, value: string):
   return buildViewer(c, {
     accountId: key.userId || key.id,
     organizationId,
+    credentialId: key.id,
+    ownedByOrganization: true
+  });
+}
+
+// A workspace CI key acts for its workspace, like an organization API key,
+// for as long as the admin who created it is still an active member there.
+// One D1 lookup by hash: no WorkOS call unless the creator's membership is
+// not cached.
+const CI_KEY_LAST_USED_GRANULARITY = 3600;
+
+async function viewerFromCiKey<E extends AppEnv>(c: Context<E>, value: string): Promise<Viewer | null> {
+  const db = c.env.DB;
+  const key = await findCiKey(db, sha256(value));
+  if (!key) return null;
+  const creatorGone =
+    (await isRevoked(db, [key.created_by], "*")) ||
+    (await isRevoked(db, [key.created_by], key.organization_id)) ||
+    !(await activeMembership(c, key.created_by, key.organization_id));
+  if (creatorGone) {
+    await revokeCiKeysBy(db, key.created_by, key.organization_id);
+    return null;
+  }
+  if (!(await findAccount(db, key.id, PROFILE_CACHE_SECONDS))) {
+    await saveAccount(db, { id: key.id, name: `${key.name} (CI key)` });
+  }
+  if ((key.last_used_at || 0) < now() - CI_KEY_LAST_USED_GRANULARITY) {
+    await db.prepare("UPDATE ci_keys SET last_used_at = unixepoch() WHERE id = ?").bind(key.id).run();
+  }
+  return buildViewer(c, {
+    accountId: key.id,
+    organizationId: key.organization_id,
     credentialId: key.id,
     ownedByOrganization: true
   });

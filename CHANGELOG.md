@@ -9,6 +9,11 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ### Added
 
+- `workspace api-key create [--name] | list | revoke <id>` (admins): API keys
+  for CI, accepted as `HTMLARTIFACT_TOKEN`. The key is shown once and stored
+  only as a hash. It stops working when revoked, when the admin who created it
+  leaves the workspace, or when the workspace is deleted. The README's CI
+  section has a GitHub Actions example.
 - `workspace leave`, and `workspace promote <email>` / `demote <email>`
   (admins). A workspace always keeps one admin: its last admin can't leave
   or be demoted.

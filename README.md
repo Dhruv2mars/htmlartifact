@@ -42,12 +42,49 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `read <url-or-id>` | Download an artifact with your sign-in (how agents read links), from any workspace you are in. `--out <file>` picks where; `--workspace <name>` reads a custom URL name there |
 | `list [--all] [--workspace <name>]` | Your artifacts, or the whole workspace's; `--workspace` lists another of your workspaces |
 | `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
+| `workspace api-key create [--name <label>]` / `list` / `revoke <id>` | API keys for CI (admins). The key is shown once; it stops working when revoked, when the admin who created it leaves the workspace, or when the workspace is deleted |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |
 | `workspace sso` / `directory` / `domains` | WorkOS Admin Portal link for your IT admin: SSO (SAML/OIDC), SCIM directory, or domain verification (admins). SSO and directory links are off unless the deployment sets `HTMLARTIFACT_ENTERPRISE_CONNECTIONS=on` (WorkOS bills each connection) |
 | `check <path>` | Validate against the rules without publishing |
 
-Every command takes `--json` for agents. In CI, set `HTMLARTIFACT_TOKEN` to a
-WorkOS organization API key instead of logging in.
+Every command takes `--json` for agents.
+
+### Publishing from CI
+
+In CI, set `HTMLARTIFACT_TOKEN` to a workspace API key instead of logging in.
+A workspace admin creates one (it is shown only once):
+
+```sh
+npx htmlartifact workspace api-key create --name "GitHub Actions"
+```
+
+Save it as a repository secret named `HTMLARTIFACT_TOKEN` (Settings → Secrets
+and variables → Actions), then publish from a workflow. Give the upload a
+`--slug` so every run updates the same URL instead of creating a new one:
+
+```yaml
+# .github/workflows/publish-report.yml
+name: Publish report
+on:
+  push:
+    branches: [main]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npx --yes htmlartifact upload report.html --slug weekly-report
+        env:
+          HTMLARTIFACT_TOKEN: ${{ secrets.HTMLARTIFACT_TOKEN }}
+```
+
+The key publishes as the workspace (artifacts show the key's name), can't
+manage the workspace, and works until it's revoked (`workspace api-key list`,
+`workspace api-key revoke <id>`). A WorkOS organization API key also works as
+`HTMLARTIFACT_TOKEN`.
 
 The web app has the same flow for people who prefer a browser: sign in, see
 the workspace's artifacts, and join with a code or a `/join/<code>` link.

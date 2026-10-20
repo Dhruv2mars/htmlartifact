@@ -1,13 +1,13 @@
 import type { Context, Hono, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { sha256 } from "./crypto.ts";
+import { randomToken, sha256 } from "./crypto.ts";
 import { FLAGS, bumpMembershipEpoch, databaseBytes, findWorkspace, findWorkspaceByHandle, isRevoked, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 // The Worker validates with the native HTMLRewriter (Workers Free CPU limits);
 // parse5 (src/html-policy.ts) stays in the CLI.
 import { formatBytes, type Issue, type PageInput } from "./html-policy-rules.ts";
 import { validateUpload } from "./html-policy-server.ts";
-import { newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
+import { CI_KEY_PREFIX, newCiKeyId, newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
 import { activeMembership, bearerViewer, userStillMember } from "./auth.ts";
@@ -89,6 +89,9 @@ const SANDBOX_LIMITS = [
   "file downloads",
   "plain links to other sites (open them in a new tab with target=\"_blank\")"
 ];
+
+// Live workspace CI keys per workspace.
+const MAX_CI_KEYS = 20;
 
 // JSON API used by the CLI (and so by agents). Every route takes a bearer
 // credential; nothing here reads cookies.
@@ -309,6 +312,62 @@ export function registerApi(app: Hono<AppEnv>): void {
           .run()
       : null;
     if (!result?.meta.changes) return c.json({ ok: false, error: "No such live invite code in this workspace." }, 404);
+    return c.json({ ok: true });
+  });
+
+  // Workspace CI keys (admins only): HTMLARTIFACT_TOKEN for CI. The secret is
+  // returned once, at creation; only its hash is stored (src/db.ts).
+  app.post("/api/workspaces/api-keys", requireMember, requireAdmin, perUser("api-key", 10), async (c) => {
+    const viewer = c.get("viewer");
+    const body = await readJson(c, 16 * 1024);
+    const name = typeof body.name === "string" && body.name.trim() ? body.name.trim().slice(0, 100) : "CI";
+    const live = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM ci_keys WHERE organization_id = ? AND revoked_at IS NULL")
+      .bind(viewer.organization_id)
+      .first<{ n: number }>();
+    if ((live?.n || 0) >= MAX_CI_KEYS) {
+      return c.json({ ok: false, error: `A workspace can have at most ${MAX_CI_KEYS} live API keys. Revoke one first.` }, 409);
+    }
+    const id = newCiKeyId();
+    const token = CI_KEY_PREFIX + randomToken(32);
+    await c.env.DB.prepare("INSERT INTO ci_keys (id, organization_id, name, token_hash, created_by) VALUES (?, ?, ?, ?, ?)")
+      .bind(id, viewer.organization_id, name, sha256(token), viewer.account_id)
+      .run();
+    return c.json(
+      { ok: true, key: { id, name, createdAt: new Date().toISOString(), createdBy: viewer.account_id }, token, workspace: workspaceJson(viewer.workspace) },
+      201
+    );
+  });
+
+  app.get("/api/workspaces/api-keys", requireMember, requireAdmin, async (c) => {
+    const viewer = c.get("viewer");
+    const { results } = await c.env.DB.prepare(
+      `SELECT k.id, k.name, k.created_by, a.name AS creator_name, k.created_at, k.last_used_at FROM ci_keys k
+       LEFT JOIN accounts a ON a.id = k.created_by
+       WHERE k.organization_id = ? AND k.revoked_at IS NULL ORDER BY k.created_at DESC`
+    )
+      .bind(viewer.organization_id)
+      .all<{ id: string; name: string; created_by: string; creator_name: string | null; created_at: number; last_used_at: number | null }>();
+    const iso = (seconds: number | null) => (seconds ? new Date(seconds * 1000).toISOString() : null);
+    return c.json({
+      ok: true,
+      keys: results.map((k) => ({
+        id: k.id,
+        name: k.name,
+        createdBy: { id: k.created_by, name: k.creator_name },
+        createdAt: iso(k.created_at),
+        lastUsedAt: iso(k.last_used_at)
+      }))
+    });
+  });
+
+  app.delete("/api/workspaces/api-keys/:id", requireMember, requireAdmin, async (c) => {
+    const viewer = c.get("viewer");
+    const result = await c.env.DB.prepare(
+      "UPDATE ci_keys SET revoked_at = unixepoch() WHERE id = ? AND organization_id = ? AND revoked_at IS NULL"
+    )
+      .bind(c.req.param("id") || "", viewer.organization_id)
+      .run();
+    if (!result.meta.changes) return c.json({ ok: false, error: "No such live API key in this workspace." }, 404);
     return c.json({ ok: true });
   });
 
@@ -734,7 +793,7 @@ async function endMembership<E extends AppEnv>(c: Context<E>, userId: string, or
 
 // Who may publish a new version of an artifact: its author, a workspace
 // admin (so artifacts outlive the people who made them), or, for artifacts
-// published by an organization API key (CI), any organization API key of
+// published by an organization API key or workspace CI key, any such key of
 // the workspace (so rotating a CI key doesn't freeze its artifacts).
 function canUpdateDraft(viewer: Viewer, draft: DraftRow): boolean {
   if (draft.account_id === viewer.account_id || viewer.role === "admin") return true;
