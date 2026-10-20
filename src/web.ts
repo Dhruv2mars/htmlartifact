@@ -33,6 +33,18 @@ export function registerWeb(app: Hono<AppEnv>): void {
     key: (c) => c.get("viewer")?.account_id || clientIp(c)
   });
 
+  // Pages that call WorkOS on every request: limited so one caller can't use up
+  // the WorkOS rate limit every workspace shares.
+  const workosReads = rateLimit({
+    windowMs: 60_000,
+    max: 60,
+    keyPrefix: "web-workos",
+    kind: "upload",
+    key: (c) => c.get("viewer")?.account_id || clientIp(c)
+  });
+  // Signed out, so per network; loose enough for an office behind one NAT.
+  const callbacks = rateLimit({ windowMs: 60_000, max: 60, keyPrefix: "web-callback", kind: "auth-ip", key: clientIp });
+
   // Signed out: the landing page. Signed in: the workspace feed.
   app.get("/", async (c) => {
     const viewer = await sessionViewer(c);
@@ -85,7 +97,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
   // The old owner-only history URL; kept so bookmarks still work.
   app.get("/mine/:draftId", signedIn, inWorkspace, (c) => c.redirect(`/history/${encodeURIComponent(c.req.param("draftId") || "")}`, 301));
 
-  app.get("/workspaces", signedIn, async (c) => {
+  app.get("/workspaces", signedIn, workosReads, async (c) => {
     const viewer = c.get("viewer");
     const next = safeNext(c.req.query("next"));
     return renderPage(c, {
@@ -116,7 +128,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
     return switchTo(c, organization.id);
   });
 
-  app.post("/workspaces/switch", sameOrigin, signedIn, async (c) => {
+  app.post("/workspaces/switch", sameOrigin, signedIn, workosReads, async (c) => {
     return switchTo(c, String((await c.req.parseBody()).id || ""));
   });
 
@@ -185,7 +197,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
     );
   });
 
-  app.get("/auth/callback", async (c) => {
+  app.get("/auth/callback", callbacks, async (c) => {
     const config = c.get("config");
     const secure = isSecure(c);
     c.header("Set-Cookie", clearAuthStateCookie(secure), { append: true });
