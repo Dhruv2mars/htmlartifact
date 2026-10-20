@@ -771,6 +771,22 @@ const ROUTES = {
       }
     }
   },
+  "GET /privacy": {
+    kind: "global",
+    why: "static privacy notice; signed in, only the caller's own name and workspace appear",
+    async run(key) {
+      const anon = await fetch(`${stack.baseUrl}/privacy`);
+      assert.equal(anon.status, 200);
+      const html = await anon.text();
+      assert.match(html, /Dhruv2mars@gmail\.com/);
+      assertClean(`${key} signed out`, html);
+      for (const actor of webActors()) {
+        const res = await actor.browser.get("/privacy");
+        assert.equal(res.status, 200, actor.name);
+        assertClean(`${key} as ${actor.name}`, res.text_);
+      }
+    }
+  },
   "GET /": {
     kind: "list",
     why: "the caller's workspace feed",

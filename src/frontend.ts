@@ -58,6 +58,7 @@ export async function renderPage<E extends AppEnv>(c: Context<E>, page: Page, st
 function staticPage(page: Page): string | null {
   if (page.kind === "landing" || page.kind === "not-found") return staticPages[page.kind];
   if (page.kind === "docs" && !page.session) return staticPages.docs;
+  if (page.kind === "privacy" && !page.session) return staticPages.privacy;
   return null;
 }
 

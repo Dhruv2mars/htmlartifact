@@ -11,3 +11,6 @@ artifact serving rules and CLI upload flow derive from it.
 The agent skills in .claude/skills/ come from https://github.com/emilkowalski/skills,
 MIT License, Copyright (c) 2026 Emil Kowalski; their license is in
 .claude/skills/LICENSE.
+
+The npm package bundles third-party code into dist/htmlartifact.js; its
+licences are in THIRD_PARTY_LICENSES, generated at build time.

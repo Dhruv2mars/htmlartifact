@@ -25,6 +25,7 @@ async function render(path, page) {
 const pages = {
   landing: await render("/", { kind: "landing", session: null }),
   docs: await render("/docs", { kind: "docs", session: null }),
+  privacy: await render("/privacy", { kind: "privacy", session: null }),
   "not-found": await render("/not-found", { kind: "not-found", session: null })
 };
 await writeFile(

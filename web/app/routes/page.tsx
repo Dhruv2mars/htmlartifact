@@ -8,6 +8,7 @@ import { Message, NotFound, SignIn } from "../pages/Bare";
 // complete; the browser hydrates once the page's chunk arrives.
 const Landing = lazy(() => import("../landing/Landing").then((m) => ({ default: m.Landing })));
 const Docs = lazy(() => import("../pages/Docs").then((m) => ({ default: m.Docs })));
+const Privacy = lazy(() => import("../pages/Privacy").then((m) => ({ default: m.Privacy })));
 const Feed = lazy(() => import("../pages/Feed").then((m) => ({ default: m.Feed })));
 const Mine = lazy(() => import("../pages/Feed").then((m) => ({ default: m.Mine })));
 const ArtifactDetail = lazy(() => import("../pages/ArtifactDetail").then((m) => ({ default: m.ArtifactDetail })));
@@ -20,7 +21,7 @@ export const meta: MetaFunction = ({ matches }) => {
   const title = titleFor(page);
   const tags: MetaDescriptor[] = [{ title }, { name: "description", content: DESCRIPTION }];
   // Only public pages get a social preview; private pages stay bare.
-  if (page && (page.kind === "landing" || page.kind === "docs")) {
+  if (page && (page.kind === "landing" || page.kind === "docs" || page.kind === "privacy")) {
     const image = `${page.origin}/og.png`;
     tags.push(
       { property: "og:type", content: "website" },
@@ -45,6 +46,8 @@ function titleFor(page: Page | undefined): string {
       return "htmlartifact: members-only links for the HTML your agents write";
     case "docs":
       return "Docs · htmlartifact";
+    case "privacy":
+      return "Privacy · htmlartifact";
     case "sign-in":
       return "Sign in · htmlartifact";
     case "message":
@@ -81,6 +84,8 @@ function PageBody() {
       return <Landing session={page.session} />;
     case "docs":
       return <Docs session={page.session} />;
+    case "privacy":
+      return <Privacy session={page.session} />;
     case "sign-in":
       return <SignIn next={page.next} />;
     case "message":

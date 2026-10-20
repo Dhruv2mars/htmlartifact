@@ -74,10 +74,12 @@ Artifact HTML may contain inline script. It never runs on the app's origin:
 - **Artifacts:** `htmlartifact delete <id>` (the author or a workspace admin)
   makes the artifact unreadable immediately and deletes its stored HTML (every
   version and every page) and its D1 rows in the same request.
-  If any delete fails, a scheduled job retries within 15 minutes, so the grace
-  window is at most **15 minutes**. Deleted HTML also stays in D1 Time Travel
-  history for its retention window (7 days on Workers Free), then is gone; see
-  Backups.
+  If any delete fails, a scheduled job retries it every 15 minutes, so the
+  grace window is usually at most **15 minutes**. Each run retries up to 20
+  queued deletes (D1 Free allows 50 queries per run), so a larger backlog, for
+  example after a storage outage, clears at 20 per run and takes longer.
+  Deleted HTML also stays in D1 Time Travel history for its retention window
+  (7 days on Workers Free), then is gone; see Backups.
 - **Workspaces:** `htmlartifact workspace delete --confirm <name>` (admins)
   blocks access at once, then deletes every artifact's stored HTML, every D1 row
   for the workspace, its invites and caches, and the WorkOS organization (which
