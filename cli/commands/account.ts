@@ -148,6 +148,7 @@ export const whoami = Command.make(
     if (me.workspace) {
       yield* Console.log(`Workspace: ${me.workspace.name} (${me.workspace.role || "member"})`);
     } else {
+      if (me.removedFrom) yield* Console.log(`You no longer have access to "${me.removedFrom}".`);
       const { workspaces } = (yield* api(apiUrl, "/api/workspaces", { apiKey })) as { workspaces: Json[] };
       yield* Console.log(
         workspaces.length

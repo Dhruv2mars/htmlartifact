@@ -11,6 +11,8 @@ export interface DraftSummary {
   title: string;
   description: string | null;
   author: string | null;
+  // The author was removed from the workspace, left it, or was deleted.
+  authorFormer: boolean;
   repoOrg: string | null;
   repoName: string | null;
   repoHost: string | null;
@@ -79,6 +81,8 @@ async function listDrafts(
     .prepare(
       `SELECT d.id, d.slug, d.title, d.description, d.repo_org, d.repo_name, d.repo_host,
               d.created_at, d.updated_at, a.name AS author_name,
+              (d.account_id NOT LIKE 'api_key_%' AND EXISTS (SELECT 1 FROM revocations r
+                 WHERE r.subject = d.account_id AND r.organization_id IN (d.organization_id, '*'))) AS author_former,
               cv.version_number AS latest_version_number, cv.created_at AS latest_version_at,
               (SELECT COUNT(*) FROM draft_versions v WHERE v.draft_id = d.id) AS version_count
        FROM drafts d
@@ -97,6 +101,7 @@ async function listDrafts(
     title: row.title,
     description: row.description,
     author: row.author_name,
+    authorFormer: Boolean(row.author_former),
     repoOrg: row.repo_org,
     repoName: row.repo_name,
     repoHost: row.repo_host,

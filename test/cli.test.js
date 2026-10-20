@@ -91,10 +91,12 @@ test("sign in → create workspace → invite → teammate joins → publish →
   const gone = await fetch(scratch.url, { headers: { Authorization: `Bearer ${sam.accessToken}` }, redirect: "manual" });
   assert.equal(gone.status, 404);
 
-  // Switching back to Acme: the Design Crit artifact is not visible there.
+  // Switching back to Acme: the Design Crit artifact is not listed there, but
+  // `read` still opens it (alice is a member of both, as in the browser).
   await cli(["workspace", "switch", "Acme"]);
   assert.equal((await json(["whoami"])).workspace.name, "Acme");
-  await assert.rejects(cli(["read", receipt.url]), /HTTP 404/);
+  assert.ok(!(await json(["list", "--all"])).some((d) => d.draftId === receipt.draftId));
+  assert.match((await cli(["read", receipt.url])).stdout, /File: /);
   const listed = await json(["workspace", "list"]);
   assert.deepEqual(listed.map((w) => w.name).sort(), ["Acme", "Design Crit"]);
 });

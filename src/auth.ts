@@ -122,8 +122,13 @@ export async function draftAccess<E extends AppEnv>(
   if (bearer) viewer = await bearerViewer(c);
   else if (readCookie(c, SESSION_COOKIE)) viewer = await sessionViewer(c, { organizationId: draft?.organization_id });
   if (!viewer) return { access: "anonymous", viewer, bearer };
-  const access = draft && viewer.organization_id === draft.organization_id ? "member" : "denied";
-  return { access, viewer, bearer };
+  if (!draft) return { access: "denied", viewer, bearer };
+  // A CLI sign-in reads any workspace its user is an active member of, as a
+  // browser session does by switching. API keys stay in their own workspace.
+  const member =
+    viewer.organization_id === draft.organization_id ||
+    (bearer && !viewer.is_api_key && (await userStillMember(c, viewer.account_id, draft.organization_id, viewer.credential_id)));
+  return { access: member ? "member" : "denied", viewer, bearer };
 }
 
 // For a sandbox capability (src/sandbox.ts): is userId still allowed into
@@ -291,6 +296,7 @@ async function buildViewer<E extends AppEnv>(
 ): Promise<Viewer | null> {
   const db = c.env.DB;
   let role: string | null = null;
+  const requested = organizationId;
   // Deleted users, revoked sessions and revoked keys: no access at all.
   if (await isRevoked(db, [accountId, credentialId], "*")) return null;
   if (organizationId) {
@@ -317,6 +323,9 @@ async function buildViewer<E extends AppEnv>(
     organizationId = null;
     role = null;
   }
+  // The credential names a workspace this user was removed from (or left).
+  const removedFrom =
+    requested && !organizationId && !ownedByOrganization && (await isRevoked(db, [accountId], requested)) ? requested : null;
   return {
     account_id: accountId,
     account_name: account?.name || accountId,
@@ -327,7 +336,8 @@ async function buildViewer<E extends AppEnv>(
     role,
     flags: account?.flags || [],
     credential_id: credentialId || null,
-    is_api_key: ownedByOrganization
+    is_api_key: ownedByOrganization,
+    removed_from: removedFrom
   };
 }
 
