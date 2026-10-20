@@ -97,4 +97,4 @@ for (const project of ["app", "usercontent"] as const) {
 }
 await pagesSecret("app", "WORKOS_WEBHOOK_SECRET", webhookSecret);
 await opsSecret("WORKOS_API_KEY", apiKey);
-console.log("done. Remaining dashboard step: AuthKit -> Authentication -> enable MFA.");
+console.log(`done. Remaining dashboard step: Redirects -> Sign-out URIs -> add ${app} as the default.`);
