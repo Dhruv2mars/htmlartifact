@@ -1,7 +1,7 @@
-import { Effect } from "effect";
+import { Console, Duration, Effect } from "effect";
 
-import { USER_AGENT } from "./env.ts";
-import { CliError, NetworkError, reason } from "./errors.ts";
+import { envToken, USER_AGENT } from "./env.ts";
+import { CliError, kindForStatus, NetworkError, reason } from "./errors.ts";
 import type { Json } from "./state.ts";
 
 export interface JsonResult {
@@ -21,10 +21,24 @@ export interface RequestOptions {
 
 const originOf = (url: string) => new URL(url).origin;
 
+// The longest Retry-After a rate-limited request waits out before its one retry.
+const MAX_RATE_LIMIT_WAIT_SECONDS = 60;
+
 // POSTs `body` as JSON (GET when absent) and returns { ok, status, body }.
 // Unreachable servers fail with NetworkError, so callers can tell "could not
-// reach the server" apart from "the server rejected this".
+// reach the server" apart from "the server rejected this". A 429 was not acted
+// on, so it is retried once after its Retry-After (1s when absent).
 export const requestJson = (url: string, options: RequestOptions = {}): Effect.Effect<JsonResult, NetworkError> =>
+  Effect.gen(function* () {
+    const result = yield* requestOnce(url, options);
+    const wait = result.retryAfter ?? 1;
+    if (result.status !== 429 || wait > MAX_RATE_LIMIT_WAIT_SECONDS) return result;
+    yield* Console.error(`Rate-limited by htmlartifact (HTTP 429). Retrying in ${wait}s...`);
+    yield* Effect.sleep(Duration.seconds(wait));
+    return yield* requestOnce(url, options);
+  });
+
+const requestOnce = (url: string, options: RequestOptions): Effect.Effect<JsonResult, NetworkError> =>
   Effect.gen(function* () {
     const { apiKey, body, method } = options;
     const timeoutMs = options.timeoutMs ?? 30_000;
@@ -53,13 +67,15 @@ export const requestJson = (url: string, options: RequestOptions = {}): Effect.E
       try: () => response.text(),
       catch: (error) => new NetworkError({ message: `Lost the connection to ${originOf(url)}: ${reason(error)}` })
     });
+    const retryAfter = retryAfterSeconds(response);
     try {
-      return { ok: response.ok, status: response.status, body: JSON.parse(text) as Json };
+      return { ok: response.ok, status: response.status, body: JSON.parse(text) as Json, retryAfter };
     } catch {
       return {
         ok: false,
         status: response.status,
-        body: { error: `htmlartifact returned HTTP ${response.status}: ${text.slice(0, 200)}` }
+        body: { error: `htmlartifact returned HTTP ${response.status}: ${text.slice(0, 200)}` },
+        retryAfter
       };
     }
   });
@@ -90,9 +106,25 @@ function retryAfterSeconds(response: Response): number | undefined {
   return Number.isNaN(at) ? undefined : Math.max(0, Math.ceil((at - Date.now()) / 1000));
 }
 
-export function serverErrorMessage(body: Json): string {
+function serverErrorMessage(body: Json): string {
   const details = body.errors?.length ? `\n- ${body.errors.join("\n- ")}` : "";
   return `${body.error || "HTML failed htmlartifact validation."}${details}`;
+}
+
+// HTMLARTIFACT_TOKEN wins over a saved sign-in, so say it was the one refused.
+export const rejectedEnvToken = () =>
+  new CliError({
+    kind: "auth",
+    message:
+      "HTMLARTIFACT_TOKEN was rejected (HTTP 401): it may be revoked or mistyped. Set it to a valid workspace API key (htmlartifact workspace api-key create), or unset it to use your own sign-in (htmlartifact login)."
+  });
+
+// The error for a refused request: the server's message, with an exit code
+// for its status. `prefix` says what was refused.
+export function httpError(result: JsonResult, prefix = ""): CliError {
+  if (result.status === 401 && envToken()) return rejectedEnvToken();
+  const retry = result.status === 429 && result.retryAfter ? ` Try again in ${result.retryAfter}s.` : "";
+  return new CliError({ message: `${prefix}${serverErrorMessage(result.body)}${retry}`, kind: kindForStatus(result.status) });
 }
 
 // Calls the API and returns the JSON body, or fails with the server's error.
@@ -103,6 +135,6 @@ export const api = (
 ): Effect.Effect<Json, CliError | NetworkError> =>
   requestJson(`${apiUrl}${pathname}`, options).pipe(
     Effect.flatMap((result) =>
-      result.ok ? Effect.succeed(result.body) : Effect.fail(new CliError({ message: serverErrorMessage(result.body) }))
+      result.ok ? Effect.succeed(result.body) : Effect.fail(httpError(result))
     )
   );
