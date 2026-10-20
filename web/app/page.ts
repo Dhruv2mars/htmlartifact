@@ -31,6 +31,16 @@ export interface ArtifactVersion {
   createdAt: string | null;
 }
 
+// The artifact a version history page is about. `mine`: the viewer published it.
+export interface ArtifactHead {
+  id: string;
+  title: string;
+  description: string | null;
+  url: string;
+  author: string | null;
+  mine: boolean;
+}
+
 export interface WorkspaceChoice {
   id: string;
   name: string;
@@ -45,6 +55,6 @@ export type Page =
   | { kind: "not-found"; session: Session | null }
   | { kind: "feed"; session: Session; artifacts: ArtifactSummary[] }
   | { kind: "mine"; session: Session; artifacts: ArtifactSummary[] }
-  | { kind: "artifact"; session: Session; artifact: { id: string; title: string; description: string | null; url: string }; versions: ArtifactVersion[] }
+  | { kind: "artifact"; session: Session; artifact: ArtifactHead; versions: ArtifactVersion[] }
   | { kind: "workspaces"; session: Session; workspaces: WorkspaceChoice[]; next: string | null }
-  | { kind: "join"; session: Session; code: string; workspaceName: string };
+  | { kind: "join"; session: Session; code: string; workspace: { id: string; name: string }; expiresAt: string; usesLeft: number; member: "current" | "other" | null };
