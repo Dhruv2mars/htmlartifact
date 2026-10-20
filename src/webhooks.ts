@@ -101,12 +101,15 @@ async function applyEvent(
       await setRevokedAtEpoch(db, userId, organizationId, !active, epoch);
       // No longer an active admin: end any Admin Portal session they opened.
       // A failure returns 500, so WorkOS retries; access already ended above.
-      if (membership?.role?.slug !== "admin") await revokePortalLinks(c.get("config"), organizationId, userId);
-      // Demoted (here or in the WorkOS dashboard): what only an admin could
-      // create ends with the role. Removal is covered by setRevokedAtEpoch.
-      if (membership && membership.role?.slug !== "admin") {
-        await revokeInvitesBy(db, userId, organizationId);
-        await revokeCiKeysBy(db, userId, organizationId);
+      if (membership?.role?.slug !== "admin") {
+        // Demoted (here or in the WorkOS dashboard): what only an admin could
+        // create ends with the role (removal: setRevokedAtEpoch did). Before
+        // the portal call, which can fail.
+        if (membership) {
+          await revokeInvitesBy(db, userId, organizationId);
+          await revokeCiKeysBy(db, userId, organizationId);
+        }
+        await revokePortalLinks(c.get("config"), organizationId, userId);
       }
       return;
     }

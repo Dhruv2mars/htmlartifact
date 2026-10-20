@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import { after, before, test } from "node:test";
 import { callApi, findUser, page, refreshInto, signInTokens, startStack, workosApi } from "./helpers.js";
 
@@ -11,9 +12,43 @@ let bob;
 let nora;
 let aliceTokens;
 let bobTokens;
+let workosProxy;
+
+// The Worker reaches WorkOS through this proxy, which can hold back one
+// user's Admin Portal revocation (a slow WorkOS call) for `delayMs`, or fail
+// every revocation (`portalDown`).
+function startWorkosProxy() {
+  const state = { target: "", delayUserId: null, delayMs: 0, portalDown: false };
+  const server = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = Buffer.concat(chunks);
+    if (req.url === "/portal/revoke_link" && state.portalDown) {
+      res.writeHead(503, { "Content-Type": "application/json" }).end('{"message":"unavailable"}');
+      return;
+    }
+    if (req.url === "/portal/revoke_link" && state.delayUserId && body.toString().includes(state.delayUserId)) {
+      state.delayUserId = null;
+      await new Promise((resolve) => setTimeout(resolve, state.delayMs));
+    }
+    const headers = { ...req.headers };
+    delete headers.host;
+    const upstream = await fetch(`${state.target}${req.url}`, { method: req.method, headers, body: body.length ? body : undefined });
+    const out = Buffer.from(await upstream.arrayBuffer());
+    const responseHeaders = Object.fromEntries(
+      [...upstream.headers].filter(([name]) => !["content-encoding", "content-length", "transfer-encoding"].includes(name))
+    );
+    res.writeHead(upstream.status, responseHeaders).end(out);
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve({ state, server, url: `http://127.0.0.1:${server.address().port}` }));
+  });
+}
 
 before(async () => {
-  stack = await startStack();
+  workosProxy = await startWorkosProxy();
+  stack = await startStack({ vars: { WORKOS_API_URL: workosProxy.url } });
+  workosProxy.state.target = stack.emulator.url;
   alice = await findUser(stack.emulator, "alice@acme.test");
   bob = await findUser(stack.emulator, "bob@acme.test");
   nora = await findUser(stack.emulator, "nora@new.test");
@@ -23,6 +58,7 @@ before(async () => {
 
 after(async () => {
   await stack?.stop();
+  workosProxy?.server.close();
 });
 
 const addMember = (organizationId, userId, role = "member") =>
@@ -118,6 +154,43 @@ test("a demoted admin's CI keys and invite codes stop working", async () => {
   // Another admin's codes are untouched.
   const viaBob = await callApi(stack, noraTokens.accessToken, "POST", "/api/workspaces/join", { code: bobsInvite.body.code });
   assert.equal(viaBob.status, 200, JSON.stringify(viaBob.body));
+});
+
+test("a holder whose lease lapsed (a WorkOS call over 30 s) cannot act after another admin did", async () => {
+  const org = await twoAdmins("Slow leave");
+  workosProxy.state.delayUserId = alice.id;
+  workosProxy.state.delayMs = 33_000;
+  const aliceLeaves = callApi(stack, aliceTokens.accessToken, "POST", "/api/workspaces/leave");
+  // Alice holds the lease, stuck in WorkOS until it lapses; Bob waits up to 8 s.
+  await new Promise((resolve) => setTimeout(resolve, 26_000));
+  const bobLeaves = await callApi(stack, bobTokens.accessToken, "POST", "/api/workspaces/leave");
+  assert.equal(bobLeaves.status, 200, JSON.stringify(bobLeaves.body));
+  const aliceResult = await aliceLeaves;
+  assert.equal(aliceResult.status, 409, JSON.stringify(aliceResult.body));
+  assert.deepEqual(await adminsOf(org), [alice.id]);
+});
+
+test("a demotion whose Admin Portal revocation fails still ends the ex-admin's keys and codes", async () => {
+  await twoAdmins("Portal down");
+  const key = await callApi(stack, aliceTokens.accessToken, "POST", "/api/workspaces/api-keys", { name: "alice ci" });
+  assert.equal(key.status, 201, JSON.stringify(key.body));
+  const invite = await callApi(stack, aliceTokens.accessToken, "POST", "/api/workspaces/invites", { maxUses: 5 });
+  assert.equal(invite.status, 201, JSON.stringify(invite.body));
+  workosProxy.state.portalDown = true;
+  try {
+    const demoted = await callApi(stack, bobTokens.accessToken, "PATCH", `/api/workspaces/members/${alice.id}`, { role: "member" });
+    assert.notEqual(demoted.status, 200, JSON.stringify(demoted.body));
+    assert.equal((await callApi(stack, key.body.token, "GET", "/api/me")).status, 401);
+  } finally {
+    workosProxy.state.portalDown = false;
+  }
+  // The retry finds the role already changed and still reports success.
+  const retried = await callApi(stack, bobTokens.accessToken, "PATCH", `/api/workspaces/members/${alice.id}`, { role: "member" });
+  assert.equal(retried.status, 200, JSON.stringify(retried.body));
+  assert.equal(retried.body.unchanged, true);
+  const samTokens = await signInTokens(stack, "sam@new.test");
+  const joined = await callApi(stack, samTokens.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code });
+  assert.notEqual(joined.status, 200, JSON.stringify(joined.body));
 });
 
 test("a demotion made in the WorkOS dashboard also ends the ex-admin's CI keys and invite codes", async () => {

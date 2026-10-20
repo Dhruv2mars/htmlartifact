@@ -418,14 +418,14 @@ export function registerApi(app: Hono<AppEnv>): void {
     if (userId === viewer.account_id) {
       return c.json({ ok: false, error: "You cannot remove yourself. To leave this workspace, run: htmlartifact workspace leave" }, 422);
     }
-    return withAdminLock(c, viewer.organization_id, async (members) => {
+    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
       if (!isAdminIn(members, viewer.account_id)) return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
       const membership = members.find((m) => m.userId === userId);
       if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
       if (membership.role?.slug === "admin" && !hasOtherAdmin(members, userId)) {
         return c.json({ ok: false, error: "That is the workspace's last admin. Make someone else an admin first." }, 422);
       }
-      await endMembership(c, userId, viewer.organization_id, membership.id);
+      await endMembership(c, userId, viewer.organization_id, membership.id, hold);
       return c.json({ ok: true, invitesRevoked: true });
     });
   });
@@ -439,26 +439,30 @@ export function registerApi(app: Hono<AppEnv>): void {
     const body = await readJson(c, 16 * 1024);
     const role = body.role;
     if (role !== "admin" && role !== "member") return c.json({ ok: false, error: 'role must be "admin" or "member".' }, 422);
-    return withAdminLock(c, viewer.organization_id, async (members) => {
+    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
       if (!isAdminIn(members, viewer.account_id)) return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
       const membership = members.find((m) => m.userId === userId);
       if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
-      if ((membership.role?.slug || "member") === role) return c.json({ ok: true, role, unchanged: true });
-      if (role === "member" && !hasOtherAdmin(members, userId)) {
+      const unchanged = (membership.role?.slug || "member") === role;
+      if (!unchanged && role === "member" && !hasOtherAdmin(members, userId)) {
         return c.json({ ok: false, error: "That is the workspace's last admin. Make someone else an admin first." }, 422);
       }
       const config = c.get("config");
       const db = c.env.DB;
-      await workos(config).client.userManagement.updateOrganizationMembership(membership.id, { roleSlug: role });
-      // After the change: a re-check that started earlier may not cache the old role.
-      await bumpMembershipEpoch(db, userId, viewer.organization_id);
+      if (!unchanged) {
+        await hold();
+        await workos(config).client.userManagement.updateOrganizationMembership(membership.id, { roleSlug: role });
+        // After the change: a re-check that started earlier may not cache the old role.
+        await bumpMembershipEpoch(db, userId, viewer.organization_id);
+      }
       if (role === "member") {
-        // What only an admin could create ends with the role.
-        await revokePortalLinks(config, viewer.organization_id, userId);
+        // What only an admin could create ends with the role. Also when
+        // unchanged: a retry finishes what a failed demotion left.
         await revokeInvitesBy(db, userId, viewer.organization_id);
         await revokeCiKeysBy(db, userId, viewer.organization_id);
+        await revokePortalLinks(config, viewer.organization_id, userId);
       }
-      return c.json({ ok: true, role, unchanged: false });
+      return c.json({ ok: true, role, unchanged });
     });
   });
 
@@ -467,7 +471,7 @@ export function registerApi(app: Hono<AppEnv>): void {
   app.post("/api/workspaces/leave", requireMember, perUser("leave", 10), async (c) => {
     const viewer = c.get("viewer");
     if (viewer.is_api_key) return c.json({ ok: false, error: "API keys cannot leave workspaces." }, 403);
-    return withAdminLock(c, viewer.organization_id, async (members) => {
+    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
       const membership = members.find((m) => m.userId === viewer.account_id);
       if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
       if (membership.role?.slug === "admin" && !hasOtherAdmin(members, viewer.account_id)) {
@@ -479,7 +483,7 @@ export function registerApi(app: Hono<AppEnv>): void {
           422
         );
       }
-      await endMembership(c, viewer.account_id, viewer.organization_id, membership.id);
+      await endMembership(c, viewer.account_id, viewer.organization_id, membership.id, hold);
       return c.json({ ok: true, workspace: workspaceJson(viewer.workspace) });
     });
   });
@@ -832,16 +836,20 @@ const hasOtherAdmin = (members: Membership[], userId: string): boolean =>
 const ADMIN_LOCK_SECONDS = 30;
 const ADMIN_LOCK_WAIT_MS = 8_000;
 
+class LeaseLost extends Error {}
+
 // Runs `run` with the workspace's live memberships while holding its admin
 // lock: one D1 row per workspace, shared by every Worker instance. Role
 // changes, removals and leaving all take it, so the last-admin check and the
 // change it allows can't interleave with another (two admins demoting
 // themselves at once would otherwise leave none). The lease expires, so a
-// holder that dies mid-way can't wedge the workspace.
+// holder that dies mid-way can't wedge the workspace; `run` calls `hold()`
+// right before each WorkOS change, which renews the lease or, if it lapsed
+// (another request may have acted since), stops the change with a 409.
 async function withAdminLock<E extends AppEnv>(
   c: Context<E>,
   organizationId: string,
-  run: (members: Membership[]) => Promise<Response>
+  run: (members: Membership[], hold: () => Promise<void>) => Promise<Response>
 ): Promise<Response> {
   const db = c.env.DB;
   const holder = crypto.randomUUID();
@@ -862,8 +870,18 @@ async function withAdminLock<E extends AppEnv>(
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(100 * 2 ** attempt, 800) * (0.5 + Math.random())));
   }
+  const hold = async () => {
+    const renewed = await db
+      .prepare("UPDATE admin_locks SET expires_at = unixepoch() + ? WHERE organization_id = ? AND holder = ? AND expires_at > unixepoch()")
+      .bind(ADMIN_LOCK_SECONDS, organizationId, holder)
+      .run();
+    if (!renewed.meta.changes) throw new LeaseLost();
+  };
   try {
-    return await run(await activeMemberships(c, organizationId));
+    return await run(await activeMemberships(c, organizationId), hold);
+  } catch (error) {
+    if (!(error instanceof LeaseLost)) throw error;
+    return c.json({ ok: false, error: "That took too long and another member change may have happened meanwhile. Try again." }, 409);
   } finally {
     // A failed release only delays the next change until the lease expires.
     await db
@@ -876,14 +894,21 @@ async function withAdminLock<E extends AppEnv>(
 
 // Ends a membership (a removal, or leaving). Access ends on the next request,
 // and every invite code the workspace issued until now is revoked: whoever
-// leaves may hold one.
-async function endMembership<E extends AppEnv>(c: Context<E>, userId: string, organizationId: string, membershipId: string): Promise<void> {
+// leaves may hold one. `hold` is withAdminLock's.
+async function endMembership<E extends AppEnv>(
+  c: Context<E>,
+  userId: string,
+  organizationId: string,
+  membershipId: string,
+  hold: () => Promise<void>
+): Promise<void> {
   const db = c.env.DB;
   // Portal sessions outlive AuthKit sessions: end them first (a failure
   // here changes nothing, so the request can simply be retried).
   await revokePortalLinks(c.get("config"), organizationId, userId);
   await revokeInvitesUpTo(db, organizationId, now());
   const epoch = await bumpMembershipEpoch(db, userId, organizationId);
+  await hold();
   await workos(c.get("config")).client.userManagement.deleteOrganizationMembership(membershipId);
   await setRevokedAtEpoch(db, userId, organizationId, true, epoch);
   // Again, for a code an in-flight request of theirs created meanwhile.
