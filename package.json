@@ -1,6 +1,6 @@
 {
   "name": "htmlartifact",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Publish HTML artifacts from coding agents to your team's workspace. Only workspace members can open them.",
   "keywords": [
     "html",

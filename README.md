@@ -62,6 +62,7 @@ goes to stderr.
 | 5 | Validation: the HTML (or another input) was refused |
 | 6 | Network: htmlartifact could not be reached |
 | 7 | Rate-limited: still refused after waiting out `Retry-After` once |
+| 130 | Interrupted (Ctrl-C) |
 
 ### Publishing from CI
 

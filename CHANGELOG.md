@@ -7,6 +7,12 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-20
+
+Fixes and features from a third real-world run (a startup, a multi-workspace
+org, and a CI team) against production. The CLI gains new commands and
+distinct exit codes, and `list --json` changes shape (see Changed).
+
 ### Added
 
 - `workspace api-key create [--name] | list | revoke <id>` (admins): API keys
@@ -22,11 +28,6 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 - `list --workspace <name>` lists another of your workspaces without
   switching; `read <custom-url-name> --workspace <name>` opens an artifact by
   its custom URL there.
-- Any workspace member can open an artifact's version history on the web
-  (`/history/<id>`, linked from every row of the feed), not only its author.
-  The old `/mine/<id>` URL redirects there.
-- The `/join/<code>` page says when the invite expires and how many more
-  people it admits.
 - `prune <id-or-url> --keep <n>` deletes an artifact's old versions to free
   workspace storage, keeping the latest `n` (the URL and current version
   stay). Its author or a workspace admin can prune (API:
@@ -36,19 +37,45 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 - `list` says who published the current version when it isn't the author
   (`updatedBy` in `--json`), and the upload receipt warns when you publish
   over a teammate's artifact.
+- Any workspace member can open an artifact's version history on the web
+  (`/history/<id>`, linked from every row of the feed), not only its author.
+  The old `/mine/<id>` URL redirects there.
+- The `/join/<code>` page says when the invite expires and how many more
+  people it admits.
 
 ### Changed
 
+- The CLI exits with a distinct code per kind of failure: 2 usage, 3 auth,
+  4 not found, 5 validation, 6 network, 7 rate-limited, 1 anything else
+  (README → Exit codes). It was always 1.
+- Every command takes `--json`, including `read`, `login`, `logout`,
+  `workspace switch` and `workspace remove`. Under `--json`, stdout carries
+  only JSON, errors included (`{ "ok": false, "error", "kind", "exitCode" }`).
+- `list --json` prints `{ "drafts": [...], "usage": {...} }` instead of a bare
+  array.
 - `read` (and any CLI sign-in) opens artifacts in every workspace you are an
   active member of, as the browser does; uploads and deletes still act only
   on your current workspace. API keys still read only their own workspace.
-- `list --json` prints `{ "drafts": [...], "usage": {...} }` instead of a bare
-  array.
+- `upload --slug` that names a different artifact than the one the path was
+  published to stops and says so (`--force` goes ahead), and an explicit slug
+  never rebinds the path.
+- `upload` in CI without `--slug` or `--draft` warns that every run publishes
+  a new URL.
 - Updating a teammate's artifact (by `--draft` or their `--slug`) is refused
   with HTTP 403, like deleting it, instead of 409.
+- `check <path>` works signed out (markup only) and reports line:column for
+  each issue.
+- A 429 is retried once after its `Retry-After`.
 
 ### Fixed
 
+- Parallel uploads can no longer overshoot the workspace's storage quota or
+  the database size guard: the check and the counter now commit in one
+  transaction with the version.
+- `workspace list` no longer shows a workspace that was just deleted.
+- Deleting a multi-page artifact gave back more storage than it had used.
+- `read --out` writes the stored bytes exactly (a UTF-8 byte order mark was
+  dropped). `upload` refuses a file that is not UTF-8 instead of altering it.
 - `workspace join` takes the full `/join/` link that `workspace invite`
   prints, not just the code.
 - Joining with a used-up or revoked code of a workspace you are already in
@@ -62,40 +89,6 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   instead of "You are not in a workspace yet". Their artifacts are marked
   "(former member)" in `list --all` and the web feed, and deleting one as a
   plain member says only an admin can.
-- A bogus, expired or used-up invite link says so straight away, instead of
-  first asking you to sign in or create an account.
-- A member opening their own workspace's invite link is offered the way in
-  (or a switch to it) instead of "Join workspace".
-- The 404 page no longer blames "your current workspace" for every missing
-  page, and links to your workspaces.
-- The web `/workspaces` page shows `npx htmlartifact …` commands, which work
-  without a global install.
-- Parallel uploads can no longer overshoot the workspace's storage quota or
-  the database size guard: the check and the counter now commit in one
-  transaction with the version.
-- `workspace list` no longer shows a workspace that was just deleted.
-- Deleting a multi-page artifact gave back more storage than it had used.
-
-### Changed
-
-- The CLI exits with a distinct code per kind of failure: 2 usage, 3 auth,
-  4 not found, 5 validation, 6 network, 7 rate-limited (README → Exit codes).
-- Every command takes `--json`, including `read`, `login`, `logout`,
-  `workspace switch` and `workspace remove`, and under `--json` errors are a
-  JSON object on stdout too.
-- `upload --slug` that names a different artifact than the one the path was
-  published to stops and says so (`--force` goes ahead), and an explicit slug
-  never rebinds the path.
-- `upload` in CI without `--slug` or `--draft` warns that every run publishes
-  a new URL.
-- `check <path>` works signed out (markup only) and reports line:column for
-  each issue.
-- A 429 is retried once after its `Retry-After`.
-
-### Fixed
-
-- `read --out` writes the stored bytes exactly (a UTF-8 byte order mark was
-  dropped). `upload` refuses a file that is not UTF-8 instead of altering it.
 - A rejected `HTMLARTIFACT_TOKEN` says the token was rejected, not "Not
   signed in", and `--json` errors say `npx htmlartifact` when run through npx.
 - An expired sign-in link says "The sign-in link expired. Run: htmlartifact
@@ -103,6 +96,13 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 - The too-large message says by how much an upload is over ("1 byte over the
   1 MiB limit", not "1 MiB … limit 1 MiB"), and its fix no longer points at a
   flag no admin can set.
+- Web: a bogus, expired or used-up invite link says so straight away, instead
+  of first asking you to sign in or create an account; a member opening their
+  own workspace's invite link is offered the way in (or a switch to it)
+  instead of "Join workspace".
+- Web: the 404 page no longer blames "your current workspace" for every
+  missing page, and links to your workspaces; `/workspaces` shows
+  `npx htmlartifact …` commands, which work without a global install.
 
 ## [0.1.2]
 
@@ -156,7 +156,8 @@ First release.
   HTML stored in D1), with per-workspace and database quotas and rate limits
   sized to them.
 
-[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Dhruv2mars/htmlartifact/releases/tag/v0.1.0

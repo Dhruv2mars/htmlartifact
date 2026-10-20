@@ -1,5 +1,49 @@
 # htmlartifact — GA checklist
 
+## Run 3 fixes → 0.2.0 (2026-10-20)
+Done = every R3-n finding below is fixed by a merged PR or marked skipped with
+the reason; htmlartifact@0.2.0 published with provenance and tagged v0.2.0;
+`npx htmlartifact@latest --version` → 0.2.0; Deploy green on main; live smoke
+passes; a signed-out sanity pass on the published CLI.
+
+Fix PRs (each merged after a green `test`): #14 CI keys, #15 server integrity,
+#16 web, #17 CLI, #18 workspaces. Also merged: #5 nanoid 6 (Worker only), #6
+GitHub Actions bumps, #9 WorkOS notes, #12 TASKS.
+- [x] R3-1 parallel uploads overshoot the quota: #15 (quota and DB guard gate the version INSERT in the same D1 batch)
+- [x] R3-2 `--slug` overwrites another artifact and rebinds the path: #17 (`--force` required, explicit slug never rebinds)
+- [x] R3-3 `workspace join <link>` fails: #18
+- [x] R3-4 `read --out` drops a BOM; non-UTF-8 altered: #17 (raw bytes; strict UTF-8, exit 5)
+- [x] R3-5 just-deleted workspace still listed: #15
+- [x] R3-6 "Not signed in" after last workspace deleted: #15 investigated, **not reproduced and not in our code** (most likely WorkOS revoked that session itself); tests pin `/api/me` → 200 with `workspace: null` after deletion. Still unconfirmed
+- [x] R3-7 no way to create the CI credential: #14 (app-issued workspace API keys, hashed in D1; WorkOS org API keys not clearly free, cost evidence in the PR)
+- [x] R3-8 no `workspace leave` / promote: #18 (`leave`, `promote`, `demote`; last admin kept)
+- [x] R3-9 no version pruning, no usage visibility: #15 (`prune --keep`, `usage` in `check`/`list`)
+- [x] R3-10 no cross-workspace view: #18 (`list`/`read --workspace`). Not done: an "all my workspaces" feed, parent orgs
+- [x] R3-11 teammates can't see version history on the web: #16 (`/history/<id>`, 404 copy). Not done: CLI `versions <id>` (needs a versions API)
+- [x] R3-12 spent/revoked invite codes vanish: #18 (`invites --all`, `invite_joins`)
+- [x] R3-13 removed member's artifacts unmarked: #18 ("(former member)")
+- [ ] R3-14 gaps (roles, sharing, SSO/Directory Sync off for zero spend, nested orgs): **skipped, stay as gaps**
+- [x] R3-15 CLI `read` limited to the current workspace: #18 (bearer reads by active membership; writes and API keys stay scoped)
+- [x] R3-16 `invite` silently clamps: #18 (422 with the range; "1 person")
+- [x] R3-17 `workspace remove` doesn't say codes were revoked: #18
+- [x] R3-18 exit codes always 1; `--json` gaps: #17 (codes 2–7; JSON errors; `--json` everywhere)
+- [x] R3-19 CI runs without `--slug` make new URLs: #17 (warning) + README CI section (#14, #17)
+- [x] R3-20 rejected `HTMLARTIFACT_TOKEN` says "Not signed in": #17
+- [x] R3-21 `check` needs sign-in, `line: null`: #17
+- [x] R3-22 generic join errors: #18 ("Already in …")
+- [x] R3-23 removed member told "not in a workspace yet": #18
+- [x] R3-24 join page gaps: #16 (expiry/uses left, bogus code says so, member offered Open/Switch). Kept: the signed-out page doesn't name the workspace (privacy)
+- [x] R3-25 raw `expired_token`: #17
+- [x] R3-26 web /workspaces without `npx`: #16
+- [x] R3-27 admin overwrite keeps member as author: #15 (`updatedBy`, receipt warning)
+- [x] R3-28 `Retry-After` ignored; update conflict 409: #15 (403) + #17 (one retry)
+- [x] R3-29 large-uploads message: #17
+- [ ] Release PR (0.2.0 bump, CHANGELOG, TASKS, README exit code 130) merged with green `test`
+- [ ] Release workflow: htmlartifact@0.2.0 published with provenance, tag v0.2.0
+- [ ] `npx htmlartifact@latest --version` → 0.2.0
+- [ ] Deploy green on main; live smoke passes
+- [ ] Sanity pass (throwaway HOME): `login --help`, `check` on a bad file signed out, `--version`
+
 ## Real-world run 3 (2026-10-20, branch test/real-world-run3)
 Done = three delegates (A startup of 5, B multi-level org, C engineering/CI) finish
 their scenarios end to end against prod (https://htmlartifact.pages.dev,
