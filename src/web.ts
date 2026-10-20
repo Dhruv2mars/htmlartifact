@@ -59,6 +59,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
   });
 
   app.get("/docs", async (c) => renderPage(c, { kind: "docs", session: toSession(await sessionViewer(c)) }));
+  app.get("/privacy", async (c) => renderPage(c, { kind: "privacy", session: toSession(await sessionViewer(c)) }));
 
   app.get("/mine", signedIn, inWorkspace, async (c) => {
     const viewer = c.get("viewer");

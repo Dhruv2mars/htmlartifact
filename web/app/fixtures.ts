@@ -57,6 +57,8 @@ export function fixturePage(url: URL): Page {
   switch (kind) {
     case "docs":
       return { kind: "docs", session: null };
+    case "privacy":
+      return { kind: "privacy", session: null };
     case "sign-in":
       return { kind: "sign-in", next: "/d/k3j9x0a1b2c4" };
     case "message":

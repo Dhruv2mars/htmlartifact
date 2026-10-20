@@ -87,8 +87,12 @@ export async function runDeletion(env: PurgeEnv, kind: DeletionKind, target: str
   }
 }
 
-/** Retry queued deletions (oldest first). Returns counts for logging. */
-export async function drainPendingDeletions(env: PurgeEnv, max = 100): Promise<{ done: number; failed: number }> {
+/**
+ * Retry queued deletions (oldest first). Returns counts for logging. Each job
+ * is about 2 D1 queries and D1 Free allows 50 per invocation, so one cron run
+ * takes 20; a backlog drains over several runs.
+ */
+async function drainPendingDeletions(env: PurgeEnv, max = 20): Promise<{ done: number; failed: number }> {
   const { results } = await env.DB.prepare(
     // Fewest attempts first, so a pile of permanently failing jobs can never
     // starve newer ones.
@@ -271,8 +275,12 @@ export function scrubUserStatements(db: D1Database, userId: string): D1PreparedS
 
 const RETENTION_SECONDS = 30 * 24 * 60 * 60;
 
-/** Erase upload request metadata older than the retention window. */
-export async function eraseExpiredRequestMetadata(db: D1Database, now = Math.floor(Date.now() / 1000)): Promise<number> {
+/**
+ * Erase upload request metadata older than the retention window. Runs every
+ * 15 minutes: draft_versions_retention_idx (src/db.ts) holds only versions
+ * still carrying metadata, so this reads those rows, not the whole table.
+ */
+async function eraseExpiredRequestMetadata(db: D1Database, now = Math.floor(Date.now() / 1000)): Promise<number> {
   const result = await db
     .prepare(
       "UPDATE draft_versions SET source_ip = NULL, user_agent = NULL WHERE created_at < ? AND (source_ip IS NOT NULL OR user_agent IS NOT NULL)"
@@ -280,6 +288,24 @@ export async function eraseExpiredRequestMetadata(db: D1Database, now = Math.flo
     .bind(now - RETENTION_SECONDS)
     .run();
   return result.meta.changes ?? 0;
+}
+
+/**
+ * The ops cron (src/ops.ts), every 15 minutes. Retention runs first and on
+ * its own: a deletion backlog or failure (one invocation may make at most 50
+ * D1 queries) never skips it, nor does a retention failure skip deletions.
+ */
+export async function runScheduledJobs(env: PurgeEnv) {
+  const failed = (job: string) => (error: unknown) => {
+    console.error(`Scheduled job ${job} failed:`, error instanceof Error ? error.message : error);
+    return null;
+  };
+  const erased = await eraseExpiredRequestMetadata(env.DB).catch(failed("retention"));
+  const deletions = await env.DB.prepare(PENDING_DELETIONS_SCHEMA)
+    .run()
+    .then(() => drainPendingDeletions(env))
+    .catch(failed("deletions"));
+  return { deletions, erased };
 }
 
 /**

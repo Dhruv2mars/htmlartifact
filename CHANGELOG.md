@@ -7,6 +7,27 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+### Added
+
+- A privacy notice for the hosted service at `/privacy`, linked from the
+  footer: what is stored and why, retention, processors (Cloudflare, WorkOS),
+  and how to ask for access, correction or deletion.
+- The npm package ships `THIRD_PARTY_LICENSES`, generated at build time from
+  the packages bundled into `dist/htmlartifact.js`.
+
+### Fixed
+
+- /docs: the CI section now matches the README (workspace API keys from
+  `workspace api-key create`, `--slug` in the example), and the self-hosting
+  link points at the README's Deploying section.
+- `bun run dev:local` builds the web app first when `web/build/client` is
+  missing, so it works from a clean checkout.
+- D1 Free quota use by the service: the 15-minute retention job reads an index
+  of versions still holding request metadata instead of scanning every version;
+  each cron run retries at most 20 queued deletions (within D1 Free's 50
+  queries per invocation) and a deletion failure no longer skips retention; a
+  signed-in page view no longer rewrites an unchanged cached profile.
+
 ## [0.2.0] - 2026-10-20
 
 Fixes and features from a third real-world run (a startup, a multi-workspace
