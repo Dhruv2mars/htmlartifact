@@ -1,6 +1,6 @@
 import type { Event } from "@workos-inc/node";
 import type { Context, Hono } from "hono";
-import { bumpMembershipEpoch, now, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { bumpMembershipEpoch, now, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { deleteWorkspaceStatements, isWorkspaceDeleted, membershipBeingUndone, runWorkspaceDeletions, scrubUserStatements, undoJoin } from "./purge.ts";
 import type { AppEnv } from "./types.ts";
 import { revokePortalLinks, workos } from "./workos.ts";
@@ -102,6 +102,12 @@ async function applyEvent(
       // No longer an active admin: end any Admin Portal session they opened.
       // A failure returns 500, so WorkOS retries; access already ended above.
       if (membership?.role?.slug !== "admin") await revokePortalLinks(c.get("config"), organizationId, userId);
+      // Demoted (here or in the WorkOS dashboard): what only an admin could
+      // create ends with the role. Removal is covered by setRevokedAtEpoch.
+      if (membership && membership.role?.slug !== "admin") {
+        await revokeInvitesBy(db, userId, organizationId);
+        await revokeCiKeysBy(db, userId, organizationId);
+      }
       return;
     }
     case "organization.deleted": {

@@ -120,6 +120,30 @@ test("a demoted admin's CI keys and invite codes stop working", async () => {
   assert.equal(viaBob.status, 200, JSON.stringify(viaBob.body));
 });
 
+test("a demotion made in the WorkOS dashboard also ends the ex-admin's CI keys and invite codes", async () => {
+  await twoAdmins("Dashboard demotion");
+  const key = await callApi(stack, aliceTokens.accessToken, "POST", "/api/workspaces/api-keys", { name: "alice ci" });
+  assert.equal(key.status, 201, JSON.stringify(key.body));
+  const invite = await callApi(stack, aliceTokens.accessToken, "POST", "/api/workspaces/invites", { maxUses: 5 });
+  assert.equal(invite.status, 201, JSON.stringify(invite.body));
+  const { data } = await workosApi(
+    stack.emulator,
+    "GET",
+    `/user_management/organization_memberships?organization_id=${key.body.workspace.id}&user_id=${alice.id}`
+  );
+  await workosApi(stack.emulator, "PUT", `/user_management/organization_memberships/${data[0].id}`, { role_slug: "member" });
+  // The membership webhook arrives shortly after.
+  let status = 200;
+  for (let attempt = 0; attempt < 50 && status === 200; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    status = (await callApi(stack, key.body.token, "GET", "/api/me")).status;
+  }
+  assert.equal(status, 401);
+  const noraTokens = await signInTokens(stack, "nora@new.test");
+  const joined = await callApi(stack, noraTokens.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code });
+  assert.notEqual(joined.status, 200, JSON.stringify(joined.body));
+});
+
 test("workspaces over 100 members: everyone is listed and role checks see every admin", async () => {
   const org = await workosApi(stack.emulator, "POST", "/organizations", { name: "Big" });
   await addMember(org.id, alice.id, "admin");
