@@ -22,6 +22,11 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 - `list --workspace <name>` lists another of your workspaces without
   switching; `read <custom-url-name> --workspace <name>` opens an artifact by
   its custom URL there.
+- Any workspace member can open an artifact's version history on the web
+  (`/history/<id>`, linked from every row of the feed), not only its author.
+  The old `/mine/<id>` URL redirects there.
+- The `/join/<code>` page says when the invite expires and how many more
+  people it admits.
 - `prune <id-or-url> --keep <n>` deletes an artifact's old versions to free
   workspace storage, keeping the latest `n` (the URL and current version
   stay). Its author or a workspace admin can prune (API:
@@ -57,6 +62,14 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   instead of "You are not in a workspace yet". Their artifacts are marked
   "(former member)" in `list --all` and the web feed, and deleting one as a
   plain member says only an admin can.
+- A bogus, expired or used-up invite link says so straight away, instead of
+  first asking you to sign in or create an account.
+- A member opening their own workspace's invite link is offered the way in
+  (or a switch to it) instead of "Join workspace".
+- The 404 page no longer blames "your current workspace" for every missing
+  page, and links to your workspaces.
+- The web `/workspaces` page shows `npx htmlartifact …` commands, which work
+  without a global install.
 - Parallel uploads can no longer overshoot the workspace's storage quota or
   the database size guard: the check and the counter now commit in one
   transaction with the version.

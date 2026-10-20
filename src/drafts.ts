@@ -36,6 +36,8 @@ export interface DraftWithVersions {
     draftId: string;
     title: string;
     description: string | null;
+    author: string | null;
+    mine: boolean;
     publicUrl: string;
     versionBaseUrl: string;
   };
@@ -116,7 +118,8 @@ async function listDrafts(
   }));
 }
 
-export async function getMyDraftWithVersions(
+// One artifact of this workspace with its versions, whoever published it.
+export async function getDraftWithVersions(
   db: D1Database,
   {
     accountId,
@@ -128,10 +131,11 @@ export async function getMyDraftWithVersions(
 ): Promise<DraftWithVersions | null> {
   const draft = await db
     .prepare(
-      "SELECT * FROM drafts WHERE id = ? AND account_id = ? AND organization_id = ? AND deleted_at IS NULL"
+      `SELECT d.*, a.name AS author_name FROM drafts d LEFT JOIN accounts a ON a.id = d.account_id
+       WHERE d.id = ? AND d.organization_id = ? AND d.deleted_at IS NULL`
     )
-    .bind(draftId, accountId, organizationId)
-    .first<DraftRow>();
+    .bind(draftId, organizationId)
+    .first<DraftRow & { author_name: string | null }>();
   if (!draft) return null;
   const { results } = await db
     .prepare(
@@ -145,6 +149,8 @@ export async function getMyDraftWithVersions(
       draftId: draft.id,
       title: draft.title,
       description: draft.description,
+      author: draft.author_name,
+      mine: draft.account_id === accountId,
       publicUrl: draftUrl(origin, draft, handle),
       // Version links use the draft ID, which never moves to another draft.
       versionBaseUrl: `${origin}/d/${draft.id}`

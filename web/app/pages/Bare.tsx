@@ -69,10 +69,15 @@ export function NotFound() {
         404
       </p>
       <h1 className="mt-6 font-wide text-[30px] font-[740] leading-[1.05] tracking-[-0.03em] text-ink">Not found</h1>
-      <p className="mt-3 text-[15.5px] leading-relaxed text-fog">This page does not exist, or your current workspace cannot see it.</p>
-      <ButtonLink href="/" className="mt-8">
-        Go home
-      </ButtonLink>
+      <p className="mt-3 text-[15.5px] leading-relaxed text-fog">
+        This page does not exist, was deleted, or belongs to a workspace you are not in right now.
+      </p>
+      <div className="mt-8 flex flex-wrap justify-center gap-2">
+        <ButtonLink href="/">Go home</ButtonLink>
+        <ButtonLink href="/workspaces" tone="ghost">
+          Your workspaces
+        </ButtonLink>
+      </div>
     </Bare>
   );
 }

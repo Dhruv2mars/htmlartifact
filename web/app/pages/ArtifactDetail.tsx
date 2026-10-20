@@ -6,7 +6,7 @@ import { ArrowUpRight } from "../components/icons";
 import { Seal } from "../components/Seal";
 import { Time } from "../components/Time";
 import { bytes } from "../lib/time";
-import type { ArtifactVersion, Session } from "../page";
+import type { ArtifactHead, ArtifactVersion, Session } from "../page";
 
 const SERVER_ROWS = 30;
 
@@ -16,7 +16,7 @@ export function ArtifactDetail({
   versions
 }: {
   session: Session;
-  artifact: { id: string; title: string; description: string | null; url: string };
+  artifact: ArtifactHead;
   versions: ArtifactVersion[];
 }) {
   // Like the feed: the server renders the newest versions only (Workers Free
@@ -25,14 +25,15 @@ export function ArtifactDetail({
   useEffect(() => setHydrated(true), []);
   const shown = hydrated ? versions : versions.slice(0, SERVER_ROWS);
   return (
-    <AppShell session={session} section="mine">
+    <AppShell session={session} section={artifact.mine ? "mine" : "feed"}>
       <main className="mx-auto max-w-[1120px] px-4 pb-24 pt-8 sm:px-6 sm:pt-12">
-        <a href="/mine" className="text-[14px] text-fog transition-colors duration-150 hover:text-ink">
-          My artifacts
+        <a href={artifact.mine ? "/mine" : "/"} className="text-[14px] text-fog transition-colors duration-150 hover:text-ink">
+          {artifact.mine ? "My artifacts" : (session.workspace?.name ?? "Workspace")}
         </a>
         <div className="mt-6 grid gap-8 *:min-w-0 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
           <div>
             <h1 className="text-balance font-wide text-[32px] [overflow-wrap:anywhere] font-[720] leading-[1.05] tracking-[-0.03em] text-ink sm:text-[42px]">{artifact.title}</h1>
+            {!artifact.mine && artifact.author && <p className="mt-3 text-[14px] text-ink-2 [overflow-wrap:anywhere]">By {artifact.author}</p>}
             {artifact.description && <p className="mt-3 max-w-[60ch] text-[15.5px] leading-relaxed text-fog">{artifact.description}</p>}
             <div className="mt-6 flex flex-wrap items-center gap-2">
               <ButtonLink href={artifact.url} target="_blank" rel="noopener noreferrer">

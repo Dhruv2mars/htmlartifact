@@ -436,7 +436,7 @@ const ROUTES = {
           assert.equal(res.json.workspace.id, B.noraOrg.id);
           assertClean(label, res.text);
           const landing = await B.noraBrowser.get(`/join/${res.json.code}`);
-          assert.match(landing.text_, /Join Nora Labs/);
+          assert.match(landing.text_, /<h1[^>]*>Nora Labs<\/h1>/, "nora is already a member");
           assertClean(`${label} landing`, landing.text_);
         } else {
           assertDenied(label, res);
@@ -793,15 +793,30 @@ const ROUTES = {
       }
     }
   },
+  "GET /history/:draftId": {
+    kind: "resource",
+    why: "draft ID (version history, any member's artifact)",
+    async run(key) {
+      for (const actor of webActors()) {
+        const m = await actor.browser.get(`/history/${MISSING_DRAFT}`);
+        const missing = { status: m.status, text: m.text_ };
+        for (const target of [A.plan.draftId, A.bobDraft.draftId]) {
+          const r = await actor.browser.get(`/history/${target}`);
+          assertDenied(`${key} ${target} as ${actor.name}`, { status: r.status, text: r.text_ }, { status: 404, missing });
+        }
+      }
+    }
+  },
   "GET /mine/:draftId": {
     kind: "resource",
-    why: "draft ID (version history)",
+    why: "old history URL: redirects to /history/:draftId without looking the ID up",
     async run(key) {
       for (const actor of webActors()) {
         const m = await actor.browser.get(`/mine/${MISSING_DRAFT}`);
         const missing = { status: m.status, text: m.text_ };
         for (const target of [A.plan.draftId, A.bobDraft.draftId]) {
           const r = await actor.browser.get(`/mine/${target}`);
+          assert.equal(new URL(r.finalUrl).pathname, `/history/${target}`);
           assertDenied(`${key} ${target} as ${actor.name}`, { status: r.status, text: r.text_ }, { status: 404, missing });
         }
       }

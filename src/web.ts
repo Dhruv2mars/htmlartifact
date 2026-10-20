@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Context, Hono, Next } from "hono";
 import { joinWithCode } from "./api.ts";
-import { isSecure, sessionViewer } from "./auth.ts";
+import { activeMembership, isSecure, sessionViewer } from "./auth.ts";
 import { randomToken } from "./crypto.ts";
 import { findWorkspace, saveWorkspace } from "./db.ts";
-import { getMyDraftWithVersions, listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
+import { getDraftWithVersions, listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 import { normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { safeNext } from "./public-url.ts";
 import { clientIp, rateLimit } from "./rate-limit.ts";
@@ -59,11 +59,12 @@ export function registerWeb(app: Hono<AppEnv>): void {
     return renderPage(c, { kind: "mine", session: toSession(viewer)!, artifacts: toArtifacts(drafts) });
   });
 
-  app.get("/mine/:draftId", signedIn, inWorkspace, async (c) => {
+  // Version history of any artifact in the workspace, not only your own.
+  app.get("/history/:draftId", signedIn, inWorkspace, async (c) => {
     const viewer = c.get("viewer");
     const draftId = c.req.param("draftId");
     if (!draftId) return c.notFound();
-    const result = await getMyDraftWithVersions(c.env.DB, {
+    const result = await getDraftWithVersions(c.env.DB, {
       accountId: viewer.account_id,
       organizationId: viewer.organization_id,
       draftId,
@@ -75,10 +76,13 @@ export function registerWeb(app: Hono<AppEnv>): void {
     return renderPage(c, {
       kind: "artifact",
       session: toSession(viewer)!,
-      artifact: { id: draft.draftId, title: draft.title, description: draft.description, url: draft.publicUrl },
+      artifact: { id: draft.draftId, title: draft.title, description: draft.description, url: draft.publicUrl, author: draft.author, mine: draft.mine },
       versions: toVersions(result)
     });
   });
+
+  // The old owner-only history URL; kept so bookmarks still work.
+  app.get("/mine/:draftId", signedIn, inWorkspace, (c) => c.redirect(`/history/${encodeURIComponent(c.req.param("draftId") || "")}`, 301));
 
   app.get("/workspaces", signedIn, async (c) => {
     const viewer = c.get("viewer");
@@ -115,23 +119,36 @@ export function registerWeb(app: Hono<AppEnv>): void {
     return switchTo(c, String((await c.req.parseBody()).id || ""));
   });
 
-  // A shareable join link: /join/HA-XXXX-XXXX-XXXX.
+  // A shareable join link: /join/HA-XXXX-XXXX-XXXX. Signed out, a live code
+  // gets the anonymous sign-in page (it never names the workspace); a dead
+  // one says so either way, instead of asking you to sign up first.
   app.get("/join/:code", async (c) => {
     const code = normalizeInviteCode(c.req.param("code"));
-    const viewer = await sessionViewer(c);
-    if (!viewer) return renderPage(c, { kind: "sign-in", next: c.req.path }, 401);
     const invite = code
       ? await c.env.DB.prepare(
-          "SELECT organization_id FROM invites WHERE code = ? AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses"
+          `SELECT organization_id, expires_at, max_uses - uses AS uses_left FROM invites
+           WHERE code = ? AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses`
         )
           .bind(code)
-          .first<{ organization_id: string }>()
+          .first<{ organization_id: string; expires_at: number; uses_left: number }>()
       : null;
     if (!code || !invite) {
-      return renderPage(c, message("Invite not valid", "That invite is invalid, expired, or used up.", false), 404);
+      return renderPage(c, message("Invite not valid", "That invite code is invalid, expired, or used up. Ask whoever sent it for a new one.", false), 404);
     }
+    const viewer = await sessionViewer(c);
+    if (!viewer) return renderPage(c, { kind: "sign-in", next: c.req.path }, 401);
     const workspace = await findWorkspace(c.env.DB, invite.organization_id);
-    return renderPage(c, { kind: "join", session: toSession(viewer)!, code, workspaceName: workspace?.name || "workspace" });
+    const current = viewer.organization_id === invite.organization_id;
+    const member = current || Boolean(await activeMembership(c, viewer.account_id, invite.organization_id));
+    return renderPage(c, {
+      kind: "join",
+      session: toSession(viewer)!,
+      code,
+      workspace: { id: invite.organization_id, name: workspace?.name || "workspace" },
+      expiresAt: new Date(invite.expires_at * 1000).toISOString(),
+      usesLeft: Number(invite.uses_left),
+      member: current ? "current" : member ? "other" : null
+    });
   });
 
   app.post("/join", sameOrigin, signedIn, writes, async (c) => {
