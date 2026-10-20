@@ -22,6 +22,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAILY_BUDGET_SCHEMA } from "../src/budget.ts";
+import { R2_OBJECT_OVERHEAD } from "../src/storage.ts";
 
 const staging = process.argv.includes("--staging");
 const dryRun = process.argv.includes("--dry-run");
@@ -102,7 +103,7 @@ try {
       // would, in the same transaction (one command is one D1 batch) as
       // dropping its rows, so a re-run never counts it twice.
       await d1(
-        `INSERT INTO daily_budget (day, scope, used) VALUES ('total', 'r2:bytes', ${Buffer.byteLength(html, "utf8")}) ON CONFLICT (day, scope) DO UPDATE SET used = used + excluded.used; DELETE FROM blobs WHERE key = '${key}'`
+        `INSERT INTO daily_budget (day, scope, used) VALUES ('total', 'r2:bytes', ${Buffer.byteLength(html, "utf8") + R2_OBJECT_OVERHEAD}) ON CONFLICT (day, scope) DO UPDATE SET used = used + excluded.used; DELETE FROM blobs WHERE key = '${key}'`
       );
       console.log(`moved    ${key}`);
       moved += 1;

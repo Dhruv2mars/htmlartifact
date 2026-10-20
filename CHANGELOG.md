@@ -10,8 +10,9 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 ### Added
 
 - R2 storage with a built-in $0 cap (README → Why R2 can't bill): uploads stop
-  at 9 GB of stored HTML across the deployment, and R2 writes and lists draw
-  on a daily budget (30,000) kept in D1. An upload over today's budget gets
+  at 8 GB of stored HTML across the deployment (each object also counts
+  1 KiB for its key and metadata), and R2 writes and lists draw on a daily
+  budget (25,000) kept in D1; settings can only lower these. An upload over today's budget gets
   HTTP 429 with `Retry-After` until 00:00 UTC; a deletion over it stays queued
   for the cron. On R2, each workspace holds 250 MiB (50 MiB on D1).
 - Uploads draw on a daily budget of D1 rows written: 40,000 for the

@@ -28,10 +28,18 @@ export const BLOBS_SCHEMA = `CREATE TABLE IF NOT EXISTS blobs (
 
 const CHUNK_BYTES = 1_000_000;
 
-/** R2 Class A operations allowed per UTC day (R2 Free: 1,000,000 a month; 31 × 30,000 = 930,000). */
-const R2_CLASS_A_PER_DAY = 30_000;
-/** HTML the bucket may hold (R2 Free: 10 GB-month, the average of each day's peak). */
-const R2_STORED_BYTES = 9_000_000_000;
+// R2 has no spending cap, so these are ceilings well inside its free tier, and
+// the env vars can only lower them (Cloudflare rounds usage up: 1,000,001
+// operations bill as 2,000,000).
+/** R2 Class A operations allowed per UTC day (R2 Free: 1,000,000 a month; 31 × 25,000 = 775,000, the rest is headroom for the dashboard and migrate:r2). */
+const R2_CLASS_A_PER_DAY = 25_000;
+/** Bytes the bucket may hold, as counted below (R2 Free: 10 GB-month, the average of each day's peak). */
+const R2_STORED_BYTES = 8_000_000_000;
+/** Counted per object on top of its HTML, for its key and metadata, whether or not R2 bills them. */
+export const R2_OBJECT_OVERHEAD = 1024;
+
+/** An operator's setting, never above the ceiling (unset: the ceiling; not a number: nothing allowed). */
+const atMost = (value: string | undefined, ceiling: number) => Math.min(Number(value || ceiling), ceiling);
 
 export interface StorageEnv {
   DB: D1Database;
@@ -50,7 +58,7 @@ export const storageKind = (env: StorageEnv): StorageKind => (env.ARTIFACTS ? "r
  */
 export async function reserveR2Writes(env: StorageEnv, count: number): Promise<boolean> {
   if (!env.ARTIFACTS) return true;
-  return reserveBudget(env.DB, "r2:class_a", count, Number(env.HTMLARTIFACT_R2_CLASS_A_PER_DAY || R2_CLASS_A_PER_DAY));
+  return reserveBudget(env.DB, "r2:class_a", count, atMost(env.HTMLARTIFACT_R2_CLASS_A_PER_DAY, R2_CLASS_A_PER_DAY));
 }
 
 class R2BudgetError extends Error {
@@ -80,8 +88,8 @@ export async function stageObjects(
 ): Promise<D1PreparedStatement[]> {
   const bucket = env.ARTIFACTS;
   if (bucket) {
-    const sizes = objects.map(({ html }) => new TextEncoder().encode(html).byteLength);
-    const cap = Number(env.HTMLARTIFACT_STORAGE_LIMIT_BYTES || R2_STORED_BYTES);
+    const sizes = objects.map(({ html }) => new TextEncoder().encode(html).byteLength + R2_OBJECT_OVERHEAD);
+    const cap = atMost(env.HTMLARTIFACT_STORAGE_LIMIT_BYTES, R2_STORED_BYTES);
     if (!(await reserveBudget(env.DB, "r2:bytes", sum(sizes), cap, TOTAL))) throw new StorageFullError();
     // allSettled: on a failed write, wait for the others before the caller cleans up.
     const puts = await Promise.allSettled(
@@ -130,7 +138,7 @@ export async function deleteObjects(env: StorageEnv, prefix: string): Promise<nu
       const page = await bucket.list({ prefix, limit: 1000 });
       if (page.objects.length) {
         await bucket.delete(page.objects.map((object) => object.key));
-        await releaseBudget(env.DB, "r2:bytes", sum(page.objects.map((object) => object.size)), TOTAL);
+        await releaseBudget(env.DB, "r2:bytes", sum(page.objects.map((object) => object.size + R2_OBJECT_OVERHEAD)), TOTAL);
       }
       deleted += page.objects.length;
       if (!page.truncated) break;

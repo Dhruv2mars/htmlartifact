@@ -23,9 +23,9 @@ async function platform(stack) {
   return { proxy, rows: async (sql, ...binds) => (await proxy.env.DB.prepare(sql).bind(...binds).all()).results };
 }
 
-// R2 holds exactly the bytes the cap counts.
+// The cap counts exactly R2's bytes, plus 1 KiB per object (src/storage.ts).
 async function assertBytesCounted(proxy, rows) {
-  const stored = (await proxy.env.ARTIFACTS.list()).objects.reduce((total, object) => total + object.size, 0);
+  const stored = (await proxy.env.ARTIFACTS.list()).objects.reduce((total, object) => total + object.size + 1024, 0);
   const [counted] = await rows("SELECT used FROM daily_budget WHERE day = 'total' AND scope = 'r2:bytes'");
   assert.equal(counted?.used ?? 0, stored);
   return stored;
@@ -130,7 +130,7 @@ describe("R2 storage cap", { skip: STORAGE !== "r2" && "R2 only" }, () => {
   let proxy;
   let rows;
   before(async () => {
-    stack = await startStack({ vars: { HTMLARTIFACT_STORAGE_LIMIT_BYTES: "3000" } });
+    stack = await startStack({ vars: { HTMLARTIFACT_STORAGE_LIMIT_BYTES: "9000" } });
     ({ proxy, rows } = await platform(stack));
   });
   after(async () => {
@@ -139,7 +139,7 @@ describe("R2 storage cap", { skip: STORAGE !== "r2" && "R2 only" }, () => {
   });
 
   test("uploads stop when the bucket would hold more than the cap, across workspaces, until a deletion frees it", async () => {
-    const body = (n) => `<p>${"x".repeat(1800)}</p><p>${n}</p>`;
+    const body = (n) => `<p>${"x".repeat(3500)}</p><p>${n}</p>`;
     const alice = await accessToken(stack, "alice@acme.test", "Acme");
     const first = await callApi(stack, alice, "POST", "/api/uploads", { html: page("One", body(1)) });
     assert.equal(first.status, 201);
@@ -153,6 +153,26 @@ describe("R2 storage cap", { skip: STORAGE !== "r2" && "R2 only" }, () => {
     assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${first.body.draftId}`)).status, 200);
     assert.equal(await assertBytesCounted(proxy, rows), 0);
     assert.equal((await callApi(stack, olivia, "POST", "/api/uploads", { html: page("Two", body(2)) })).status, 201);
+    await assertBytesCounted(proxy, rows);
+  });
+
+  test("pruning old versions frees their bytes for the next upload", async () => {
+    // Versions sized so two fit in what's left of the 9,000-byte cap, three don't.
+    const left = 9000 - (await assertBytesCounted(proxy, rows));
+    const html = (n, pad) => page(`P${n}`, `<p>${"y".repeat(pad)}</p>`);
+    const pad = Math.floor(left / 2.5) - Buffer.byteLength(html(1, 0)) - 1024;
+    const bob = await accessToken(stack, "bob@acme.test", "Acme");
+    const version = (n) => ({ slug: "pruned", html: html(n, pad) });
+    const first = await callApi(stack, bob, "POST", "/api/uploads", version(1));
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    assert.equal((await callApi(stack, bob, "POST", "/api/uploads", version(2))).status, 200, "a new version");
+    const full = await callApi(stack, bob, "POST", "/api/uploads", version(3));
+    assert.equal(full.status, 507, "the cap is reached");
+
+    const pruned = await callApi(stack, bob, "DELETE", `/api/drafts/${first.body.draftId}/versions?keepLatest=1`);
+    assert.equal(pruned.body.deleted, 1, JSON.stringify(pruned.body));
+    await assertBytesCounted(proxy, rows);
+    assert.equal((await callApi(stack, bob, "POST", "/api/uploads", version(3))).status, 200, "the pruned bytes are free again");
     await assertBytesCounted(proxy, rows);
   });
 });

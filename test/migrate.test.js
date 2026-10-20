@@ -44,7 +44,7 @@ test("migrate:r2 moves every referenced D1 blob into R2 intact, drops deleted on
   assert.equal(get("orgs/org_m/drafts/abcdefabcdef/versions/AAAAAAAAAAAAAAAAAAAA/about.html"), "<p>about ☕</p>");
   // What it moved counts against the bucket's cap, as uploads do.
   const counted = d1("SELECT used FROM daily_budget WHERE day = 'total' AND scope = 'r2:bytes'")[0].results[0].used;
-  assert.equal(counted, Buffer.byteLength(big) + Buffer.byteLength("<p>about ☕</p>"));
+  assert.equal(counted, Buffer.byteLength(big) + Buffer.byteLength("<p>about ☕</p>") + 2 * 1024, "each object's bytes and overhead");
   // The deleted artifact's copy was removed again, with a queued retry for the cron.
   assert.match(out, /dropped {2}orgs\/org_m\/drafts\/zzzzzzzzzzzz\/versions\/BBBBBBBBBBBBBBBBBBBB\.html/);
   assert.throws(() => get("orgs/org_m/drafts/zzzzzzzzzzzz/versions/BBBBBBBBBBBBBBBBBBBB.html"));

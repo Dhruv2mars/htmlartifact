@@ -4,8 +4,8 @@
 // Every deletion is queued in D1 first (`pending_deletions`), attempted at once,
 // and retried by the ops Worker's cron until it succeeds.
 
-import { DAILY_BUDGET_SCHEMA } from "./budget.ts";
-import { deleteObjects } from "./storage.ts";
+import { DAILY_BUDGET_SCHEMA, TOTAL, releaseBudget } from "./budget.ts";
+import { deleteObjects, R2_OBJECT_OVERHEAD } from "./storage.ts";
 
 export type DeletionKind = "r2_prefix" | "workos_org" | "workos_membership";
 
@@ -184,7 +184,7 @@ export async function pruneVersions(
   // current. A concurrent prune that got there first leaves nothing to count.
   const doomed = `SELECT id FROM draft_versions WHERE draft_id = ?2 AND id IN (SELECT value FROM json_each(?1))
                     AND id IS NOT (SELECT current_version_id FROM drafts WHERE id = ?2)`;
-  const batch = await db.batch<{ file_size: number }>([
+  const batch = await db.batch<{ file_size: number; page_count: number }>([
     // One version's prefix covers `<versionId>.html` and `<versionId>/...`.
     db
       .prepare(`INSERT INTO pending_deletions (kind, target) SELECT 'r2_prefix', ?3 || id FROM (${doomed}) WHERE length(id) = 20 ON CONFLICT (kind, target) DO NOTHING`)
@@ -203,12 +203,19 @@ export async function pruneVersions(
       )
       .bind(list, draftId),
     db.prepare(`DELETE FROM draft_pages WHERE draft_version_id IN (${doomed})`).bind(list, draftId),
-    db.prepare(`DELETE FROM draft_versions WHERE id IN (${doomed}) RETURNING file_size`).bind(list, draftId)
+    db.prepare(`DELETE FROM draft_versions WHERE id IN (${doomed}) RETURNING file_size, page_count`).bind(list, draftId)
   ]);
   const deleted = batch.at(-1)?.results ?? [];
+  const freedBytes = deleted.reduce((sum, row) => sum + row.file_size, 0);
   try {
     const keys = objects.map((row) => row.object_key);
     for (let i = 0; env.ARTIFACTS && i < keys.length; i += 1000) await env.ARTIFACTS.delete(keys.slice(i, i + 1000));
+    // What stageObjects reserved: a version's file_size is its pages' UTF-8
+    // bytes, plus the overhead of each of its page_count objects. Released only
+    // once the objects are gone; a failure leaves them to the cron, whose
+    // deleteObjects releases what it lists.
+    const counted = freedBytes + deleted.reduce((sum, row) => sum + row.page_count * R2_OBJECT_OVERHEAD, 0);
+    if (env.ARTIFACTS) await releaseBudget(db, "r2:bytes", counted, TOTAL);
     await db
       .prepare("DELETE FROM pending_deletions WHERE kind = 'r2_prefix' AND target IN (SELECT ?2 || value FROM json_each(?1))")
       .bind(list, prefix)
@@ -218,7 +225,7 @@ export async function pruneVersions(
   }
   return {
     deleted: deleted.length,
-    freedBytes: deleted.reduce((sum, row) => sum + row.file_size, 0),
+    freedBytes,
     more: results.length > max
   };
 }
