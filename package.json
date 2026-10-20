@@ -25,13 +25,14 @@
     "dist/",
     "README.md",
     "NOTICE",
+    "THIRD_PARTY_LICENSES",
     "LICENSE"
   ],
   "bin": {
     "htmlartifact": "dist/htmlartifact.js"
   },
   "scripts": {
-    "build": "bun build cli/main.ts --target=node --minify-syntax --minify-whitespace --outfile dist/htmlartifact.js",
+    "build": "bun build cli/main.ts --target=node --minify-syntax --minify-whitespace --outfile dist/htmlartifact.js --metafile=node_modules/.cache/htmlartifact/cli-meta.json && bun scripts/third-party-licenses.ts node_modules/.cache/htmlartifact/cli-meta.json THIRD_PARTY_LICENSES",
     "typecheck:cli": "tsc -p cli/tsconfig.json",
     "pretest": "bun run build && bun run build:web",
     "typecheck": "tsc -p tsconfig.json",

@@ -6,3 +6,4 @@ dist/
 .dev.vars
 web/build/
 web/.react-router/
+THIRD_PARTY_LICENSES
