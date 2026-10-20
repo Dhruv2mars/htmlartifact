@@ -20,6 +20,7 @@ const COMMANDS: Array<[string, ReactNode]> = [
   ["workspace join <code>", "Join a workspace with an invite code."],
   ["workspace list · switch <name>", "Your workspaces, and change the current one."],
   ["workspace members · remove <email>", "See members, or remove one (admins). Their access ends immediately."],
+  ["workspace api-key create · list · revoke <id>", <>API keys for CI, used as <code>HTMLARTIFACT_TOKEN</code> (admins). <Flag>--name</Flag>. See <a href="#ci">CI</a>.</>],
   ["upload <file-or-folder>", <>Publish. Uploading the same path again publishes a new version at the same URL. <Flag>--slug &lt;name&gt;</Flag> gives a stable URL within the workspace.</>],
   ["read <url>", "Download an artifact with your sign-in. This is how agents read links."],
   ["list [--all]", "Your artifacts, or the whole workspace's."],
@@ -137,10 +138,39 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4`}
 
           <Section id="ci" title="CI">
             <p>
-              In CI, set <code>HTMLARTIFACT_TOKEN</code> to a WorkOS organization API key instead of signing in. Uploads from CI land in
-              that organization's workspace.
+              In CI, set <code>HTMLARTIFACT_TOKEN</code> to a workspace API key instead of signing in. A workspace admin creates one
+              (it is shown only once):
             </p>
-            <Code code={`HTMLARTIFACT_TOKEN=sk_test_… npx htmlartifact upload report.html --json`} />
+            <Code code={`npx htmlartifact workspace api-key create --name "GitHub Actions"`} />
+            <p>
+              Save it as a repository secret named <code>HTMLARTIFACT_TOKEN</code>, then publish from a workflow. Give the upload a{" "}
+              <code>--slug</code> (or <code>--draft &lt;id&gt;</code>) so every run updates the same URL: without one, a re-upload
+              finds its artifact through a path mapping kept in <code>~/.htmlartifact</code>, which a CI run throws away, so each run
+              would publish a new artifact at a new URL.
+            </p>
+            <Code
+              label=".github/workflows/publish-report.yml"
+              code={`name: Publish report
+on:
+  push:
+    branches: [main]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npx --yes htmlartifact upload report.html --slug weekly-report
+        env:
+          HTMLARTIFACT_TOKEN: \${{ secrets.HTMLARTIFACT_TOKEN }}`}
+            />
+            <p>
+              The key publishes as the workspace (artifacts show the key's name), can't manage the workspace, and works until it's
+              revoked (<Flag>workspace api-key list</Flag>, <Flag>workspace api-key revoke &lt;id&gt;</Flag>). A WorkOS organization
+              API key also works as <code>HTMLARTIFACT_TOKEN</code>.
+            </p>
           </Section>
 
           <Section id="publishing" title="What you can publish">
@@ -160,7 +190,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4`}
             <p>
               htmlartifact is one Cloudflare Worker: Workers for the API, web pages and artifact serving, D1 for the index and the
               artifact HTML, and WorkOS AuthKit for accounts and workspaces. It runs on free tiers. The{" "}
-              <a href={`${REPO_URL}#deploying-later`}>README</a> walks through setting it up, and{" "}
+              <a href={`${REPO_URL}#deploying`}>README</a> walks through setting it up, and{" "}
               <a href={`${REPO_URL}/blob/main/SECURITY.md`}>SECURITY.md</a> covers data handling.
             </p>
             <Code code={`bun install\nbun run dev:local   # WorkOS emulator + Worker at http://localhost:8787, fully offline`} />

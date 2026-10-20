@@ -4,7 +4,16 @@
 // Sign in as any seeded email below; the CLI works with
 //   HTMLARTIFACT_API_URL=http://localhost:8787 htmlartifact login
 import { createEmulator } from "@workos/emulate";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+
+// The Worker serves web/build (assets and server-rendered pages); a clean
+// checkout has none yet. Run `bun run build:web` yourself after web changes.
+if (!existsSync(new URL("../web/build/client", import.meta.url))) {
+  console.log("web/build/client is missing: building the web app first (bun run build:web)…");
+  const build = spawnSync("bun", ["run", "build:web"], { stdio: "inherit", cwd: new URL("..", import.meta.url) });
+  if (build.status !== 0) process.exit(build.status ?? 1);
+}
 
 const PORT = Number(process.env.PORT || 8787);
 const emulator = await createEmulator({
