@@ -12,7 +12,7 @@ import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
 import { activeMembership, bearerViewer, userStillMember } from "./auth.ts";
 import { deleteWorkspaceStatements, draftPrefix, isWorkspaceDeleted, membershipBeingUndone, pruneVersions, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
-import { stageObjects } from "./storage.ts";
+import { reserveR2Writes, secondsUntilUtcMidnight, stageObjects } from "./storage.ts";
 import {
   isMember,
   type AppEnv,
@@ -917,11 +917,12 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   };
 
   // Free-tier storage guards (src/config.ts): the workspace's share, then the
-  // whole database's headroom (D1 Free caps a database at 500 MB). Checked
+  // whole database's headroom (D1 Free caps a database at 500 MB), and on R2
+  // the HTML the bucket may hold (R2 Free stores 10 GB). Checked
   // here for a clear answer, and again inside the batch (`fits`), where the
   // check and the counter's increment are one transaction: concurrent uploads
   // cannot all pass on the same reading.
-  const { workspaceBytes, databaseBytes: databaseLimit } = c.get("config").limits;
+  const { workspaceBytes, databaseBytes: databaseLimit, storageBytes } = c.get("config").limits;
   let fits = "1";
   let fitsParams: (string | number)[] = [];
   if (!unchanged) {
@@ -939,6 +940,10 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       validation.totalBytes,
       size === null ? Number.MAX_SAFE_INTEGER : databaseLimit - size + countedBytes
     ];
+    if (storageBytes !== null) {
+      fits += " AND (SELECT COALESCE(SUM(stored_bytes), 0) FROM workspace_usage) + ? <= ?";
+      fitsParams.push(validation.totalBytes, storageBytes);
+    }
   }
 
   const statements: D1PreparedStatement[] = [];
@@ -953,6 +958,15 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     const prefix = draftPrefix(viewer.organization_id, id);
     const objectKey = `${prefix}versions/${versionId}.html`;
     const pageKey = (page: { path: string }) => `${prefix}versions/${versionId}/${page.path}`;
+    // R2: each object is one Class A operation from today's budget (src/storage.ts).
+    if (!(await reserveR2Writes(c.env, pages.length))) {
+      const retryAfter = secondsUntilUtcMidnight();
+      c.header("Retry-After", String(retryAfter));
+      return c.json(
+        { ok: false, error: "This htmlartifact deployment has reached today's upload limit. Try again after 00:00 UTC." },
+        503
+      );
+    }
     written = versionPrefix(viewer.organization_id, id, versionId);
     // R2: written now. D1: chunk inserts that join this batch after the
     // version row (each conditional on it), so they commit together.
@@ -1213,8 +1227,12 @@ async function storageFull(c: Context<MemberEnv>, bytes: number): Promise<Respon
       507
     );
   }
+  const { storageBytes } = c.get("config").limits;
   const reading = await databaseUsage(c.env.DB);
-  if (reading.size !== null && reading.size + bytes > databaseLimit) {
+  if (
+    (reading.size !== null && reading.size + bytes > databaseLimit) ||
+    (storageBytes !== null && reading.countedBytes + bytes > storageBytes)
+  ) {
     return c.json({ ok: false, error: "This htmlartifact deployment's storage is full. Ask an admin to delete old artifacts." }, 507);
   }
   return reading;

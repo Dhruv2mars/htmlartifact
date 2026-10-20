@@ -35,31 +35,25 @@ export function getConfig(env: Env): Config {
     // under the CSP sandbox.
     sandboxOrigin,
     cookiePassword,
-    // Defaults depend on where HTML is stored. D1 (no R2 bucket bound, the
-    // zero-cost setup on Workers Free): an upload is one D1 batch of ~2
-    // statements per page plus one per MB (50 D1 queries per request allowed),
-    // and Workers Free allows 10 ms of CPU per request with a burst allowance.
+    // Upload limits are the same on either storage: what bounds them is CPU.
+    // Workers Free allows 10 ms of CPU per request with a burst allowance.
     // Measured in production: 1 MB pages pass even after the burst allowance
     // is spent; back-to-back 2 MB uploads do not. So 1 MiB (2 MiB flagged) and
-    // 10 pages. R2 (not used: no hard spending cap; see README): 50 pages, 4 MiB.
+    // 10 pages (on D1, an upload is one batch of ~2 statements per page plus
+    // one per MB; 50 D1 queries per request allowed).
     limits: {
+      accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 1024 * 1024),
+      largeBytes: Number(env.MAX_LARGE_HTML_BYTES || 2 * 1024 * 1024),
+      maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 10),
       // D1 Free caps one database at 500 MB, and a full database refuses every
-      // write (metadata included): uploads stop at 450 MB, and each workspace
-      // holds at most 50 MiB of HTML (all versions), so no single workspace
-      // fills it for everyone.
-      workspaceBytes: Number(env.HTMLARTIFACT_WORKSPACE_QUOTA_BYTES || 50 * 1024 * 1024),
+      // write (metadata included): uploads stop at 450 MB. Each workspace's
+      // share keeps one workspace from filling the deployment for everyone:
+      // 50 MiB of HTML (all versions) on D1, 250 MiB on R2.
+      workspaceBytes: Number(env.HTMLARTIFACT_WORKSPACE_QUOTA_BYTES || (env.ARTIFACTS ? 250 : 50) * 1024 * 1024),
       databaseBytes: Number(env.HTMLARTIFACT_DATABASE_LIMIT_BYTES || 450_000_000),
-      ...(env.ARTIFACTS
-      ? {
-          accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 4 * 1024 * 1024),
-          largeBytes: Number(env.MAX_LARGE_HTML_BYTES || 16 * 1024 * 1024),
-          maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 50)
-        }
-      : {
-          accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 1024 * 1024),
-          largeBytes: Number(env.MAX_LARGE_HTML_BYTES || 2 * 1024 * 1024),
-          maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 10)
-        })
+      // R2 Free stores 10 GB-month; uploads stop at 9 GB of HTML (README:
+      // Free-tier budget), leaving room for objects not yet counted.
+      storageBytes: env.ARTIFACTS ? Number(env.HTMLARTIFACT_STORAGE_LIMIT_BYTES || 9_000_000_000) : null
     },
     workos: {
       apiKey,

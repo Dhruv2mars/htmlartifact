@@ -235,7 +235,7 @@ export async function callApi(stack, token, method, pathname, body) {
   } catch {
     json = { text };
   }
-  return { status: response.status, body: json };
+  return { status: response.status, headers: response.headers, body: json };
 }
 
 // Delivers a correctly signed WorkOS webhook, as WorkOS would, including its

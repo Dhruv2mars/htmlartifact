@@ -11,6 +11,7 @@ export type DeletionKind = "r2_prefix" | "workos_org" | "workos_membership";
 export interface PurgeEnv {
   DB: D1Database;
   ARTIFACTS?: R2Bucket;
+  HTMLARTIFACT_R2_CLASS_A_PER_DAY?: string;
   WORKOS_API_KEY?: string;
   WORKOS_API_URL?: string;
 }

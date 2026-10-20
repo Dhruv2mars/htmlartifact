@@ -1,5 +1,22 @@
 # htmlartifact — GA checklist
 
+## R2 behind an architectural $0 cap + GA (2026-10-20, full send)
+Done = rule reworded (card OK only where overage is impossible, math in
+README); R2 code path caps stored bytes (9 GB) and Class A ops (30k/day) in
+D1, with tests that fail without the guards; suite green on D1 and R2; PR
+merged; R2 enabled on the account by Dhruv, binding deployed, `migrate:r2`
+run, `/healthz` says r2, smoke green; GA audit findings verified and the
+blockers fixed.
+- [x] Rule: CLAUDE.md/AGENTS.md (architectural cap allowed; never upgrade plans; WorkOS Production is Dhruv's move)
+- [x] R2 budget: `r2_ops` daily Class A budget (uploads 503 + Retry-After; deletions stay queued), 9 GB storage cap in the version's transaction, ≤1 R2 read per request, list loop stops on `!truncated`
+- [x] Limits: 1 MiB / 10 pages on either storage (CPU-bound); workspace quota 250 MiB on R2
+- [x] Deploy guard: refuses a public bucket (r2.dev or custom domain); staging stays on D1
+- [x] README: Why R2 can't bill (math), other free quotas; CHANGELOG
+- [ ] PR: CI, Sol loop, merge
+- [ ] Dhruv: add the card and enable R2 (Standard storage) on the Cloudflare account; deploy token needs R2 read
+- [ ] Create bucket `htmlartifact-artifacts`, uncomment the bindings (app, usercontent, ops), deploy, `migrate:r2`, smoke
+- [ ] GA audit (Sol delegate): verify findings, fix blockers
+
 ## Run 3 fixes → 0.2.0 (2026-10-20)
 Done = every R3-n finding below is fixed by a merged PR or marked skipped with
 the reason; htmlartifact@0.2.0 published with provenance and tagged v0.2.0;

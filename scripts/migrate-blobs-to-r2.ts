@@ -1,5 +1,5 @@
-// Moves artifact HTML from D1 (`blobs`) into R2. Optional future work: R2 is not
-// used under the zero-spend rule (no hard spending cap; README).
+// Moves artifact HTML from D1 (`blobs`) into R2, once, after production is
+// deployed with the ARTIFACTS binding (README: Why R2 can't bill).
 //   bun run migrate:r2              -> production
 //   bun run migrate:r2 -- --staging -> staging
 //   add --dry-run to only report what would move

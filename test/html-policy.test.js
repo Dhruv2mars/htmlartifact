@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { validateHtml, validateUpload } from "../src/html-policy.ts";
-import { STORAGE, accessToken, callApi, startStack } from "./helpers.js";
+import { accessToken, callApi, startStack } from "./helpers.js";
 
 const MiB = 1024 * 1024;
-const ACCOUNT_LIMIT = 4 * MiB; // MAX_ACCOUNT_HTML_BYTES default with R2
-// The server's default for this run's storage (src/config.ts): 1 MiB on D1.
-const SERVER_LIMIT = STORAGE === "r2" ? 4 * MiB : 1 * MiB;
+const ACCOUNT_LIMIT = 4 * MiB; // a limit passed to validateUpload directly
+// The server's default (src/config.ts): 1 MiB on either storage.
+const SERVER_LIMIT = 1 * MiB;
 
 // Dense, table-heavy markup of about `bytes` bytes: 7 elements per ~190-byte
 // row, the shape that made a full parse5 tree cost ~57 MB of heap per MB.
@@ -301,6 +301,6 @@ describe("large uploads through the API", () => {
       padding: "x".repeat(3 * SERVER_LIMIT + 64 * 1024)
     });
     assert.equal(result.status, 413);
-    assert.match(result.body.error, STORAGE === "r2" ? /Request is over the 12\.1 MiB limit\./ : /Request is over the 3\.1 MiB limit\./);
+    assert.match(result.body.error, /Request is over the 3\.1 MiB limit\./);
   });
 });

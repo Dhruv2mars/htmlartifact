@@ -7,6 +7,20 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+### Added
+
+- R2 storage with a built-in $0 cap (README → Why R2 can't bill): uploads stop
+  at 9 GB of stored HTML across the deployment, and R2 writes and lists draw
+  on a daily budget (30,000) kept in D1. An upload over today's budget gets
+  HTTP 503 with `Retry-After` until 00:00 UTC; a deletion over it stays queued
+  for the cron. On R2, each workspace holds 250 MiB (50 MiB on D1).
+- `bun run deploy:all` refuses to deploy over a public R2 bucket.
+
+### Changed
+
+- Upload limits are 1 MiB (2 MiB flagged) and 10 pages on either storage:
+  Workers Free CPU, not storage, bounds them.
+
 ## [0.2.0] - 2026-10-20
 
 Fixes and features from a third real-world run (a startup, a multi-workspace
