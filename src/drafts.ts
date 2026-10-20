@@ -11,6 +11,9 @@ export interface DraftSummary {
   title: string;
   description: string | null;
   author: string | null;
+  // Who published the current version (an admin or CI key can update a
+  // teammate's artifact, which keeps its author).
+  updatedBy: string | null;
   // The author was removed from the workspace, left it, or was deleted.
   authorFormer: boolean;
   repoOrg: string | null;
@@ -80,7 +83,7 @@ async function listDrafts(
   const { results } = await db
     .prepare(
       `SELECT d.id, d.slug, d.title, d.description, d.repo_org, d.repo_name, d.repo_host,
-              d.created_at, d.updated_at, a.name AS author_name,
+              d.created_at, d.updated_at, a.name AS author_name, u.name AS updated_by_name,
               (d.account_id NOT LIKE 'api_key_%' AND EXISTS (SELECT 1 FROM revocations r
                  WHERE r.subject = d.account_id AND r.organization_id IN (d.organization_id, '*'))) AS author_former,
               cv.version_number AS latest_version_number, cv.created_at AS latest_version_at,
@@ -88,6 +91,7 @@ async function listDrafts(
        FROM drafts d
        LEFT JOIN draft_versions cv ON cv.id = d.current_version_id
        LEFT JOIN accounts a ON a.id = d.account_id
+       LEFT JOIN accounts u ON u.id = cv.created_by
        WHERE ${where} AND d.deleted_at IS NULL
        ORDER BY d.updated_at DESC
        LIMIT ${Number(limit)}`
@@ -101,6 +105,7 @@ async function listDrafts(
     title: row.title,
     description: row.description,
     author: row.author_name,
+    updatedBy: row.updated_by_name,
     authorFormer: Boolean(row.author_former),
     repoOrg: row.repo_org,
     repoName: row.repo_name,

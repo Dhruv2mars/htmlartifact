@@ -27,12 +27,25 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   The old `/mine/<id>` URL redirects there.
 - The `/join/<code>` page says when the invite expires and how many more
   people it admits.
+- `prune <id-or-url> --keep <n>` deletes an artifact's old versions to free
+  workspace storage, keeping the latest `n` (the URL and current version
+  stay). Its author or a workspace admin can prune (API:
+  `DELETE /api/drafts/:id/versions?keepLatest=N`).
+- `check` and `list` show the workspace's storage used and left (`usage` in
+  `--json`).
+- `list` says who published the current version when it isn't the author
+  (`updatedBy` in `--json`), and the upload receipt warns when you publish
+  over a teammate's artifact.
 
 ### Changed
 
 - `read` (and any CLI sign-in) opens artifacts in every workspace you are an
   active member of, as the browser does; uploads and deletes still act only
   on your current workspace. API keys still read only their own workspace.
+- `list --json` prints `{ "drafts": [...], "usage": {...} }` instead of a bare
+  array.
+- Updating a teammate's artifact (by `--draft` or their `--slug`) is refused
+  with HTTP 403, like deleting it, instead of 409.
 
 ### Fixed
 
@@ -57,6 +70,11 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   page, and links to your workspaces.
 - The web `/workspaces` page shows `npx htmlartifact …` commands, which work
   without a global install.
+- Parallel uploads can no longer overshoot the workspace's storage quota or
+  the database size guard: the check and the counter now commit in one
+  transaction with the version.
+- `workspace list` no longer shows a workspace that was just deleted.
+- Deleting a multi-page artifact gave back more storage than it had used.
 
 ### Changed
 

@@ -1,7 +1,7 @@
 import type { Context, Hono, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomToken, sha256 } from "./crypto.ts";
-import { FLAGS, bumpMembershipEpoch, databaseBytes, findWorkspace, findWorkspaceByHandle, isRevoked, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
+import { FLAGS, bumpMembershipEpoch, databaseUsage, findWorkspace, findWorkspaceByHandle, isRevoked, now, revokeAllInvites, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 // The Worker validates with the native HTMLRewriter (Workers Free CPU limits);
 // parse5 (src/html-policy.ts) stays in the CLI.
@@ -11,7 +11,7 @@ import { CI_KEY_PREFIX, newCiKeyId, newDraftId, newInternalId, newInviteCode, no
 import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
 import { activeMembership, bearerViewer, userStillMember } from "./auth.ts";
-import { deleteWorkspaceStatements, draftPrefix, membershipBeingUndone, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
+import { deleteWorkspaceStatements, draftPrefix, isWorkspaceDeleted, membershipBeingUndone, pruneVersions, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
 import { stageObjects } from "./storage.ts";
 import {
   isMember,
@@ -60,6 +60,7 @@ interface CheckReport {
   account: { id: string; name: string };
   workspace: ReturnType<typeof workspaceJson>;
   limits: { maxBytes: number; maxPages: number };
+  usage: WorkspaceUsage;
   capabilities: {
     inlineScripts: boolean;
     multiPage: boolean;
@@ -73,6 +74,14 @@ interface CheckReport {
   errors?: string[];
   warnings?: string[];
   slug?: { slug: string; status: "available" | "yours" | "taken" | "unavailable"; message?: string };
+}
+
+// The workspace's storage (src/config.ts: limits.workspaceBytes), as /api/check,
+// /api/drafts and pruning report it.
+interface WorkspaceUsage {
+  storedBytes: number;
+  limitBytes: number;
+  remainingBytes: number;
 }
 
 // What scripted artifacts cannot do, reported by /api/check so agents can
@@ -192,6 +201,9 @@ export function registerApi(app: Hono<AppEnv>): void {
     });
     const workspaces: { id: string; name: string; handle: string | null; role: string | null; current: boolean }[] = [];
     for (const m of page.data) {
+      // WorkOS deletes the organization after ours is gone (and can lag, or
+      // fail and be retried by the cron): a deleted workspace is not listed.
+      if (await isWorkspaceDeleted(c.env.DB, m.organizationId)) continue;
       const workspace = await findWorkspace(c.env.DB, m.organizationId);
       workspaces.push({
         id: m.organizationId,
@@ -545,7 +557,7 @@ export function registerApi(app: Hono<AppEnv>): void {
       c.req.query("scope") === "workspace"
         ? await listWorkspaceDrafts(c.env.DB, options)
         : await listMyDrafts(c.env.DB, { ...options, accountId: viewer.account_id });
-    return c.json({ ok: true, drafts });
+    return c.json({ ok: true, drafts, usage: await workspaceUsage(c, viewer.organization_id) });
   });
 
   // Deletes an artifact for real: every version and page in R2 (one key
@@ -577,6 +589,32 @@ export function registerApi(app: Hono<AppEnv>): void {
     // R2 is purged before responding; if it fails, the queued prefix is retried by the cron.
     await purgeDraft(c.env, viewer.organization_id, draft.id);
     return c.json({ ok: true, draftId: draft.id });
+  });
+
+  // Prunes an artifact's history to its latest `keepLatest` versions, freeing
+  // their storage; the URL and the current version stay. Same rights as
+  // delete. A long history is pruned in steps: `more` asks for another call.
+  app.delete("/api/drafts/:draftId/versions", requireMember, perUser("prune", 30), async (c) => {
+    const viewer = c.get("viewer");
+    const draftId = c.req.param("draftId");
+    const draft = draftId
+      ? await c.env.DB.prepare("SELECT id, account_id FROM drafts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL")
+          .bind(draftId, viewer.organization_id)
+          .first<Pick<DraftRow, "id" | "account_id">>()
+      : null;
+    if (!draft) return c.json({ ok: false, error: "Artifact not found." }, 404);
+    if (draft.account_id !== viewer.account_id && viewer.role !== "admin") {
+      return c.json({ ok: false, error: "That artifact belongs to a teammate; only they or a workspace admin can prune it." }, 403);
+    }
+    const keep = Number(c.req.query("keepLatest"));
+    if (!Number.isInteger(keep) || keep < 1 || keep > 10_000) {
+      return c.json({ ok: false, error: "keepLatest must be a whole number of versions to keep, at least 1. To remove every version, delete the artifact." }, 422);
+    }
+    const pruned = await pruneVersions(c.env, viewer.organization_id, draft.id, keep);
+    const left = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM draft_versions WHERE draft_id = ?")
+      .bind(draft.id)
+      .first<{ n: number }>();
+    return c.json({ ok: true, draftId: draft.id, ...pruned, versionCount: left?.n ?? 0, usage: await workspaceUsage(c, viewer.organization_id) });
   });
 }
 
@@ -835,7 +873,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
         .first<DraftRow>()
     : null;
   if (slugDraft && !canUpdateDraft(viewer, slugDraft)) {
-    return c.json({ ok: false, error: `The custom URL "${slug}" belongs to a teammate's artifact.` }, 409);
+    return c.json({ ok: false, error: `The custom URL "${slug}" belongs to a teammate's artifact; only they or a workspace admin can update it.` }, 403);
   }
   if (slugDraft && draftId && slugDraft.id !== draftId) {
     return c.json(
@@ -853,7 +891,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       : null);
   if (draftId && !existing) return c.json({ ok: false, error: "Artifact not found." }, 404);
   if (existing && !canUpdateDraft(viewer, existing)) {
-    return c.json({ ok: false, error: "That artifact belongs to a teammate; only they or a workspace admin can update it." }, 409);
+    return c.json({ ok: false, error: "That artifact belongs to a teammate; only they or a workspace admin can update it." }, 403);
   }
 
   const current = existing?.current_version_id
@@ -878,24 +916,29 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     await runDeletion(c.env, "r2_prefix", written);
   };
 
+  // Free-tier storage guards (src/config.ts): the workspace's share, then the
+  // whole database's headroom (D1 Free caps a database at 500 MB). Checked
+  // here for a clear answer, and again inside the batch (`fits`), where the
+  // check and the counter's increment are one transaction: concurrent uploads
+  // cannot all pass on the same reading.
+  const { workspaceBytes, databaseBytes: databaseLimit } = c.get("config").limits;
+  let fits = "1";
+  let fitsParams: (string | number)[] = [];
   if (!unchanged) {
-    // Free-tier storage guards (src/config.ts): the workspace's share, then
-    // the whole database's headroom (D1 Free caps a database at 500 MB).
-    const { workspaceBytes, databaseBytes: databaseLimit } = c.get("config").limits;
-    const used = await workspaceStoredBytes(db, viewer.organization_id);
-    if (used + validation.totalBytes > workspaceBytes) {
-      return c.json(
-        {
-          ok: false,
-          error: `This workspace's storage is full (${formatBytes(used)} of ${formatBytes(workspaceBytes)}, every version counts). Delete old artifacts with htmlartifact delete, then upload again.`
-        },
-        507
-      );
-    }
-    const size = await databaseBytes(db);
-    if (size !== null && size + validation.totalBytes > databaseLimit) {
-      return c.json({ ok: false, error: "This htmlartifact deployment's storage is full. Ask an admin to delete old artifacts." }, 507);
-    }
+    const reading = await storageFull(c, validation.totalBytes);
+    if (reading instanceof Response) return reading;
+    // Bytes counted after this reading are not in `size` yet: the batch adds
+    // the counters' growth since then (all workspaces) to the measured size.
+    const { size, countedBytes } = reading;
+    fits = `COALESCE((SELECT stored_bytes FROM workspace_usage WHERE organization_id = ?), 0) + ? <= ?
+      AND (SELECT COALESCE(SUM(stored_bytes), 0) FROM workspace_usage) + ? <= ?`;
+    fitsParams = [
+      viewer.organization_id,
+      validation.totalBytes,
+      workspaceBytes,
+      validation.totalBytes,
+      size === null ? Number.MAX_SAFE_INTEGER : databaseLimit - size + countedBytes
+    ];
   }
 
   const statements: D1PreparedStatement[] = [];
@@ -929,7 +972,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
           .prepare(
             `INSERT INTO drafts (id, account_id, organization_id, title, description, repo_org, repo_name, repo_host, slug)
              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-             WHERE NOT EXISTS (SELECT 1 FROM deleted_workspaces WHERE organization_id = ?)`
+             WHERE NOT EXISTS (SELECT 1 FROM deleted_workspaces WHERE organization_id = ?) AND ${fits}`
           )
           .bind(
             id,
@@ -941,13 +984,15 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
             cleanText(metadata.repoName),
             cleanText(metadata.repoHost),
             slug,
-            viewer.organization_id
+            viewer.organization_id,
+            ...fitsParams
           )
       );
     }
     // The version number is computed inside the INSERT, and the row is only
     // written if the artifact's current version is still the one this upload
-    // started from (compare-and-swap; see the final UPDATE).
+    // started from (compare-and-swap; see the final UPDATE) and it fits the
+    // storage guards; the counter's increment below then commits with it.
     statements.push(
       db
         .prepare(
@@ -958,7 +1003,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
            SELECT ?, ?, (SELECT COALESCE(MAX(version_number), 0) + 1 FROM draft_versions WHERE draft_id = ?),
                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            WHERE (SELECT current_version_id FROM drafts WHERE id = ?) IS ?
-             AND NOT EXISTS (SELECT 1 FROM deleted_workspaces WHERE organization_id = ?)`
+             AND NOT EXISTS (SELECT 1 FROM deleted_workspaces WHERE organization_id = ?)
+             AND ${fits}`
         )
         .bind(
           versionId,
@@ -982,7 +1028,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
           cleanText(metadata.ciRunUrl),
           id,
           observedVersionId,
-          viewer.organization_id
+          viewer.organization_id,
+          ...fitsParams
         )
     );
     for (const page of extraPages) {
@@ -1015,7 +1062,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
         `UPDATE drafts SET current_version_id = ?, title = ?, description = COALESCE(?, description),
            repo_org = COALESCE(?, repo_org), repo_name = COALESCE(?, repo_name), repo_host = COALESCE(?, repo_host),
            slug = COALESCE(?, slug), updated_at = CASE WHEN ? THEN updated_at ELSE unixepoch() END
-         WHERE id = ? AND current_version_id IS ?`
+         WHERE id = ? AND current_version_id IS ? AND EXISTS (SELECT 1 FROM draft_versions WHERE id = ?)`
       )
       .bind(
         versionId,
@@ -1027,7 +1074,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
         slug,
         unchanged ? 1 : 0,
         id,
-        observedVersionId
+        observedVersionId,
+        versionId
       )
   );
 
@@ -1039,6 +1087,9 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     // deleted): nothing of ours became current. Safe to retry.
     if (!results.at(-1)?.meta.changes) {
       await discard();
+      // Concurrent uploads filled the storage after the first check.
+      const full = unchanged ? null : await storageFull(c, validation.totalBytes);
+      if (full instanceof Response) return full;
       return c.json({ ok: false, error: "Another upload to this artifact landed at the same moment. Retry." }, 409);
     }
   } catch (error) {
@@ -1062,6 +1113,14 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const origin = c.get("origin");
   const publicUrl = draftUrl(origin, draft, viewer.workspace.handle);
   const multiPage = validation.pages.length > 1;
+  const warnings = [...validation.warnings];
+  // An admin (or a CI key) publishing over a teammate's artifact: say so,
+  // since the artifact keeps its author.
+  if (existing && !unchanged && existing.account_id !== viewer.account_id) {
+    const author = await db.prepare("SELECT name FROM accounts WHERE id = ?").bind(existing.account_id).first<{ name: string }>();
+    const name = author?.name || "a teammate";
+    warnings.push(`This artifact is ${name}'s: you published version ${version.version_number} over their work. It stays theirs; list shows you as the last to update it.`);
+  }
   return c.json(
     {
       ok: true,
@@ -1081,7 +1140,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       // Built from the draft ID, which never moves: a slug can be renamed.
       versionUrl: `${origin}/d/${id}/v/${version.version_number}${multiPage ? "/" : ""}`,
       pages: multiPage ? validation.pages.map((p) => ({ path: p.path, url: `${publicUrl}/${p.path}` })) : undefined,
-      warnings: validation.warnings
+      warnings
     },
     existing ? 200 : 201
   );
@@ -1098,6 +1157,7 @@ async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
     account: { id: viewer.account_id, name: viewer.account_name },
     workspace: workspaceJson(viewer.workspace),
     limits: { maxBytes: capabilities.maxBytes, maxPages: capabilities.maxPages },
+    usage: await workspaceUsage(c, viewer.organization_id),
     capabilities: {
       inlineScripts: true,
       multiPage: true,
@@ -1137,6 +1197,33 @@ async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
     if (report.slug.status === "unavailable" || report.slug.status === "taken") report.ok = false;
   }
   return c.json(report);
+}
+
+// A 507 if `bytes` more would overflow the workspace's share or the
+// database's headroom; otherwise the database reading it checked.
+async function storageFull(c: Context<MemberEnv>, bytes: number): Promise<Response | Awaited<ReturnType<typeof databaseUsage>>> {
+  const { workspaceBytes, databaseBytes: databaseLimit } = c.get("config").limits;
+  const used = await workspaceStoredBytes(c.env.DB, c.get("viewer").organization_id);
+  if (used + bytes > workspaceBytes) {
+    return c.json(
+      {
+        ok: false,
+        error: `This workspace's storage is full (${formatBytes(used)} of ${formatBytes(workspaceBytes)}, every version counts). Free space with htmlartifact prune <artifact> --keep <n> (old versions) or htmlartifact delete, then upload again.`
+      },
+      507
+    );
+  }
+  const reading = await databaseUsage(c.env.DB);
+  if (reading.size !== null && reading.size + bytes > databaseLimit) {
+    return c.json({ ok: false, error: "This htmlartifact deployment's storage is full. Ask an admin to delete old artifacts." }, 507);
+  }
+  return reading;
+}
+
+async function workspaceUsage<E extends AppEnv>(c: Context<E>, organizationId: string): Promise<WorkspaceUsage> {
+  const limitBytes = c.get("config").limits.workspaceBytes;
+  const storedBytes = await workspaceStoredBytes(c.env.DB, organizationId);
+  return { storedBytes, limitBytes, remainingBytes: Math.max(0, limitBytes - storedBytes) };
 }
 
 function uploadCapabilities(viewer: Viewer, config: Config): { maxBytes: number; maxPages: number } {

@@ -4,7 +4,7 @@ import { Cause, Console, Effect, Layer } from "effect";
 import { CliConfig, CliError as ParseError, Command, Flag, GlobalFlag } from "effect/cli";
 
 import { login, logout, whoami } from "./commands/account.ts";
-import { check, deleteDraft, list, read, upload } from "./commands/drafts.ts";
+import { check, deleteDraft, list, prune, read, upload } from "./commands/drafts.ts";
 import { workspace } from "./commands/workspace.ts";
 import { VERSION, withCmd } from "./env.ts";
 import { errorKind, EXIT_CODES, isHtmlArtifactError, reason, type ErrorKind } from "./errors.ts";
@@ -12,7 +12,7 @@ import { printJson } from "./format.ts";
 
 const htmlartifact = Command.make("htmlartifact").pipe(
   Command.withDescription("Publish HTML artifacts that only your workspace can open."),
-  Command.withSubcommands([login, logout, whoami, workspace, read, upload, check, list, deleteDraft])
+  Command.withSubcommands([login, logout, whoami, workspace, read, upload, check, list, deleteDraft, prune])
 );
 
 // `--version` / `-V` print the bare version, as the CLI always has.

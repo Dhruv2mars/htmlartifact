@@ -98,7 +98,7 @@ test("sign in → create workspace → invite → teammate joins → publish →
   // `read` still opens it (alice is a member of both, as in the browser).
   await cli(["workspace", "switch", "Acme"]);
   assert.equal((await json(["whoami"])).workspace.name, "Acme");
-  assert.ok(!(await json(["list", "--all"])).some((d) => d.draftId === receipt.draftId));
+  assert.ok(!(await json(["list", "--all"])).drafts.some((d) => d.draftId === receipt.draftId));
   assert.match((await cli(["read", receipt.url])).stdout, /File: /);
   const listed = await json(["workspace", "list"]);
   assert.deepEqual(listed.map((w) => w.name).sort(), ["Acme", "Design Crit"]);
@@ -132,6 +132,35 @@ test("CI publishes with HTMLARTIFACT_TOKEN and no saved sign-in", async () => {
     HTMLARTIFACT_TOKEN: CI_KEY
   });
   assert.equal(receipt.workspace, "Acme");
+});
+
+test("prune keeps the latest versions; check and list show the workspace's storage; list says who updated", async () => {
+  const ci = await json(["upload", writeHtml(stack.tmp, "nightly.html", page("Nightly v1")), "--new"], {
+    HTMLARTIFACT_HOME: path.join(stack.tmp, "ci-home"),
+    HTMLARTIFACT_TOKEN: CI_KEY
+  });
+  // An admin publishing over someone else's artifact is told so.
+  const file = path.join(stack.tmp, "nightly-fix.html");
+  for (const n of [2, 3, 4]) {
+    fs.writeFileSync(file, page(`Nightly v${n}`));
+    const { stderr } = await cli(["upload", file, "--draft", ci.draftId]);
+    assert.match(stderr, /Warning: This artifact is Acme CI \(API key\)'s: you published version \d over their work/);
+  }
+  assert.match((await cli(["list", "--all"])).stdout, /Nightly v4 {2}· Acme CI \(API key\)\n.* · v4 · 4 versions · updated just now by Alice/);
+
+  await assert.rejects(cli(["prune", ci.draftId]), (error) => error.code === 2 && /--keep 5/.test(error.stderr));
+  const pruned = await json(["prune", ci.draftId, "--keep", "1"]);
+  assert.equal(pruned.deleted, 3);
+  assert.equal(pruned.versionCount, 1);
+  assert.equal(pruned.usage.remainingBytes, pruned.usage.limitBytes - pruned.usage.storedBytes);
+  assert.match((await cli(["prune", ci.draftId, "--keep", "1"])).stdout, /Nothing to prune: \w+ has 1 version\.\nStorage: .* of 50 MiB used \(.* left\)/);
+
+  const listed = await json(["list", "--all"]);
+  assert.ok(listed.drafts.some((d) => d.draftId === ci.draftId && d.updatedBy === "Alice" && d.versionCount === 1));
+  assert.deepEqual(listed.usage, pruned.usage);
+  assert.deepEqual((await json(["check"])).usage, pruned.usage);
+  assert.match((await cli(["check"])).stdout, /Storage: .* of 50 MiB used/);
+  assert.match((await cli(["list"])).stdout, /Storage: .* of 50 MiB used/);
 });
 
 test("upload checks the markup locally first: errors with line and column, nothing sent", async () => {
@@ -500,7 +529,7 @@ test("a 429 is retried once after its Retry-After", async () => {
   try {
     const started = Date.now();
     const out = await cli(["list", "--json"], ciEnv("retry-home", { HTMLARTIFACT_API_URL: p.url }));
-    assert.ok(Array.isArray(JSON.parse(out.stdout)));
+    assert.ok(Array.isArray(JSON.parse(out.stdout).drafts));
     assert.equal(limited, 1);
     assert.match(out.stderr, /Retrying in 1s/);
     assert.ok(Date.now() - started >= 1000, "waited Retry-After");

@@ -107,6 +107,11 @@ async function applyEvent(
     case "organization.deleted": {
       // Deleted in WorkOS directly (e.g. the dashboard): delete the workspace
       // here too. Ours already deleted (by DELETE /api/workspaces/current): no-op.
+      // No session is revoked here: a token whose workspace is gone still
+      // signs its user in, with no workspace (buildViewer, src/auth.ts). Only
+      // session.revoked, user.deleted and logout make the API answer "Not
+      // signed in"; if WorkOS ends the sessions of a deleted organization, it
+      // says so with session.revoked, and that session is over in WorkOS too.
       const id = field(data, "id");
       if (!id) throw new Error(`${event} has no id.`);
       if (await isWorkspaceDeleted(db, id)) return;

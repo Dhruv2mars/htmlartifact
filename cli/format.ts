@@ -33,6 +33,12 @@ export interface Receipt {
   warnings: string[];
 }
 
+// The workspace's storage line, from a server's `usage` (servers before it sent none).
+export function formatUsage(usage: Json | undefined): string | null {
+  if (!usage || typeof usage.storedBytes !== "number") return null;
+  return `Storage: ${formatBytes(usage.storedBytes)} of ${formatBytes(usage.limitBytes)} used (${formatBytes(usage.remainingBytes)} left)`;
+}
+
 export const printReceipt = (receipt: Receipt) =>
   Effect.gen(function* () {
     const headline = {
@@ -96,6 +102,8 @@ export const printCheckReport = (report: Json) =>
       yield* Console.log(`Account: ${report.account?.name}`);
       yield* Console.log(`Workspace: ${report.workspace?.name}`);
       yield* Console.log(`Limit: ${formatBytes(report.limits.maxBytes)} per upload, ${report.limits.maxPages} page(s)`);
+      const usage = formatUsage(report.usage);
+      if (usage) yield* Console.log(usage);
     }
     if (report.slug) {
       yield* Console.log(

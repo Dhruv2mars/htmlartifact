@@ -29,4 +29,4 @@ export const CMD: string = ranOnce ? "npx htmlartifact" : "htmlartifact";
 // Server messages and fixed hints say `htmlartifact <command>`; say it the way
 // this CLI was run.
 export const withCmd = (text: string): string =>
-  ranOnce ? text.replace(/(^|[\s(`'"])htmlartifact (?=(?:login|logout|whoami|workspace|upload|read|list|delete|check)\b)/g, "$1npx htmlartifact ") : text;
+  ranOnce ? text.replace(/(^|[\s(`'"])htmlartifact (?=(?:login|logout|whoami|workspace|upload|read|list|delete|prune|check)\b)/g, "$1npx htmlartifact ") : text;

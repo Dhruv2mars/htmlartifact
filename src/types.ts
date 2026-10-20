@@ -217,6 +217,7 @@ export interface DraftListRow
     "id" | "slug" | "title" | "description" | "repo_org" | "repo_name" | "repo_host" | "created_at" | "updated_at"
   > {
   author_name: string | null;
+  updated_by_name: string | null;
   author_former: number;
   latest_version_number: number | null;
   latest_version_at: number | null;
