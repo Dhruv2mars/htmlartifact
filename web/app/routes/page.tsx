@@ -60,7 +60,7 @@ function titleFor(page: Page | undefined): string {
     case "workspaces":
       return "Workspaces · htmlartifact";
     case "join":
-      return `Join ${page.workspaceName} · htmlartifact`;
+      return `${page.member ? page.workspace.name : `Join ${page.workspace.name}`} · htmlartifact`;
     default:
       return "htmlartifact";
   }
@@ -96,6 +96,6 @@ function PageBody() {
     case "workspaces":
       return <Workspaces session={page.session} workspaces={page.workspaces} next={page.next} />;
     case "join":
-      return <Join session={page.session} code={page.code} workspaceName={page.workspaceName} />;
+      return <Join {...page} />;
   }
 }

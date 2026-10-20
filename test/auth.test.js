@@ -168,6 +168,42 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     assert.match(joined.text_, /<h1[^>]*>Nora Labs<\/h1>/);
     assert.match(joined.text_, /Nora plan/);
   });
+
+  test("the join page shows expiry and uses left, and a member gets the way in instead of Join", async () => {
+    const invite = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", { maxUses: 3 });
+    const link = `/join/${invite.body.code}`;
+    const landing = await new Browser(stack).signIn("bob@acme.test", { workspace: "Acme", next: link });
+    assert.match(landing.text_, /Join Nora Labs/);
+    assert.match(landing.text_, /Expires <time[^>]*>in 7 days<\/time>, and admits 3 more people\./);
+    const own = await new Browser(stack).signIn("nora@new.test", { workspace: "Nora Labs", next: link });
+    assert.equal(own.status, 200);
+    assert.match(own.text_, /You(&#x27;|')re already a member of/);
+    assert.doesNotMatch(own.text_, /Join workspace/);
+    assert.match(own.text_, /href="\/"[^>]*>Open Nora Labs/);
+    // A member who is in another workspace right now is offered the switch.
+    const olivia = new Browser(stack);
+    const elsewhere = await olivia.signIn("olivia@other.test", { workspace: "Other", next: link });
+    assert.match(elsewhere.text_, /action="\/workspaces\/switch"/);
+    assert.match(elsewhere.text_, /Switch to Nora Labs/);
+  });
+
+  test("a bogus or dead invite link says so, signed in or out, before any sign-up", async () => {
+    const anon = await new Browser(stack).get("/join/HA-ZZZZ-ZZZZ-ZZZZ");
+    assert.equal(anon.status, 404);
+    assert.match(anon.text_, /Invite not valid/);
+    assert.doesNotMatch(anon.text_, /Sign in or create an account/);
+    const signedIn = new Browser(stack);
+    await signedIn.signIn("olivia@other.test", { workspace: "Other" });
+    const page = await signedIn.get("/join/not-a-code");
+    assert.equal(page.status, 404);
+    assert.match(page.text_, /Invite not valid/);
+    // A live code signed out: the anonymous invite page, which names no workspace.
+    const invite = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", {});
+    const live = await new Browser(stack).get(`/join/${invite.body.code}`);
+    assert.equal(live.status, 401);
+    assert.match(live.text_, /You(&#x27;|')re invited to a workspace/);
+    assert.doesNotMatch(live.text_, /Nora Labs/);
+  });
 });
 
 describe("publishing", () => {
@@ -281,6 +317,21 @@ describe("reading", () => {
     const landed = await browser.signIn("bob@acme.test", { next: new URL(acme.publicUrl).pathname });
     assert.equal(landed.status, 200);
     assert.match(landed.text_, /Acme plan/);
+  });
+
+  test("any member opens a teammate's version history; the old /mine/<id> URL redirects", async () => {
+    const browser = new Browser(stack);
+    await browser.signIn("bob@acme.test", { workspace: "Acme" });
+    const history = await browser.get(`/history/${acme.draftId}`);
+    assert.equal(history.status, 200);
+    assert.match(history.text_, /<h1[^>]*>Acme plan/);
+    assert.match(history.text_, /By /);
+    assert.match(history.text_, new RegExp(`/d/${acme.draftId}/v/1`));
+    const old = await browser.get(`/mine/${acme.draftId}`);
+    assert.equal(new URL(old.finalUrl).pathname, `/history/${acme.draftId}`);
+    assert.equal(old.status, 200);
+    const feed = await browser.get("/");
+    assert.match(feed.text_, new RegExp(`href="/history/${acme.draftId}"`));
   });
 
   test("the workspace CI key can read workspace artifacts", async () => {
