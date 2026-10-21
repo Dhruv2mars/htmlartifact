@@ -75,6 +75,7 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     const doomed = (await callApi(stack, alice, "POST", "/api/uploads", { html: page("Doomed") })).body;
     const kept = (await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-kept", html: page("Kept") })).body;
     assert.equal((await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-kept", html: page("Kept v2") })).body.draftId, kept.draftId);
+    const reverted = (await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-reverted", html: page("Reverted v1") })).body;
     let max = await signInTokens(stack, "max@both.test", "Acme");
     const workspace = (await callApi(stack, max.accessToken, "POST", "/api/workspaces", { name: "Restored Co" })).body.workspace;
     max = await refreshInto(stack, max, workspace.id);
@@ -90,6 +91,9 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     // WorkOS delete still queued (an undone join is denied while it is); and
     // today's budget spent further.
     assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${kept.draftId}/versions?keepLatest=1`)).body.deleted, 1);
+    // Reverted's current version at the bookmark replaced, then pruned.
+    assert.equal((await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-reverted", html: page("Reverted v2") })).body.draftId, reverted.draftId);
+    assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${reverted.draftId}/versions?keepLatest=1`)).body.deleted, 1);
     const sam = await accessToken(stack, "sam@new.test");
     assert.equal((await callApi(stack, sam, "POST", "/api/workspaces/join", { code: single.code })).status, 200);
     await batch([proxy.env.DB.prepare("INSERT INTO pending_deletions (kind, target) VALUES ('workos_membership', 'om_restored_undo')")]);
@@ -105,7 +109,7 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     const { sql, summary } = reconcileStatements(exported.query, (await snapshot()).query);
     assert.deepEqual(
       { ...summary, revocations: 0, epochs: 0, queuedDeletions: 0, budgets: 0 },
-      { workspaces: 1, artifacts: 1, versions: 1, ciKeys: 1, invites: 1, revocations: 0, epochs: 0, undoneJoins: 0, queuedDeletions: 0, budgets: 0, scrubbedUsers: 0 }
+      { workspaces: 1, artifacts: 2, versions: 1, ciKeys: 1, invites: 1, revocations: 0, epochs: 0, undoneJoins: 0, queuedDeletions: 0, budgets: 0, scrubbedUsers: 0 }
     );
     await batch(sql.map((statement) => proxy.env.DB.prepare(statement)));
 
@@ -123,6 +127,10 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     const feed = (await callApi(stack, alice, "GET", "/api/drafts?scope=workspace")).body.drafts.map((d) => d.draftId);
     assert.ok(!feed.includes(doomed.draftId), "the deleted artifact is gone again");
     assert.ok(feed.includes(kept.draftId), "the rest is untouched");
+    // Its pruned v1 is not served again: v2 was lost to the restore, so the artifact goes.
+    assert.ok(!feed.includes(reverted.draftId), "an artifact left with only pruned versions is deleted");
+    assert.equal((await all(`SELECT COUNT(*) AS n FROM draft_versions WHERE draft_id = '${reverted.draftId}'`))[0].n, 0);
+    assert.equal((await fetch(reverted.publicUrl, { headers: { Authorization: `Bearer ${alice}` } })).status, 404);
     assert.equal((await fetch(doomed.publicUrl, { headers: { Authorization: `Bearer ${alice}` } })).status, 404);
     // Their HTML is queued for the cron again (deletion.test.js covers the cron).
     const queued = (await all("SELECT target FROM pending_deletions WHERE kind = 'r2_prefix'")).map((r) => r.target);

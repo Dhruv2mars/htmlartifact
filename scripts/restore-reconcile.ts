@@ -5,7 +5,8 @@
 // taken just after. Either may also be a SQLite file. The output:
 //   - workspaces deleted before the restore are deleted again;
 //   - artifacts deleted before the restore (or missing from it) are deleted
-//     again, and so are versions pruned from the rest;
+//     again, and so are versions pruned from the rest (an artifact whose
+//     restored current version was pruned is deleted: its newer one is lost);
 //   - CI keys and invite codes revoked (or gone) before the restore are revoked,
 //     and invite uses are never handed back;
 //   - session revocations, membership epochs, undone joins, queued deletions
@@ -58,15 +59,19 @@ export function reconcileStatements(before: Query, restored: Query): { sql: stri
   for (const id of workspaces) add(deleteWorkspaceStatements(recorder, id));
   const gone = new Set([...tombstoned]);
 
-  // Artifacts: live now, but deleted or absent before (in a live workspace).
+  // Artifacts: live now, but deleted or absent before (in a live workspace),
+  // or whose restored current version was pruned before: what it showed was
+  // deleted, and what replaced it was lost to the restore.
   const liveBefore = ids(before, "SELECT id FROM drafts WHERE deleted_at IS NULL");
-  const drafts = restored("SELECT id, organization_id FROM drafts").filter(
-    (row) => !liveBefore.has(String(row.id)) && !gone.has(String(row.organization_id))
+  const versionsBefore = ids(before, "SELECT id FROM draft_versions");
+  const drafts = restored("SELECT id, organization_id, current_version_id FROM drafts").filter(
+    (row) =>
+      !gone.has(String(row.organization_id)) &&
+      (!liveBefore.has(String(row.id)) || (row.current_version_id != null && !versionsBefore.has(String(row.current_version_id))))
   );
   for (const row of drafts) add(deleteDraftStatements(recorder, String(row.organization_id), String(row.id)));
 
   // Versions pruned (or gone) before the restore, of artifacts that stay.
-  const versionsBefore = ids(before, "SELECT id FROM draft_versions");
   const doomedDrafts = new Set(drafts.map((row) => String(row.id)));
   const pruned = new Map<string, { organizationId: string; ids: string[] }>();
   for (const row of restored("SELECT v.id, v.draft_id, d.organization_id FROM draft_versions v JOIN drafts d ON d.id = v.draft_id")) {
