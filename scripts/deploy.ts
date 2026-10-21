@@ -13,5 +13,5 @@ await $`bun ${root}scripts/build-pages.ts`;
 if (production) await $`${wrangler} deploy --env=`.cwd(`${root}deploy/ops`);
 else await $`${wrangler} deploy --env staging`.cwd(`${root}deploy/ops`);
 for (const project of ["app", "usercontent"]) {
-  await $`${wrangler} pages deploy --branch ${branch} --commit-dirty=true`.cwd(`${root}deploy/${project}`);
+  await $`${wrangler} pages deploy --no-bundle --branch ${branch} --commit-dirty=true`.cwd(`${root}deploy/${project}`);
 }

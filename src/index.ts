@@ -22,6 +22,15 @@ function baseApp(): Hono<AppEnv> {
     const config = getConfig(c.env);
     c.set("config", config);
     c.set("origin", config.publicBaseUrl || new URL(c.req.url).origin);
+    // Closed for a database restore (SECURITY.md: Backups and restore): no
+    // reads or writes until the restore is reconciled. /healthz still answers.
+    if (c.env.HTMLARTIFACT_MAINTENANCE === "on" && c.req.path !== "/healthz") {
+      c.header("Retry-After", "300");
+      c.header("Cache-Control", "no-store");
+      return c.req.path.startsWith("/api/")
+        ? c.json({ ok: false, code: "maintenance", error: "htmlartifact is down for maintenance. Try again in a few minutes." }, 503)
+        : c.text("htmlartifact is down for maintenance. Try again in a few minutes.\n", 503);
+    }
     await ensureSchema(c.env.DB);
     await next();
     c.header("X-Content-Type-Options", "nosniff");

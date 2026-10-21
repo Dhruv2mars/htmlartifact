@@ -7,6 +7,9 @@ name = "htmlartifact"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
+# esbuild's keepNames wraps functions in __name(), which breaks code that is
+# stringified into the page (next-themes' inline theme script).
+keep_names = false
 
 [[d1_databases]]
 binding = "DB"

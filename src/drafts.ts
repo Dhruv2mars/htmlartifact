@@ -48,38 +48,53 @@ interface FeedOptions {
   origin: string;
   handle: string;
   limit?: number;
+  // From the previous page's `nextCursor`.
+  cursor?: string | null;
+  // Exactly the artifact at this custom URL (at most one).
+  slug?: string | null;
 }
+
+// One page of a feed; `nextCursor` is null on the last page.
+export interface DraftPage {
+  drafts: DraftSummary[];
+  nextCursor: string | null;
+}
+
+const FEED_PAGE_SIZE = 100;
 
 // "Mine": what this member published in this workspace.
 export function listMyDrafts(
   db: D1Database,
-  {
-    accountId,
-    organizationId,
-    origin,
-    handle
-  }: { accountId: string; organizationId: string; origin: string; handle: string }
-): Promise<DraftSummary[]> {
-  return listDrafts(db, "d.account_id = ? AND d.organization_id = ?", [accountId, organizationId], {
-    origin,
-    handle
-  });
+  { accountId, organizationId, ...options }: FeedOptions & { accountId: string; organizationId: string }
+): Promise<DraftPage> {
+  return listDrafts(db, "d.account_id = ? AND d.organization_id = ?", [accountId, organizationId], options);
 }
 
 // "Workspace": everything any member published in this workspace.
 export function listWorkspaceDrafts(
   db: D1Database,
-  { organizationId, origin, handle, limit = 200 }: FeedOptions & { organizationId: string }
-): Promise<DraftSummary[]> {
-  return listDrafts(db, "d.organization_id = ?", [organizationId], { origin, handle, limit });
+  { organizationId, ...options }: FeedOptions & { organizationId: string }
+): Promise<DraftPage> {
+  return listDrafts(db, "d.organization_id = ?", [organizationId], options);
+}
+
+// Keyset pages, newest first: the cursor is the last row's (updated_at, id),
+// so a page never skips or repeats an artifact when others are published
+// meanwhile (an artifact updated meanwhile moves to the top).
+const encodeCursor = (updatedAt: number, id: string) => `${updatedAt}.${id}`;
+function decodeCursor(cursor: string | null | undefined): [number, string] | null {
+  const match = cursor ? /^(\d{1,12})\.([A-Za-z0-9_-]{1,64})$/.exec(cursor) : null;
+  return match ? [Number(match[1]), match[2]!] : null;
 }
 
 async function listDrafts(
   db: D1Database,
   where: string,
-  params: string[],
-  { origin, handle, limit = 500 }: FeedOptions
-): Promise<DraftSummary[]> {
+  params: (string | number)[],
+  { origin, handle, limit = FEED_PAGE_SIZE, cursor, slug }: FeedOptions
+): Promise<DraftPage> {
+  const after = decodeCursor(cursor);
+  const size = Math.min(Math.max(1, Math.floor(limit)), 500);
   const { results } = await db
     .prepare(
       `SELECT d.id, d.slug, d.title, d.description, d.repo_org, d.repo_name, d.repo_host,
@@ -93,13 +108,19 @@ async function listDrafts(
        LEFT JOIN accounts a ON a.id = d.account_id
        LEFT JOIN accounts u ON u.id = cv.created_by
        WHERE ${where} AND d.deleted_at IS NULL
-       ORDER BY d.updated_at DESC
-       LIMIT ${Number(limit)}`
+         ${slug ? "AND d.slug = ?" : ""}
+         ${after ? "AND (d.updated_at < ? OR (d.updated_at = ? AND d.id < ?))" : ""}
+       ORDER BY d.updated_at DESC, d.id DESC
+       LIMIT ${size + 1}`
     )
-    .bind(...params)
+    .bind(...params, ...(slug ? [slug] : []), ...(after ? [after[0], after[0], after[1]] : []))
     .all<DraftListRow>();
+  const more = results.length > size;
+  const rows = more ? results.slice(0, size) : results;
+  const last = rows.at(-1);
+  const nextCursor = more && last ? encodeCursor(Number(last.updated_at), last.id) : null;
 
-  return results.map((row) => ({
+  return { nextCursor, drafts: rows.map((row) => ({
     draftId: row.id,
     slug: row.slug ?? null,
     title: row.title,
@@ -115,7 +136,7 @@ async function listDrafts(
     createdAt: isoTime(row.created_at),
     updatedAt: isoTime(row.updated_at),
     publicUrl: draftUrl(origin, row, handle)
-  }));
+  })) };
 }
 
 // One artifact of this workspace with its versions, whoever published it.

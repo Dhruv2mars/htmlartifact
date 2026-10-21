@@ -62,13 +62,13 @@ export function fixturePage(url: URL): Page {
     case "sign-in":
       return { kind: "sign-in", next: "/d/k3j9x0a1b2c4" };
     case "message":
-      return { kind: "message", title: "Invite not valid", message: "That invite is invalid, expired, or used up.", retry: false, session: null };
+      return { kind: "message", title: "Invite not valid", message: "That invite is invalid, expired, or used up.", retry: null, session: null };
     case "not-found":
       return { kind: "not-found", session: null };
     case "feed":
-      return { kind: "feed", session: s, artifacts: list };
+      return { kind: "feed", session: s, artifacts: list, older: worst ? "/?cursor=1.k3j9x0a1b2c4" : null };
     case "mine":
-      return { kind: "mine", session: s, artifacts: list.filter((a, i) => worst || i % 2 === 0) };
+      return { kind: "mine", session: s, artifacts: list.filter((a, i) => worst || i % 2 === 0), older: null };
     case "artifact":
       return {
         kind: "artifact",

@@ -164,8 +164,13 @@ export async function breakWorkos(emulator, method, pathname, status = 503) {
 }
 
 export async function findOrganization(emulator, name) {
-  const { data } = await workosApi(emulator, "GET", "/organizations?limit=100");
-  return data.find((org) => org.name === name);
+  let after = "";
+  do {
+    const { data, list_metadata } = await workosApi(emulator, "GET", `/organizations?limit=100${after ? `&after=${after}` : ""}`);
+    const found = data.find((org) => org.name === name);
+    if (found) return found;
+    after = list_metadata?.after || "";
+  } while (after);
 }
 
 export async function findUser(emulator, email) {
@@ -235,7 +240,7 @@ export async function callApi(stack, token, method, pathname, body) {
   } catch {
     json = { text };
   }
-  return { status: response.status, body: json };
+  return { status: response.status, headers: response.headers, body: json };
 }
 
 // Delivers a correctly signed WorkOS webhook, as WorkOS would, including its

@@ -468,6 +468,45 @@ test("--slug naming another artifact than the path's needs --force, and never re
   assert.equal(plain.action, "updated");
 });
 
+test("a path whose artifact was renamed cannot overwrite the artifact that took its old slug", async () => {
+  const env = ciEnv("stale-slug-home");
+  const aFile = writeHtml(stack.tmp, "stale-a.html", page("A"));
+  const a = await json(["upload", aFile, "--slug", "stale-report"], env);
+  // From another file, A is renamed; then a new artifact B takes the old slug.
+  await json(["upload", writeHtml(stack.tmp, "stale-c.html", page("A renamed")), "--draft", a.draftId, "--slug", "stale-renamed"], env);
+  const b = await json(["upload", writeHtml(stack.tmp, "stale-b.html", page("B")), "--slug", "stale-report"], env);
+  assert.notEqual(b.draftId, a.draftId);
+
+  // a.html's saved mapping still says A is "stale-report": refused, B untouched.
+  writeHtml(stack.tmp, "stale-a.html", page("A v2"));
+  const refused = await failure(cli(["upload", aFile, "--slug", "stale-report"], env));
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, new RegExp(`--slug stale-report names artifact ${b.draftId} \\("B"\\)`));
+  const bNow = await callApi(stack, CI_KEY, "GET", "/api/drafts?scope=workspace&slug=stale-report");
+  assert.equal(bNow.body.drafts.length, 1);
+  assert.equal(bNow.body.drafts[0].draftId, b.draftId);
+  assert.equal(bNow.body.drafts[0].latestVersionNumber, 1);
+
+  // --force replaces B on purpose.
+  const forced = await json(["upload", aFile, "--slug", "stale-report", "--force"], env);
+  assert.equal(forced.draftId, b.draftId);
+  assert.equal(forced.versionNumber, 2);
+});
+
+test("the server refuses an upload whose slug no longer names the expected artifact", async () => {
+  const one = await callApi(stack, CI_KEY, "POST", "/api/uploads", { html: page("One"), slug: "expect-one" });
+  const two = await callApi(stack, CI_KEY, "POST", "/api/uploads", { html: page("Two"), slug: "expect-two" });
+  const refused = await callApi(stack, CI_KEY, "POST", "/api/uploads", { html: page("Over"), slug: "expect-two", expectedDraftId: one.body.draftId });
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.code, "slug_names_another_artifact");
+  assert.equal(refused.body.draftId, two.body.draftId);
+  // The expected artifact deleted: nothing to protect, the slug's owner updates.
+  assert.equal((await callApi(stack, CI_KEY, "DELETE", `/api/drafts/${one.body.draftId}`)).status, 200);
+  const ok = await callApi(stack, CI_KEY, "POST", "/api/uploads", { html: page("Over"), slug: "expect-two", expectedDraftId: one.body.draftId });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(ok.body.draftId, two.body.draftId);
+});
+
 test("read --out writes the stored bytes exactly; a non-UTF-8 file is refused, not altered", async () => {
   const env = ciEnv("bytes-home");
   const bytes = Buffer.from(`\ufeff${page("BOM").replace(/></g, ">\r\n<")}`, "utf8");

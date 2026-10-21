@@ -4,6 +4,7 @@
 // Every deletion is queued in D1 first (`pending_deletions`), attempted at once,
 // and retried by the ops Worker's cron until it succeeds.
 
+import { pruneBudgets } from "./budget.ts";
 import { deleteObjects } from "./storage.ts";
 
 export type DeletionKind = "r2_prefix" | "workos_org" | "workos_membership";
@@ -114,7 +115,7 @@ async function drainPendingDeletions(env: PurgeEnv, max = 20): Promise<{ done: n
 // runs right after; whatever fails stays queued for the cron.
 
 /** Queue an artifact's R2 prefix and delete its rows (its custom URL goes with the row). */
-function deleteDraftStatements(db: D1Database, organizationId: string, draftId: string): D1PreparedStatement[] {
+export function deleteDraftStatements(db: D1Database, organizationId: string, draftId: string): D1PreparedStatement[] {
   return [
     queueDeletion(db, "r2_prefix", draftPrefix(organizationId, draftId)),
     // The workspace's storage counter drops by what this artifact held.
@@ -305,7 +306,8 @@ export async function runScheduledJobs(env: PurgeEnv) {
     .run()
     .then(() => drainPendingDeletions(env))
     .catch(failed("deletions"));
-  return { deletions, erased };
+  const budgets = await pruneBudgets(env.DB).catch(failed("budgets"));
+  return { deletions, erased, budgets };
 }
 
 /**

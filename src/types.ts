@@ -34,6 +34,10 @@ export interface Env {
   // which uploads stop (D1 Free caps a database at 500 MB).
   HTMLARTIFACT_WORKSPACE_QUOTA_BYTES?: string;
   HTMLARTIFACT_DATABASE_LIMIT_BYTES?: string;
+  /** "on": every route but /healthz answers 503, for a database restore. */
+  HTMLARTIFACT_MAINTENANCE?: string;
+  HTMLARTIFACT_UPLOAD_ROWS_PER_DAY?: string;
+  HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY?: string;
   // Service binding to the ops Worker's `Ops` entrypoint (src/ops.ts). When
   // absent (local dev, tests), rate limits fall back to an in-memory window.
   OPS?: OpsService;
@@ -58,7 +62,15 @@ export interface Config {
   publicBaseUrl: string | null;
   sandboxOrigin: string | null;
   cookiePassword: string;
-  limits: { accountBytes: number; largeBytes: number; maxPages: number; workspaceBytes: number; databaseBytes: number };
+  limits: {
+    accountBytes: number;
+    largeBytes: number;
+    maxPages: number;
+    workspaceBytes: number;
+    databaseBytes: number;
+    rowsPerDay: number;
+    workspaceRowsPerDay: number;
+  };
   workos: {
     apiKey: string;
     clientId: string;

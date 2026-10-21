@@ -33,11 +33,16 @@ let ops; // the ops Worker (deploy/ops/wrangler.toml), with test-triggerable cro
 
 before(async () => {
   stack = await startStack({ directoryProvisioning: true });
+  // The app, this proxy and the ops Worker share one SQLite file. Two of them
+  // opening it at the same moment can abort workerd (an uncaught SQLITE_BUSY
+  // fatal), and every request to it then hangs: open it in turn, app first.
+  assert.equal((await fetch(`${stack.baseUrl}/healthz`)).status, 200);
   const state = path.join(stack.tmp, "state");
   proxy = await getPlatformProxy({
     configPath: testConfigPath(),
     persist: { path: path.join(state, "v3") }
   });
+  await rows("SELECT 1 FROM drafts LIMIT 1");
   // The deploy config names the production D1 database; local state is keyed
   // by database id, so point the ops Worker at the app's (root config) id.
   const appDatabaseId = fs.readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8").match(/database_id = "([^"]+)"/)[1];
@@ -62,6 +67,7 @@ before(async () => {
     vars: { WORKOS_API_URL: stack.emulator.url, WORKOS_API_KEY: stack.emulator.apiKey || "sk_test_default" },
     experimental: { disableExperimentalWarning: true }
   });
+  await runCron();
 });
 
 after(async () => {
@@ -351,6 +357,17 @@ describe("ops Worker cron", () => {
     const [freshRow] = await rows("SELECT source_ip, user_agent FROM draft_versions WHERE id = ?", fresh.body.versionId);
     assert.equal(freshRow.source_ip, "203.0.113.8");
     assert.ok(freshRow.user_agent);
+  });
+
+  test("the cron drops daily upload budgets once their day is over", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    await upload(alice, { html: page("Budget today") });
+    const iso = (offset) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    await exec("INSERT OR REPLACE INTO daily_budget (day, scope, used) VALUES (?, 'd1:rows', 10), (?, 'd1:rows', 10)", iso(-2), iso(-1));
+    await runCron();
+    await eventually(async () => (await count("SELECT COUNT(*) FROM daily_budget WHERE day = ?", iso(-2))) === 0, "old budget dropped", runCron);
+    assert.equal(await count("SELECT COUNT(*) FROM daily_budget WHERE day = ?", iso(-1)), 1, "yesterday's stays");
+    assert.ok((await count("SELECT COUNT(*) FROM daily_budget WHERE day = ?", iso(0))) >= 1, "today's stays");
   });
 });
 

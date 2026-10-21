@@ -3,6 +3,7 @@
 
 import { PENDING_DELETIONS_SCHEMA } from "./purge.ts";
 import { BLOBS_SCHEMA } from "./storage.ts";
+import { DAILY_BUDGET_SCHEMA } from "./budget.ts";
 import type { Account, AccountRow, CiKeyRow, WorkspaceRow } from "./types.ts";
 
 export const FLAGS = { largeUploads: "large-uploads" };
@@ -158,7 +159,7 @@ export function ensureSchema(db: D1Database): Promise<D1Result[]> {
     const statements = SCHEMA.split(";")
       .map((statement) => statement.trim())
       .filter(Boolean)
-      .concat(PENDING_DELETIONS_SCHEMA, BLOBS_SCHEMA)
+      .concat(PENDING_DELETIONS_SCHEMA, BLOBS_SCHEMA, DAILY_BUDGET_SCHEMA)
       .map((statement) => db.prepare(statement));
     promise = db.batch(statements).catch((error: unknown) => {
       ready.delete(db);

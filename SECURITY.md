@@ -77,7 +77,8 @@ Artifact HTML may contain inline script. It never runs on the app's origin:
   If any delete fails, a scheduled job retries it every 15 minutes, so the
   grace window is usually at most **15 minutes**. Each run retries up to 20
   queued deletes (D1 Free allows 50 queries per run), so a larger backlog, for
-  example after a storage outage, clears at 20 per run and takes longer.
+  example after a storage outage, clears at 20 per run and takes longer; while
+  Cloudflare or WorkOS is down, retries keep failing until it is back.
   Deleted HTML also stays in D1 Time Travel history for its retention window
   (7 days on Workers Free), then is gone; see Backups.
 - **Workspaces:** `htmlartifact workspace delete --confirm <name>` (admins)
@@ -99,14 +100,38 @@ D1 Time Travel keeps point-in-time history of the database (7 days on Workers
 Free), including artifact HTML. There are no other backups, by design, so that
 deletion is real once that window passes.
 
-Restore the database to a point in time:
+A restore brings back everything as it was at the bookmark, including what
+was revoked or deleted since: API keys and invite codes revoked after it work
+again, and deleted artifacts and workspaces are back. So the service stays
+closed until the restore is reconciled:
 
 ```sh
-# Find a bookmark for the moment before the incident
+# 1. Close the app and the sandbox: every route but /healthz answers 503.
+#    Pages applies secrets on the next deployment, hence the redeploy.
+echo on | bunx wrangler pages secret put HTMLARTIFACT_MAINTENANCE --project-name=htmlartifact
+echo on | bunx wrangler pages secret put HTMLARTIFACT_MAINTENANCE --project-name=htmlartifact-usercontent
+bun run deploy:all
+# 2. Export the database as it is now: the record of what must stay revoked and deleted.
+bunx wrangler d1 export htmlartifact --remote --output=before.sql
+# 3. Find a bookmark for the moment before the incident, and restore it.
 bunx wrangler d1 time-travel info htmlartifact --timestamp=2026-10-18T09:00:00Z
-# Restore (overwrites the live database; take a fresh bookmark first)
 bunx wrangler d1 time-travel restore htmlartifact --bookmark=<bookmark>
+# 4. Reconcile: re-revoke keys and invites, re-delete artifacts, workspaces
+#    and deleted users' details, carry over session revocations.
+bunx wrangler d1 export htmlartifact --remote --output=restored.sql
+bun scripts/restore-reconcile.ts before.sql restored.sql > reconcile.sql
+# Review reconcile.sql (it only revokes and deletes), then apply it.
+bunx wrangler d1 execute htmlartifact --remote --file=reconcile.sql
+# 5. Reopen.
+bunx wrangler pages secret delete HTMLARTIFACT_MAINTENANCE --project-name=htmlartifact
+bunx wrangler pages secret delete HTMLARTIFACT_MAINTENANCE --project-name=htmlartifact-usercontent
+bun run deploy:all
 ```
+
+The ops Worker's cron keeps running meanwhile; it only drains queued deletes.
+`test/restore.test.js` runs this reconciliation against a simulated restore.
+Delete `before.sql` and `restored.sql` afterwards: they hold artifact HTML and
+cached emails.
 
 Export a full SQL dump (for example before a risky migration):
 
@@ -154,9 +179,12 @@ Artifact HTML lives in D1, so a restore brings back HTML and index together.
    everyone out), roll back to the previous deployment
    (`wrangler pages deployment list` / Pages dashboard → Rollback), or take the
    service offline.
-3. **Investigate:** Workers Logs (request paths, statuses, errors) and WorkOS
-   logs (sign-ins, membership changes). Preserve evidence before restoring
-   anything.
+3. **Investigate:** WorkOS logs (sign-ins, membership changes), the ops
+   Worker's Workers Logs (scheduled jobs), and D1 itself (`ci_keys.last_used_at`,
+   `joins`, `revocations`, artifact versions). The app's Pages Functions logs
+   are a live stream only (`wrangler pages deployment tail`), not stored, so
+   start tailing as soon as an incident is open. Preserve evidence (a
+   `wrangler d1 export`) before restoring anything.
 4. **Notify:** tell affected workspace admins without undue delay and within
    72 hours of confirming that their data was exposed: what happened, what
    data, what we did, what they should do.

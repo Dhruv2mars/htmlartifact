@@ -52,10 +52,12 @@ export type Page =
   | { kind: "docs"; session: Session | null }
   | { kind: "privacy"; session: Session | null }
   | { kind: "sign-in"; next: string }
-  | { kind: "message"; title: string; message: string; retry: boolean; session: Session | null }
+  // retry: where "Try again" goes (sign-in, keeping the destination), or none.
+  | { kind: "message"; title: string; message: string; retry: string | null; session: Session | null }
   | { kind: "not-found"; session: Session | null }
-  | { kind: "feed"; session: Session; artifacts: ArtifactSummary[] }
-  | { kind: "mine"; session: Session; artifacts: ArtifactSummary[] }
+  // older: the next page of the feed, when there is one.
+  | { kind: "feed"; session: Session; artifacts: ArtifactSummary[]; older: string | null }
+  | { kind: "mine"; session: Session; artifacts: ArtifactSummary[]; older: string | null }
   | { kind: "artifact"; session: Session; artifact: ArtifactHead; versions: ArtifactVersion[] }
   | { kind: "workspaces"; session: Session; workspaces: WorkspaceChoice[]; next: string | null }
   | { kind: "join"; session: Session; code: string; workspace: { id: string; name: string }; expiresAt: string; usesLeft: number; member: "current" | "other" | null };
