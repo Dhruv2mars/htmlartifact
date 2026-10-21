@@ -500,11 +500,14 @@ test("the server refuses an upload whose slug no longer names the expected artif
   assert.equal(refused.status, 409);
   assert.equal(refused.body.code, "slug_names_another_artifact");
   assert.equal(refused.body.draftId, two.body.draftId);
-  // The expected artifact deleted: nothing to protect, the slug's owner updates.
+  // The expected artifact deleted: the slug still names another one, still refused.
   assert.equal((await callApi(stack, CI_KEY, "DELETE", `/api/drafts/${one.body.draftId}`)).status, 200);
-  const ok = await callApi(stack, CI_KEY, "POST", "/api/uploads", { html: page("Over"), slug: "expect-two", expectedDraftId: one.body.draftId });
-  assert.equal(ok.status, 200, JSON.stringify(ok.body));
-  assert.equal(ok.body.draftId, two.body.draftId);
+  const again = await callApi(stack, CI_KEY, "POST", "/api/uploads", { html: page("Over"), slug: "expect-two", expectedDraftId: one.body.draftId });
+  assert.equal(again.status, 409);
+  // Without an expected artifact (the CLI's --force), the slug's artifact updates.
+  const forced = await callApi(stack, CI_KEY, "POST", "/api/uploads", { html: page("Over"), slug: "expect-two" });
+  assert.equal(forced.status, 200, JSON.stringify(forced.body));
+  assert.equal(forced.body.draftId, two.body.draftId);
 });
 
 test("read --out writes the stored bytes exactly; a non-UTF-8 file is refused, not altered", async () => {

@@ -997,17 +997,9 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   }
   // The CLI names the artifact it expects --slug to update (the one this file
   // was published to). The slug now names another one (renamed, then reused):
-  // refuse rather than replace that one's content (unless that one is gone).
+  // refuse rather than replace that one's content. `--force` replaces it.
   const expected = typeof body.expectedDraftId === "string" ? body.expectedDraftId : null;
-  if (
-    slugDraft &&
-    expected &&
-    slugDraft.id !== expected &&
-    (await db
-      .prepare("SELECT 1 FROM drafts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL")
-      .bind(expected, viewer.organization_id)
-      .first())
-  ) {
+  if (slugDraft && expected && slugDraft.id !== expected) {
     return c.json(
       {
         ok: false,

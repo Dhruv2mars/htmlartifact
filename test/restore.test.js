@@ -64,14 +64,17 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     await batch(statements);
   }
 
-  test("revoked keys and invites stay revoked, deleted artifacts and workspaces stay deleted", async () => {
+  test("revoked keys and invites stay revoked, deleted artifacts, versions and workspaces stay deleted", async () => {
     const alice = await accessToken(stack, "alice@acme.test", "Acme");
     const key = (await callApi(stack, alice, "POST", "/api/workspaces/api-keys", { name: "Restored CI" })).body;
     assert.ok(key.token);
     const invite = (await callApi(stack, alice, "POST", "/api/workspaces/invites", {})).body;
     assert.ok(invite.code);
+    const single = (await callApi(stack, alice, "POST", "/api/workspaces/invites", { maxUses: 1 })).body;
+    assert.ok(single.code);
     const doomed = (await callApi(stack, alice, "POST", "/api/uploads", { html: page("Doomed") })).body;
-    const kept = (await callApi(stack, alice, "POST", "/api/uploads", { html: page("Kept") })).body;
+    const kept = (await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-kept", html: page("Kept") })).body;
+    assert.equal((await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-kept", html: page("Kept v2") })).body.draftId, kept.draftId);
     let max = await signInTokens(stack, "max@both.test", "Acme");
     const workspace = (await callApi(stack, max.accessToken, "POST", "/api/workspaces", { name: "Restored Co" })).body.workspace;
     max = await refreshInto(stack, max, workspace.id);
@@ -83,22 +86,40 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     assert.equal((await callApi(stack, alice, "DELETE", `/api/workspaces/invites/${invite.code}`)).status, 200);
     assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${doomed.draftId}`)).status, 200);
     assert.equal((await callApi(stack, max.accessToken, "DELETE", "/api/workspaces/current", { confirm: "Restored Co" })).status, 200);
+    // Kept's first version pruned; the single-use invite used up; a join's
+    // WorkOS delete still queued (an undone join is denied while it is); and
+    // today's budget spent further.
+    assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${kept.draftId}/versions?keepLatest=1`)).body.deleted, 1);
+    const sam = await accessToken(stack, "sam@new.test");
+    assert.equal((await callApi(stack, sam, "POST", "/api/workspaces/join", { code: single.code })).status, 200);
+    await batch([proxy.env.DB.prepare("INSERT INTO pending_deletions (kind, target) VALUES ('workos_membership', 'om_restored_undo')")]);
+    assert.equal((await callApi(stack, alice, "POST", "/api/uploads", { html: page("After the bookmark") })).status, 201);
     const exported = await snapshot();
 
     await restore(bookmark);
-    const sam = await accessToken(stack, "sam@new.test");
     // The problem: all of it is back.
     assert.equal((await callApi(stack, key.token, "GET", "/api/me")).status, 200, "the revoked key works again");
     assert.equal((await callApi(stack, alice, "GET", "/api/drafts?scope=workspace&slug=")).body.drafts.filter((d) => d.draftId === doomed.draftId).length, 1);
     assert.equal((await all(`SELECT COUNT(*) AS n FROM workspaces WHERE organization_id = '${workspace.id}'`))[0].n, 1);
 
     const { sql, summary } = reconcileStatements(exported.query, (await snapshot()).query);
-    assert.deepEqual({ ...summary, revocations: 0, epochs: 0 }, { workspaces: 1, artifacts: 1, ciKeys: 1, invites: 1, revocations: 0, epochs: 0, undoneJoins: 0, scrubbedUsers: 0 });
+    assert.deepEqual(
+      { ...summary, revocations: 0, epochs: 0, queuedDeletions: 0, budgets: 0 },
+      { workspaces: 1, artifacts: 1, versions: 1, ciKeys: 1, invites: 1, revocations: 0, epochs: 0, undoneJoins: 0, queuedDeletions: 0, budgets: 0, scrubbedUsers: 0 }
+    );
     await batch(sql.map((statement) => proxy.env.DB.prepare(statement)));
 
     assert.equal((await callApi(stack, key.token, "GET", "/api/me")).status, 401, "the key is revoked again");
-    const joined = await callApi(stack, sam, "POST", "/api/workspaces/join", { code: invite.code });
-    assert.notEqual(joined.status, 200, "the invite is revoked again");
+    const nora = await accessToken(stack, "nora@new.test");
+    assert.notEqual((await callApi(stack, nora, "POST", "/api/workspaces/join", { code: invite.code })).status, 200, "the invite is revoked again");
+    assert.notEqual((await callApi(stack, nora, "POST", "/api/workspaces/join", { code: single.code })).status, 200, "the used-up invite stays used up");
+    const versions = await all(`SELECT id FROM draft_versions WHERE draft_id = '${kept.draftId}'`);
+    assert.equal(versions.length, 1, "the pruned version is gone again");
+    assert.ok((await all("SELECT target FROM pending_deletions WHERE kind = 'r2_prefix'")).map((r) => r.target).some((t) => t.includes(`/drafts/${kept.draftId}/versions/`)), "its HTML is queued again");
+    assert.equal((await all("SELECT COUNT(*) AS n FROM pending_deletions WHERE target = 'om_restored_undo'"))[0].n, 1, "the queued delete is back");
+    const spent = (rows) => Object.fromEntries(rows.map((r) => [`${r.day}/${r.scope}`, r.used]));
+    const now = spent(await all("SELECT day, scope, used FROM daily_budget"));
+    for (const [k, used] of Object.entries(spent(exported.query("SELECT day, scope, used FROM daily_budget")))) assert.ok(now[k] >= used, `budget ${k}`);
     const feed = (await callApi(stack, alice, "GET", "/api/drafts?scope=workspace")).body.drafts.map((d) => d.draftId);
     assert.ok(!feed.includes(doomed.draftId), "the deleted artifact is gone again");
     assert.ok(feed.includes(kept.draftId), "the rest is untouched");
@@ -111,7 +132,7 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     assert.ok(queued.includes(`orgs/${workspace.id}/`), "the workspace's HTML is queued for deletion");
     // Nothing is left to reconcile.
     const again = reconcileStatements(exported.query, (await snapshot()).query).summary;
-    assert.equal(again.workspaces + again.artifacts + again.ciKeys + again.invites, 0);
+    assert.equal(again.workspaces + again.artifacts + again.versions + again.ciKeys + again.invites, 0);
   });
 });
 

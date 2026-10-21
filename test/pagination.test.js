@@ -3,9 +3,11 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
+import { WorkOS } from "@workos-inc/node";
 import {
   Browser,
   CI_KEY,
+  COOKIE_PASSWORD,
   PASSWORD,
   accessToken,
   breakWorkos,
@@ -127,6 +129,20 @@ test("a history link opens in its artifact's workspace for members, and is a 404
   assert.equal(opened.status, 200);
   assert.match(opened.text_, /Other plan/);
   assert.match((await max.get("/")).text_, /Other plan/, "the session moved to Other");
+
+  // The same with an expired access token: the refresh that renews it still
+  // lands in the artifact's workspace.
+  const tokens = await signInTokens(stack, "max@both.test", "Acme");
+  const [header, payload] = tokens.accessToken.split(".");
+  const sealed = await new WorkOS("sk_test_default").userManagement.sealSessionDataFromAuthenticationResponse({
+    authenticationResponse: { accessToken: `${header}.${payload}.stale`, refreshToken: tokens.refreshToken, user: { id: payload && JSON.parse(Buffer.from(payload, "base64url")).sub } },
+    cookiePassword: COOKIE_PASSWORD
+  });
+  const expired = new Browser(stack);
+  expired.cookies.set(new URL(stack.baseUrl).host, { htmlartifact_session: encodeURIComponent(sealed) });
+  const renewed = await expired.get(link);
+  assert.equal(renewed.status, 200);
+  assert.match(renewed.text_, /Other plan/);
 
   const bob = new Browser(stack);
   assert.equal((await bob.signIn("bob@acme.test", { workspace: "Acme", next: link })).status, 404);
