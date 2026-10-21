@@ -14,6 +14,7 @@ import {
   findUser,
   page,
   refreshInto,
+  retryLocked,
   sendWebhook,
   signInTokens,
   startStack,
@@ -76,7 +77,15 @@ after(async () => {
   await stack?.stop();
 });
 
-const upload = (token, body) => callApi(stack, token, "POST", "/api/uploads", body);
+// A 500 here is the app losing the shared SQLite file's lock (see retryLocked):
+// local-only, so it is retried. Production D1 has no such contention.
+async function upload(token, body) {
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await callApi(stack, token, "POST", "/api/uploads", body);
+    if (response.status !== 500 || attempt >= 3) return response;
+    await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+  }
+}
 // The stored objects, whichever backend this run uses (src/storage.ts).
 const r2Keys = async (prefix) =>
   STORAGE === "r2"
@@ -88,24 +97,12 @@ const putObject = (key, html) =>
     : exec("INSERT INTO blobs (key, chunk, data) VALUES (?, 0, ?)", key, html);
 const deleteObject = (key) =>
   STORAGE === "r2" ? proxy.env.ARTIFACTS.delete(key) : exec("DELETE FROM blobs WHERE key = ?", key);
-// The app, the ops Worker and this proxy share one local SQLite file; a read
-// racing a writer occasionally loses the lock. Retry only that transient error.
+// The app, the ops Worker and this proxy share one local SQLite file (see retryLocked).
 async function rows(sql, ...binds) {
   return retryLocked(async () => (await proxy.env.DB.prepare(sql).bind(...binds).all()).results);
 }
 // Direct writes from the test, retried the same way.
 const exec = (sql, ...binds) => retryLocked(() => proxy.env.DB.prepare(sql).bind(...binds).run());
-async function retryLocked(run) {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await run();
-    } catch (error) {
-      const message = String(error?.message);
-      if (attempt >= 8 || !(message.includes("session commit token") || message.includes("SQLITE_BUSY"))) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
-    }
-  }
-}
 const count = async (sql, ...binds) => Object.values((await rows(sql, ...binds))[0])[0];
 
 // Multi-page artifacts are served under a trailing slash.

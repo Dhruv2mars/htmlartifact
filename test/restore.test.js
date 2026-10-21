@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, test } from "node:test";
 import { getPlatformProxy } from "wrangler";
 import { reconcileStatements } from "../scripts/restore-reconcile.ts";
-import { STORAGE, accessToken, callApi, page, refreshInto, signInTokens, startStack, testConfigPath } from "./helpers.js";
+import { STORAGE, accessToken, callApi, page, refreshInto, retryLocked, signInTokens, startStack, testConfigPath } from "./helpers.js";
 
 // A D1 Time Travel restore (SECURITY.md: Backups and restore) brings back the
 // database as it was at the bookmark: keys and invites revoked since are live
@@ -19,13 +19,15 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     stack = await startStack();
     assert.equal((await fetch(`${stack.baseUrl}/healthz`)).status, 200);
     proxy = await getPlatformProxy({ configPath: testConfigPath(), persist: { path: path.join(stack.tmp, "state", "v3") } });
+    await all("SELECT 1 FROM drafts LIMIT 1");
   });
   after(async () => {
     await proxy?.dispose();
     await stack?.stop();
   });
 
-  const all = async (sql) => (await proxy.env.DB.prepare(sql).all()).results;
+  const all = (sql) => retryLocked(async () => (await proxy.env.DB.prepare(sql).all()).results);
+  const batch = (statements) => retryLocked(() => proxy.env.DB.batch(statements));
 
   // Every table, as `wrangler d1 export` would capture it.
   async function snapshot() {
@@ -59,7 +61,7 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
         );
       }
     }
-    await proxy.env.DB.batch(statements);
+    await batch(statements);
   }
 
   test("revoked keys and invites stay revoked, deleted artifacts and workspaces stay deleted", async () => {
@@ -92,7 +94,7 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
 
     const { sql, summary } = reconcileStatements(exported.query, (await snapshot()).query);
     assert.deepEqual({ ...summary, revocations: 0, epochs: 0 }, { workspaces: 1, artifacts: 1, ciKeys: 1, invites: 1, revocations: 0, epochs: 0, undoneJoins: 0, scrubbedUsers: 0 });
-    await proxy.env.DB.batch(sql.map((statement) => proxy.env.DB.prepare(statement)));
+    await batch(sql.map((statement) => proxy.env.DB.prepare(statement)));
 
     assert.equal((await callApi(stack, key.token, "GET", "/api/me")).status, 401, "the key is revoked again");
     const joined = await callApi(stack, sam, "POST", "/api/workspaces/join", { code: invite.code });

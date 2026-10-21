@@ -351,3 +351,17 @@ export function writeHtml(dir, name, html) {
 
 export const page = (title, body = "<p>hello</p>") =>
   `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
+
+// The app and a test's getPlatformProxy share one local SQLite file; a read
+// racing a writer occasionally loses the lock. Retries only that transient error.
+export async function retryLocked(run) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      const message = String(error?.message);
+      if (attempt >= 8 || !(message.includes("session commit token") || message.includes("SQLITE_BUSY"))) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+}

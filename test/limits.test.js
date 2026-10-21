@@ -191,14 +191,21 @@ test("a chunked body with no Content-Length is cut off at the limit, not buffere
     });
   };
   // Locally, wrangler's dev proxy sometimes reports the server's early answer
-  // (it stops reading mid-stream) as a lost connection, a 500: try again.
-  let response = await send();
-  for (let attempt = 1; response.status === 500 && attempt < 4; attempt += 1) {
-    await response.text();
-    response = await send();
-  }
+  // (it stops reading mid-stream) as a lost connection, a 500, or cuts the
+  // answer's body short: try again.
+  const answer = async () => {
+    const response = await send();
+    const text = await response.text().catch(() => "");
+    try {
+      return { status: response.status, body: JSON.parse(text) };
+    } catch {
+      return { status: 500 };
+    }
+  };
+  let response = await answer();
+  for (let attempt = 1; response.status === 500 && attempt < 4; attempt += 1) response = await answer();
   assert.equal(response.status, 413);
-  assert.match((await response.json()).error, /Request is over the .* limit\./);
+  assert.match(response.body.error, /Request is over the .* limit\./);
 });
 
 test("routes that call WorkOS on every request are limited, so one caller can't spend the shared WorkOS limit", async () => {
