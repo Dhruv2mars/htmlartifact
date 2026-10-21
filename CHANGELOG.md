@@ -7,6 +7,23 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-21
+
+### Security
+
+- An admin removed or demoted while their invite request was still arriving
+  could get a working invite code. Creating an invite now re-checks the
+  admin role live once the code exists, and revokes it if the role is gone.
+- Admin changes spent D1 writes outside the daily budgets: removing a member
+  who doesn't exist wrote a lock row and was not rate-limited, so a loop could
+  use up D1 Free's 100,000 daily writes. Invites, CI keys, joins, role changes
+  and new workspaces now count against the daily budgets (429 `daily_budget`
+  past them). Removals, leaving, revocations and deletes stay outside them so
+  they always work, are rate-limited, and refuse a no-op before writing.
+- The workspace admin lock now renews itself while a request runs. A WorkOS
+  call that stalled past its 30-second lease let a second admin leave or be
+  demoted at the same time, leaving a workspace with no admin.
+
 ## [0.2.1] - 2026-10-21
 
 ### Added
@@ -209,7 +226,8 @@ First release.
   HTML stored in D1), with per-workspace and database quotas and rate limits
   sized to them.
 
-[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.1...v0.1.2
