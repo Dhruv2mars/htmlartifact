@@ -644,12 +644,14 @@ export function registerApi(app: Hono<AppEnv>): void {
 // can never exceed max_uses; it is released if nobody new was admitted.
 export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: Viewer, rawCode: unknown): Promise<JoinResult> {
   const db = c.env.DB;
-  const over = await overDailyBudget(c, null, JOIN_ROWS, "join");
+  const code = normalizeInviteCode(rawCode);
+  // Charged to the workspace the code is for, before anything is written.
+  const target = code ? await db.prepare("SELECT organization_id FROM invites WHERE code = ?").bind(code).first<{ organization_id: string }>() : null;
+  const over = await overDailyBudget(c, target?.organization_id ?? null, JOIN_ROWS, "join");
   if (over) {
     c.header("Retry-After", String(secondsUntilUtcMidnight()));
     return { status: 429, body: { ok: false, error: `${over} Try again after 00:00 UTC.` } };
   }
-  const code = normalizeInviteCode(rawCode);
   const reserved = code
     ? await db
         .prepare(
@@ -932,7 +934,10 @@ async function withAdminLock<E extends AppEnv>(
   // While this request lives the lease does not lapse, even if a WorkOS call
   // stalls past ADMIN_LOCK_SECONDS: its change is still in flight, and the
   // last-admin check it passed holds only until that change lands.
-  const heartbeat = setInterval(() => void renew().catch(() => undefined), (ADMIN_LOCK_SECONDS * 1000) / 3);
+  const heartbeat = setInterval(
+    () => void renew().catch((error: unknown) => console.error("admin lock renewal failed:", error instanceof Error ? error.message : error)),
+    (ADMIN_LOCK_SECONDS * 1000) / 6
+  );
   try {
     return await run(await activeMemberships(c, organizationId), hold);
   } catch (error) {

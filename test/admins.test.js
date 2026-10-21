@@ -156,18 +156,19 @@ test("a demoted admin's CI keys and invite codes stop working", async () => {
   assert.equal(viaBob.status, 200, JSON.stringify(viaBob.body));
 });
 
-test("a holder whose lease lapsed (a WorkOS call over 30 s) cannot act after another admin did", async () => {
+test("a holder stuck in WorkOS past the lease (30 s) keeps the lock until it is done", async () => {
   const org = await twoAdmins("Slow leave");
   workosProxy.state.delayUserId = alice.id;
   workosProxy.state.delayMs = 33_000;
   const aliceLeaves = callApi(stack, aliceTokens.accessToken, "POST", "/api/workspaces/leave");
-  // Alice holds the lease, stuck in WorkOS until it lapses; Bob waits up to 8 s.
+  // Alice holds the lease, stuck in WorkOS past 30 s; Bob waits up to 8 s,
+  // gets the lock only once she has left, and is then the last admin.
   await new Promise((resolve) => setTimeout(resolve, 26_000));
   const bobLeaves = await callApi(stack, bobTokens.accessToken, "POST", "/api/workspaces/leave");
-  assert.equal(bobLeaves.status, 200, JSON.stringify(bobLeaves.body));
+  assert.equal(bobLeaves.status, 422, JSON.stringify(bobLeaves.body));
   const aliceResult = await aliceLeaves;
-  assert.equal(aliceResult.status, 409, JSON.stringify(aliceResult.body));
-  assert.deepEqual(await adminsOf(org), [alice.id]);
+  assert.equal(aliceResult.status, 200, JSON.stringify(aliceResult.body));
+  assert.deepEqual(await adminsOf(org), [bob.id]);
 });
 
 test("a demotion whose Admin Portal revocation fails still ends the ex-admin's keys and codes", async () => {

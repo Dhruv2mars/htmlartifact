@@ -99,6 +99,8 @@ describe("D1 write budget on admin routes", () => {
     const bob = await accessToken(stack, "bob@acme.test", "Acme");
     const bobUser = await findUser(stack.emulator, "bob@acme.test");
     assert.equal((await callApi(stack, bob, "GET", "/api/me")).status, 200);
+    const invite = await callApi(stack, alice, "POST", "/api/workspaces/invites", {});
+    assert.equal(invite.status, 201, JSON.stringify(invite.body));
     const statuses = [];
     for (let n = 0; n < 8; n += 1) statuses.push((await callApi(stack, alice, "POST", "/api/workspaces/invites", {})).status);
     assert.ok(statuses.includes(201), statuses.join());
@@ -106,6 +108,10 @@ describe("D1 write budget on admin routes", () => {
     assert.equal(spent.status, 429);
     assert.equal(spent.body.code, "daily_budget");
     assert.ok(Number(spent.headers.get("retry-after")) > 0);
+    // Joining is charged to the code's workspace too.
+    const nora = await accessToken(stack, "nora@new.test");
+    const join = await callApi(stack, nora, "POST", "/api/workspaces/join", { code: invite.body.code });
+    assert.equal(join.status, 429, JSON.stringify(join.body));
     assert.equal((await callApi(stack, alice, "DELETE", `/api/workspaces/members/${bobUser.id}`)).status, 200);
   });
 });
