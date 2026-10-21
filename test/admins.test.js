@@ -14,11 +14,11 @@ let aliceTokens;
 let bobTokens;
 let workosProxy;
 
-// The Worker reaches WorkOS through this proxy, which can hold back one
-// user's Admin Portal revocation (a slow WorkOS call) for `delayMs`, or fail
-// every revocation (`portalDown`).
+// The Worker reaches WorkOS through this proxy, which can fail every Admin
+// Portal revocation (`portalDown`). A WorkOS call that stalls past the admin
+// lock's lease: test/admin-races.test.js.
 function startWorkosProxy() {
-  const state = { target: "", delayUserId: null, delayMs: 0, portalDown: false };
+  const state = { target: "", portalDown: false };
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -26,10 +26,6 @@ function startWorkosProxy() {
     if (req.url === "/portal/revoke_link" && state.portalDown) {
       res.writeHead(503, { "Content-Type": "application/json" }).end('{"message":"unavailable"}');
       return;
-    }
-    if (req.url === "/portal/revoke_link" && state.delayUserId && body.toString().includes(state.delayUserId)) {
-      state.delayUserId = null;
-      await new Promise((resolve) => setTimeout(resolve, state.delayMs));
     }
     const headers = { ...req.headers };
     delete headers.host;
@@ -154,20 +150,6 @@ test("a demoted admin's CI keys and invite codes stop working", async () => {
   // Another admin's codes are untouched.
   const viaBob = await callApi(stack, noraTokens.accessToken, "POST", "/api/workspaces/join", { code: bobsInvite.body.code });
   assert.equal(viaBob.status, 200, JSON.stringify(viaBob.body));
-});
-
-test("a holder whose lease lapsed (a WorkOS call over 30 s) cannot act after another admin did", async () => {
-  const org = await twoAdmins("Slow leave");
-  workosProxy.state.delayUserId = alice.id;
-  workosProxy.state.delayMs = 33_000;
-  const aliceLeaves = callApi(stack, aliceTokens.accessToken, "POST", "/api/workspaces/leave");
-  // Alice holds the lease, stuck in WorkOS until it lapses; Bob waits up to 8 s.
-  await new Promise((resolve) => setTimeout(resolve, 26_000));
-  const bobLeaves = await callApi(stack, bobTokens.accessToken, "POST", "/api/workspaces/leave");
-  assert.equal(bobLeaves.status, 200, JSON.stringify(bobLeaves.body));
-  const aliceResult = await aliceLeaves;
-  assert.equal(aliceResult.status, 409, JSON.stringify(aliceResult.body));
-  assert.deepEqual(await adminsOf(org), [alice.id]);
 });
 
 test("a demotion whose Admin Portal revocation fails still ends the ex-admin's keys and codes", async () => {

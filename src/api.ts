@@ -1,4 +1,4 @@
-import type { Context, Hono, Next } from "hono";
+import type { Context, Hono, MiddlewareHandler, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomToken, sha256 } from "./crypto.ts";
 import { FLAGS, bumpMembershipEpoch, databaseUsage, findWorkspace, findWorkspaceByHandle, isRevoked, now, revokeAllInvites, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
@@ -201,7 +201,7 @@ export function registerApi(app: Hono<AppEnv>): void {
 
   // Creates a WorkOS organization with the caller as its admin. The CLI then
   // refreshes its token into the new workspace.
-  app.post("/api/workspaces", requireUser, perUser("workspace-create", 10), async (c) => {
+  app.post("/api/workspaces", requireUser, perUser("workspace-create", 10), writeBudget(WORKSPACE_ROWS), async (c) => {
     const viewer = c.get("viewer");
     if (viewer.is_api_key) return c.json({ ok: false, error: "API keys cannot create workspaces." }, 403);
     const body = await readJson(c, 16 * 1024);
@@ -222,7 +222,7 @@ export function registerApi(app: Hono<AppEnv>): void {
 
   // An invite code for the caller's current workspace. Admins only: a code
   // is a key to every artifact in the workspace.
-  app.post("/api/workspaces/invites", requireMember, requireAdmin, perUser("invite", 30), async (c) => {
+  app.post("/api/workspaces/invites", requireMember, requireAdmin, perUser("invite", 30), writeBudget(GRANT_ROWS), async (c) => {
     const viewer = c.get("viewer");
     const { invites } = c.get("config");
     const body = await readJson(c, 16 * 1024);
@@ -237,6 +237,13 @@ export function registerApi(app: Hono<AppEnv>): void {
     )
       .bind(code, viewer.organization_id, viewer.account_id, expiresAt, maxUses)
       .run();
+    // The admin check above may be from cache or from before this request's
+    // body arrived. A removal or demotion that ran meanwhile has revoked the
+    // codes it could see but not this one: re-check live now that it exists.
+    if (!(await stillAdmin(c, viewer))) {
+      await c.env.DB.prepare("UPDATE invites SET revoked_at = unixepoch() WHERE code = ?").bind(code).run();
+      return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
+    }
     return c.json(
       {
         ok: true,
@@ -293,7 +300,7 @@ export function registerApi(app: Hono<AppEnv>): void {
   });
 
   // Revokes one invite code (admins only); "all" revokes every live code.
-  app.delete("/api/workspaces/invites/:code", requireMember, requireAdmin, async (c) => {
+  app.delete("/api/workspaces/invites/:code", requireMember, requireAdmin, perUser("invite-revoke", 30), async (c) => {
     const viewer = c.get("viewer");
     const param = c.req.param("code") || "";
     if (param.toLowerCase() === "all") {
@@ -312,7 +319,7 @@ export function registerApi(app: Hono<AppEnv>): void {
 
   // Workspace CI keys (admins only): HTMLARTIFACT_TOKEN for CI. The secret is
   // returned once, at creation; only its hash is stored (src/db.ts).
-  app.post("/api/workspaces/api-keys", requireMember, requireAdmin, perUser("api-key", 10), async (c) => {
+  app.post("/api/workspaces/api-keys", requireMember, requireAdmin, perUser("api-key", 10), writeBudget(GRANT_ROWS), async (c) => {
     const viewer = c.get("viewer");
     const body = await readJson(c, 16 * 1024);
     const name = typeof body.name === "string" && body.name.trim() ? body.name.trim().slice(0, 100) : "CI";
@@ -355,7 +362,7 @@ export function registerApi(app: Hono<AppEnv>): void {
     });
   });
 
-  app.delete("/api/workspaces/api-keys/:id", requireMember, requireAdmin, async (c) => {
+  app.delete("/api/workspaces/api-keys/:id", requireMember, requireAdmin, perUser("api-key-revoke", 30), async (c) => {
     const viewer = c.get("viewer");
     const result = await c.env.DB.prepare(
       "UPDATE ci_keys SET revoked_at = unixepoch() WHERE id = ? AND organization_id = ? AND revoked_at IS NULL"
@@ -393,7 +400,9 @@ export function registerApi(app: Hono<AppEnv>): void {
 
   // Removes a member (admins only). Access ends on their next request, and
   // every invite code issued until now is revoked (they may hold one).
-  app.delete("/api/workspaces/members/:userId", requireMember, requireAdmin, async (c) => {
+  // Not budgeted (src/budget.ts), so an admin can always remove someone: a
+  // refusal is answered before the lock, and so writes nothing.
+  app.delete("/api/workspaces/members/:userId", requireMember, requireAdmin, perUser("member-remove", 30), async (c) => {
     const viewer = c.get("viewer");
     const userId = c.req.param("userId");
     // The route always captures :userId; the check satisfies the types.
@@ -401,13 +410,21 @@ export function registerApi(app: Hono<AppEnv>): void {
     if (userId === viewer.account_id) {
       return c.json({ ok: false, error: "You cannot remove yourself. To leave this workspace, run: htmlartifact workspace leave" }, 422);
     }
-    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
+    const refuse = (members: Membership[]): Response | null => {
       if (!isAdminIn(members, viewer.account_id)) return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
       const membership = members.find((m) => m.userId === userId);
       if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
       if (membership.role?.slug === "admin" && !hasOtherAdmin(members, userId)) {
         return c.json({ ok: false, error: "That is the workspace's last admin. Make someone else an admin first." }, 422);
       }
+      return null;
+    };
+    const refused = refuse(await activeMemberships(c, viewer.organization_id));
+    if (refused) return refused;
+    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
+      const refusedNow = refuse(members);
+      if (refusedNow) return refusedNow;
+      const membership = members.find((m) => m.userId === userId)!;
       await endMembership(c, userId, viewer.organization_id, membership.id, hold);
       return c.json({ ok: true, invitesRevoked: true });
     });
@@ -415,7 +432,7 @@ export function registerApi(app: Hono<AppEnv>): void {
 
   // Makes a member an admin, or an admin a member (admins only). A workspace
   // always keeps at least one admin.
-  app.patch("/api/workspaces/members/:userId", requireMember, requireAdmin, perUser("member-role", 30), async (c) => {
+  app.patch("/api/workspaces/members/:userId", requireMember, requireAdmin, perUser("member-role", 30), writeBudget(MEMBER_CHANGE_ROWS), async (c) => {
     const viewer = c.get("viewer");
     const userId = c.req.param("userId");
     if (!userId) return c.json({ ok: false, error: "Not a member." }, 404);
@@ -524,13 +541,7 @@ export function registerApi(app: Hono<AppEnv>): void {
     // body arrived. Re-check live now that the link exists: if they were
     // offboarded or demoted meanwhile, revoke it. (Any later change revokes
     // it through the membership webhook.)
-    const live = await workos(config).client.userManagement.listOrganizationMemberships({
-      userId: viewer.account_id,
-      organizationId: viewer.organization_id,
-      statuses: ["active"],
-      limit: 1
-    });
-    if (live.data.find((m) => m.organizationId === viewer.organization_id)?.role?.slug !== "admin") {
+    if (!(await stillAdmin(c, viewer))) {
       await revokePortalLinks(config, viewer.organization_id, viewer.account_id);
       return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
     }
@@ -575,7 +586,7 @@ export function registerApi(app: Hono<AppEnv>): void {
   // workspace admin may delete it. Other members already see it in the
   // workspace list, so they get a 403 that says why; outside the workspace it
   // does not exist (404).
-  app.delete("/api/drafts/:draftId", requireMember, async (c) => {
+  app.delete("/api/drafts/:draftId", requireMember, perUser("delete", 60), async (c) => {
     const viewer = c.get("viewer");
     const draftId = c.req.param("draftId");
     const draft = draftId
@@ -634,6 +645,13 @@ export function registerApi(app: Hono<AppEnv>): void {
 export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: Viewer, rawCode: unknown): Promise<JoinResult> {
   const db = c.env.DB;
   const code = normalizeInviteCode(rawCode);
+  // Charged to the workspace the code is for, before anything is written.
+  const target = code ? await db.prepare("SELECT organization_id FROM invites WHERE code = ?").bind(code).first<{ organization_id: string }>() : null;
+  const over = await overDailyBudget(c, target?.organization_id ?? null, JOIN_ROWS, "join");
+  if (over) {
+    c.header("Retry-After", String(secondsUntilUtcMidnight()));
+    return { status: 429, body: { ok: false, error: `${over} Try again after 00:00 UTC.` } };
+  }
   const reserved = code
     ? await db
         .prepare(
@@ -876,8 +894,9 @@ class LeaseLost extends Error {}
 // lock: one D1 row per workspace, shared by every Worker instance. Role
 // changes, removals and leaving all take it, so the last-admin check and the
 // change it allows can't interleave with another (two admins demoting
-// themselves at once would otherwise leave none). The lease expires, so a
-// holder that dies mid-way can't wedge the workspace; `run` calls `hold()`
+// themselves at once would otherwise leave none). The lease is renewed while
+// the request runs and expires after it, so a holder that dies mid-way can't
+// wedge the workspace; `run` calls `hold()`
 // right before each WorkOS change, which renews the lease or, if it lapsed
 // (another request may have acted since), stops the change with a 409.
 async function withAdminLock<E extends AppEnv>(
@@ -904,19 +923,28 @@ async function withAdminLock<E extends AppEnv>(
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(100 * 2 ** attempt, 800) * (0.5 + Math.random())));
   }
-  const hold = async () => {
-    const renewed = await db
+  const renew = () =>
+    db
       .prepare("UPDATE admin_locks SET expires_at = unixepoch() + ? WHERE organization_id = ? AND holder = ? AND expires_at > unixepoch()")
       .bind(ADMIN_LOCK_SECONDS, organizationId, holder)
       .run();
-    if (!renewed.meta.changes) throw new LeaseLost();
+  const hold = async () => {
+    if (!(await renew()).meta.changes) throw new LeaseLost();
   };
+  // While this request lives the lease does not lapse, even if a WorkOS call
+  // stalls past ADMIN_LOCK_SECONDS: its change is still in flight, and the
+  // last-admin check it passed holds only until that change lands.
+  const heartbeat = setInterval(
+    () => void renew().catch((error: unknown) => console.error("admin lock renewal failed:", error instanceof Error ? error.message : error)),
+    (ADMIN_LOCK_SECONDS * 1000) / 6
+  );
   try {
     return await run(await activeMemberships(c, organizationId), hold);
   } catch (error) {
     if (!(error instanceof LeaseLost)) throw error;
     return c.json({ ok: false, error: "That took too long and another member change may have happened meanwhile. Try again." }, 409);
   } finally {
+    clearInterval(heartbeat);
     // A failed release only delays the next change until the lease expires.
     await db
       .prepare("DELETE FROM admin_locks WHERE organization_id = ? AND holder = ?")
@@ -957,6 +985,19 @@ function canUpdateDraft(viewer: Viewer, draft: DraftRow): boolean {
   if (draft.account_id === viewer.account_id || viewer.role === "admin") return true;
   const organizationKey = viewer.is_api_key && viewer.account_id === viewer.credential_id;
   return organizationKey && draft.account_id.startsWith("api_key_");
+}
+
+// Whether the caller is still an admin of their workspace, asked live (not
+// from the membership cache): for admin-only grants that outlive the request.
+async function stillAdmin(c: Context<MemberEnv>, viewer: MemberViewer): Promise<boolean> {
+  if (await isRevoked(c.env.DB, [viewer.account_id, viewer.credential_id], viewer.organization_id)) return false;
+  const live = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
+    userId: viewer.account_id,
+    organizationId: viewer.organization_id,
+    statuses: ["active"],
+    limit: 1
+  });
+  return live.data.find((m) => m.organizationId === viewer.organization_id)?.role?.slug === "admin";
 }
 
 async function requireAdmin(c: Context<MemberEnv>, next: Next): Promise<Response | void> {
@@ -1081,11 +1122,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   // first. Past either, uploads stop with a 429 until 00:00 UTC; reads,
   // sign-ins and deletes keep working. Unchanged content still writes its
   // metadata, so it counts as an upload of no pages.
-  const over = await overDailyBudget(c, unchanged ? [] : validation.pages);
-  if (over) {
-    c.header("Retry-After", String(secondsUntilUtcMidnight()));
-    return c.json({ ok: false, code: "daily_budget", error: `${over} Try again after 00:00 UTC.` }, 429);
-  }
+  const over = await overDailyBudget(c, viewer.organization_id, uploadRows(c, unchanged ? [] : validation.pages), "upload");
+  if (over) return dailyBudgetSpent(c, over);
 
   const statements: D1PreparedStatement[] = [];
   let blobStatements: D1PreparedStatement[] = [];
@@ -1353,18 +1391,47 @@ function uploadRows(c: Context<MemberEnv>, pages: { bytes: number }[]): number {
   return 2 * (6 + pages.length + chunks);
 }
 
-/** Why an upload doesn't fit today's budgets, or null once they are reserved. */
-async function overDailyBudget(c: Context<MemberEnv>, pages: { bytes: number }[]): Promise<string | null> {
+/**
+ * Why `rows` more D1 rows don't fit today's budgets (the workspace's share
+ * first, when there is a workspace), or null once they are reserved.
+ */
+async function overDailyBudget<E extends AppEnv>(c: Context<E>, organizationId: string | null, rows: number, what: string): Promise<string | null> {
   const { workspaceRowsPerDay, rowsPerDay } = c.get("config").limits;
-  const rows = uploadRows(c, pages);
-  if (!(await reserveBudget(c.env.DB, `d1:rows:${c.get("viewer").organization_id}`, rows, workspaceRowsPerDay))) {
-    return "This workspace has reached today's upload limit.";
+  if (organizationId && !(await reserveBudget(c.env.DB, `d1:rows:${organizationId}`, rows, workspaceRowsPerDay))) {
+    return `This workspace has reached today's ${what} limit.`;
   }
   if (!(await reserveBudget(c.env.DB, "d1:rows", rows, rowsPerDay))) {
-    return "This htmlartifact deployment has reached today's upload limit.";
+    return `This htmlartifact deployment has reached today's ${what} limit.`;
   }
   return null;
 }
+
+function dailyBudgetSpent<E extends AppEnv>(c: Context<E>, over: string): Response {
+  c.header("Retry-After", String(secondsUntilUtcMidnight()));
+  return c.json({ ok: false, code: "daily_budget", error: `${over} Try again after 00:00 UTC.` }, 429);
+}
+
+// D1 rows a route writes, doubled for index entries like uploadRows (the two
+// budget rows included): a grant (an invite or a CI key, and the re-check's
+// revoke), a new workspace, a role change (lock, epoch, cache, revocations)
+// and a join (epoch, cache, join and invite rows).
+const GRANT_ROWS = 2 * (2 + 2);
+export const WORKSPACE_ROWS = 2 * (1 + 2);
+const MEMBER_CHANGE_ROWS = 2 * (8 + 2);
+const JOIN_ROWS = 2 * (6 + 2);
+
+/**
+ * Charges a write route's D1 rows to the daily budgets that uploads use, so
+ * no route can spend D1 Free's daily writes (past them D1 refuses every
+ * write until 00:00 UTC). Removals, leaving, revocations and deletes are not
+ * charged: they only write when something real ends, and must keep working.
+ */
+export const writeBudget = (rows: number): MiddlewareHandler<AppEnv> =>
+  async function budget(c, next) {
+    const over = await overDailyBudget(c, c.get("viewer")?.organization_id ?? null, rows, "change");
+    if (over) return dailyBudgetSpent(c, over);
+    return next();
+  };
 
 // A 507 if `bytes` more would overflow the workspace's share or the
 // database's headroom; otherwise the database reading it checked.
