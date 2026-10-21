@@ -1,6 +1,8 @@
 // One-time production setup against the real WorkOS environment. Never prints secret values.
 //   bun scripts/workos-setup.ts            -> production
 //   bun scripts/workos-setup.ts --staging  -> staging (same WorkOS env, staging URLs, Pages preview env)
+//   --dry-run                              -> print what it would do; calls nothing
+// URLs and project names come from deploy/*/wrangler.toml (scripts/deployment.ts).
 // Reads WORKOS_API_KEY / WORKOS_CLIENT_ID from ~/.config/htmlartifact/workos.env, then:
 //   1. registers the AuthKit redirect URI   <app>/auth/callback
 //   2. registers the webhook endpoint       <app>/webhooks/workos  (secret goes straight to Cloudflare)
@@ -8,9 +10,10 @@
 //      both Pages projects and the ops Worker.
 import { $ } from "bun";
 import { homedir } from "node:os";
+import { deployment } from "./deployment.ts";
 
 const staging = process.argv.includes("--staging");
-const app = staging ? "https://staging.htmlartifact.pages.dev" : "https://htmlartifact.pages.dev";
+const { appUrl: app, appProject, sandboxProject, opsWorker } = await deployment(staging);
 const root = new URL("..", import.meta.url).pathname;
 const wrangler = `${root}node_modules/.bin/wrangler`;
 const EVENTS = [
@@ -24,6 +27,14 @@ const EVENTS = [
   // (api_key.deleted is handled by the webhook code but is not an event type
   // WorkOS lets endpoints subscribe to.)
 ];
+
+if (process.argv.includes("--dry-run")) {
+  console.log(`redirect URI:     ${app}/auth/callback`);
+  console.log(`webhook endpoint: ${app}/webhooks/workos (${EVENTS.join(", ")})`);
+  console.log(`Pages secrets:    ${appProject}, ${sandboxProject}${staging ? " (preview)" : ""}`);
+  console.log(`Worker secret:    ${opsWorker}`);
+  process.exit(0);
+}
 
 const file = await Bun.file(`${homedir()}/.config/htmlartifact/workos.env`).text();
 const env = Object.fromEntries(
@@ -78,7 +89,7 @@ console.log(`webhook endpoint created: ${endpointUrl} (${EVENTS.length} events)`
 
 // 3. Cloudflare secrets (values go over stdin only)
 async function pagesSecret(project: "app" | "usercontent", name: string, value: string) {
-  const projectName = project === "app" ? "htmlartifact" : "htmlartifact-usercontent";
+  const projectName = project === "app" ? appProject : sandboxProject;
   const envFlag = staging ? ["--env", "preview"] : [];
   await $`${wrangler} pages secret put ${name} --project-name ${projectName} ${envFlag} < ${new Response(value)}`
     .cwd(`${root}deploy/${project}`)
@@ -88,7 +99,7 @@ async function pagesSecret(project: "app" | "usercontent", name: string, value: 
 async function opsSecret(name: string, value: string) {
   const envFlag = staging ? "--env=staging" : "--env=";
   await $`${wrangler} secret put ${name} ${envFlag} < ${new Response(value)}`.cwd(`${root}deploy/ops`).quiet();
-  console.log(`secret ${name} -> htmlartifact-ops${staging ? "-staging" : ""}`);
+  console.log(`secret ${name} -> ${opsWorker}`);
 }
 
 for (const project of ["app", "usercontent"] as const) {

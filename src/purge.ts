@@ -4,6 +4,7 @@
 // Every deletion is queued in D1 first (`pending_deletions`), attempted at once,
 // and retried by the ops Worker's cron until it succeeds.
 
+import { pruneBudgets } from "./budget.ts";
 import { deleteObjects } from "./storage.ts";
 
 export type DeletionKind = "r2_prefix" | "workos_org" | "workos_membership";
@@ -114,7 +115,7 @@ async function drainPendingDeletions(env: PurgeEnv, max = 20): Promise<{ done: n
 // runs right after; whatever fails stays queued for the cron.
 
 /** Queue an artifact's R2 prefix and delete its rows (its custom URL goes with the row). */
-function deleteDraftStatements(db: D1Database, organizationId: string, draftId: string): D1PreparedStatement[] {
+export function deleteDraftStatements(db: D1Database, organizationId: string, draftId: string): D1PreparedStatement[] {
   return [
     queueDeletion(db, "r2_prefix", draftPrefix(organizationId, draftId)),
     // The workspace's storage counter drops by what this artifact held.
@@ -138,6 +139,40 @@ function deleteDraftStatements(db: D1Database, organizationId: string, draftId: 
 export async function purgeDraft(env: PurgeEnv, organizationId: string, draftId: string): Promise<boolean> {
   await env.DB.batch(deleteDraftStatements(env.DB, organizationId, draftId));
   return runDeletion(env, "r2_prefix", draftPrefix(organizationId, draftId));
+}
+
+/**
+ * Queue these versions' objects, move the storage counter and drop their rows
+ * (and D1 blobs), in one batch. Never the artifact's current version.
+ */
+export function deleteVersionStatements(db: D1Database, organizationId: string, draftId: string, ids: string[]): D1PreparedStatement[] {
+  const list = JSON.stringify(ids);
+  const prefix = scopedPrefix(`${draftPrefix(organizationId, draftId)}versions/`);
+  // The same rows in every statement: listed, of this artifact, still not
+  // current. A concurrent prune that got there first leaves nothing to count.
+  const doomed = `SELECT id FROM draft_versions WHERE draft_id = ?2 AND id IN (SELECT value FROM json_each(?1))
+                    AND id IS NOT (SELECT current_version_id FROM drafts WHERE id = ?2)`;
+  return [
+    // One version's prefix covers `<versionId>.html` and `<versionId>/...`.
+    db
+      .prepare(`INSERT INTO pending_deletions (kind, target) SELECT 'r2_prefix', ?3 || id FROM (${doomed}) WHERE length(id) = 20 ON CONFLICT (kind, target) DO NOTHING`)
+      .bind(list, draftId, prefix),
+    db
+      .prepare(
+        `UPDATE workspace_usage SET stored_bytes = MAX(0, stored_bytes
+           - (SELECT COALESCE(SUM(file_size), 0) FROM draft_versions WHERE id IN (${doomed})))
+         WHERE organization_id = ?3`
+      )
+      .bind(list, draftId, organizationId),
+    db
+      .prepare(
+        `DELETE FROM blobs WHERE key IN (SELECT object_key FROM draft_versions WHERE id IN (${doomed})
+           UNION ALL SELECT object_key FROM draft_pages WHERE draft_version_id IN (${doomed}))`
+      )
+      .bind(list, draftId),
+    db.prepare(`DELETE FROM draft_pages WHERE draft_version_id IN (${doomed})`).bind(list, draftId),
+    db.prepare(`DELETE FROM draft_versions WHERE id IN (${doomed}) RETURNING file_size`).bind(list, draftId)
+  ];
 }
 
 /**
@@ -177,31 +212,7 @@ export async function pruneVersions(
     )
     .bind(list)
     .all<{ object_key: string }>();
-  // The same rows in every statement: listed, of this artifact, still not
-  // current. A concurrent prune that got there first leaves nothing to count.
-  const doomed = `SELECT id FROM draft_versions WHERE draft_id = ?2 AND id IN (SELECT value FROM json_each(?1))
-                    AND id IS NOT (SELECT current_version_id FROM drafts WHERE id = ?2)`;
-  const batch = await db.batch<{ file_size: number }>([
-    // One version's prefix covers `<versionId>.html` and `<versionId>/...`.
-    db
-      .prepare(`INSERT INTO pending_deletions (kind, target) SELECT 'r2_prefix', ?3 || id FROM (${doomed}) WHERE length(id) = 20 ON CONFLICT (kind, target) DO NOTHING`)
-      .bind(list, draftId, prefix),
-    db
-      .prepare(
-        `UPDATE workspace_usage SET stored_bytes = MAX(0, stored_bytes
-           - (SELECT COALESCE(SUM(file_size), 0) FROM draft_versions WHERE id IN (${doomed})))
-         WHERE organization_id = ?3`
-      )
-      .bind(list, draftId, organizationId),
-    db
-      .prepare(
-        `DELETE FROM blobs WHERE key IN (SELECT object_key FROM draft_versions WHERE id IN (${doomed})
-           UNION ALL SELECT object_key FROM draft_pages WHERE draft_version_id IN (${doomed}))`
-      )
-      .bind(list, draftId),
-    db.prepare(`DELETE FROM draft_pages WHERE draft_version_id IN (${doomed})`).bind(list, draftId),
-    db.prepare(`DELETE FROM draft_versions WHERE id IN (${doomed}) RETURNING file_size`).bind(list, draftId)
-  ]);
+  const batch = await db.batch<{ file_size: number }>(deleteVersionStatements(db, organizationId, draftId, ids));
   const deleted = batch.at(-1)?.results ?? [];
   try {
     const keys = objects.map((row) => row.object_key);
@@ -305,7 +316,8 @@ export async function runScheduledJobs(env: PurgeEnv) {
     .run()
     .then(() => drainPendingDeletions(env))
     .catch(failed("deletions"));
-  return { deletions, erased };
+  const budgets = await pruneBudgets(env.DB).catch(failed("budgets"));
+  return { deletions, erased, budgets };
 }
 
 /**

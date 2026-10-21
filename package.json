@@ -1,6 +1,6 @@
 {
   "name": "htmlartifact",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Publish HTML artifacts from coding agents to your team's workspace. Only workspace members can open them.",
   "keywords": [
     "html",
@@ -38,8 +38,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "lint": "knip",
     "test": "bun run test:d1 && bun run test:r2",
-    "test:d1": "HTMLARTIFACT_TEST_STORAGE=d1 node --test --test-concurrency=1 test/*.test.js",
-    "test:r2": "HTMLARTIFACT_TEST_STORAGE=r2 node --test --test-concurrency=1 test/*.test.js",
+    "test:d1": "HTMLARTIFACT_TEST_STORAGE=d1 node --test --test-concurrency=1 --test-timeout=120000 test/*.test.js",
+    "test:r2": "HTMLARTIFACT_TEST_STORAGE=r2 node --test --test-concurrency=1 --test-timeout=120000 test/*.test.js",
     "prepublishOnly": "bun run build",
     "dev:local": "node scripts/dev-local.mjs",
     "build:pages": "bun scripts/build-pages.ts",

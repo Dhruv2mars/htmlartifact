@@ -46,14 +46,14 @@ export function SignIn({ next }: { next: string }) {
   );
 }
 
-export function Message({ title, message, retry }: { title: string; message: string; retry: boolean }) {
+export function Message({ title, message, retry }: { title: string; message: string; retry: string | null }) {
   return (
     <Bare>
       <Seal id={title} size={72} className="mx-auto opacity-80" />
       <h1 className="mt-7 font-wide text-[30px] font-[740] leading-[1.05] tracking-[-0.03em] text-ink">{title}</h1>
       <p className="mt-3 text-[15.5px] leading-relaxed text-fog">{message}</p>
       <div className="mt-8 flex flex-wrap justify-center gap-2">
-        {retry && <ButtonLink href="/auth/sign-in">Try again</ButtonLink>}
+        {retry && <ButtonLink href={retry}>Try again</ButtonLink>}
         <ButtonLink href="/" tone={retry ? "ghost" : "ink"}>
           Go home
         </ButtonLink>

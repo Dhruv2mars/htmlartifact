@@ -72,35 +72,38 @@ export async function sessionViewer<E extends AppEnv>(
   if (!sealed) return null;
   const config = c.get("config");
   const secure = isSecure(c);
-  const session = workos(config).client.userManagement.loadSealedSession({
-    sessionData: sealed,
-    cookiePassword: config.cookiePassword
-  });
-
-  let auth: SessionAuth = await session.authenticate().catch(() => ({ authenticated: false as const }));
-  const wantsSwitch =
-    organizationId &&
-    auth.authenticated &&
-    auth.organizationId !== organizationId &&
-    Boolean(await activeMembership(c, auth.user.id, organizationId));
-  if (!auth.authenticated || wantsSwitch) {
-    // Each refresh is a WorkOS call, and a stale cookie can be replayed on any
-    // page: limited per network before WorkOS is asked.
+  const load = (sessionData: string) =>
+    workos(config).client.userManagement.loadSealedSession({ sessionData, cookiePassword: config.cookiePassword });
+  // Each refresh is a WorkOS call, and a stale cookie can be replayed on any
+  // page: limited per network before WorkOS is asked.
+  const refresh = async (sessionData: string, options?: { organizationId: string }) => {
     const verdict = await checkLimit(c, SESSION_REFRESHES, clientIp(c));
     if (!verdict.ok) {
       c.header("Retry-After", String(verdict.retryAfter));
       throw new RateLimitedError();
     }
-    const refreshed: SessionAuth = await session
-      .refresh(wantsSwitch ? { organizationId } : undefined)
+    const refreshed: SessionAuth = await load(sessionData)
+      .refresh(options)
       .catch(() => ({ authenticated: false as const }));
-    if (refreshed.authenticated && refreshed.sealedSession) {
-      c.header("Set-Cookie", sessionCookie(refreshed.sealedSession, secure), { append: true });
-      auth = refreshed;
-    } else if (!auth.authenticated) {
+    if (!refreshed.authenticated || !refreshed.sealedSession) return null;
+    c.header("Set-Cookie", sessionCookie(refreshed.sealedSession, secure), { append: true });
+    return { ...refreshed, sealedSession: refreshed.sealedSession };
+  };
+
+  let current = sealed;
+  let auth: SessionAuth = await load(sealed).authenticate().catch(() => ({ authenticated: false as const }));
+  if (!auth.authenticated) {
+    const refreshed = await refresh(sealed);
+    if (!refreshed) {
       c.header("Set-Cookie", clearSessionCookie(secure), { append: true });
       return null;
     }
+    auth = refreshed;
+    current = refreshed.sealedSession;
+  }
+  // Asked for another workspace (an artifact's): switch into it if a member.
+  if (organizationId && auth.organizationId !== organizationId && (await activeMembership(c, auth.user.id, organizationId))) {
+    auth = (await refresh(current, { organizationId })) ?? auth;
   }
 
   const { user } = auth;

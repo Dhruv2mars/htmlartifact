@@ -1,5 +1,18 @@
 # htmlartifact — GA checklist
 
+## GA launch gates (2026-10-21, branch fix/ga-launch-gates)
+Done = every box below has its proof named next to it (test name, command output, or live URL check). Nothing is ticked on reasoning alone.
+- [ ] G0 main CI green again: the 30df113 test step hung on test/deletion.test.js (300 s per test) and was cancelled at 20 min, so Deploy skipped. Proof: CI green on main, Deploy + smoke green.
+- [x] G1 stale slug: `publish a.html --slug report` after its draft was renamed and another artifact took `report` must refuse (409), not overwrite. The server checks the slug owner in the same write (expectedDraftId). Proof: CLI test that fails on main. Done: test/cli.test.js stale-slug tests (409 `slug_names_another_artifact`; fail on main).
+- [x] G2 pagination: /api/drafts pages by cursor and finds a slug exactly; the CLI list/delete/prune/collision guard and the web feeds see past 200/500; workspace lists read every WorkOS page. Proof: tests with >page-size artifacts and >100 memberships. Done: test/pagination.test.js (105 artifacts, 104 workspaces; 6 of 8 fail on origin/main).
+- [x] G3 capacity: D1-only daily write budgets per deployment and per workspace (429 + Retry-After) under the free-tier quotas; supported boundary written in README/SECURITY. No R2, no billing change. PR #21 coordinated (not merged: its R2/card policy conflicts with CLAUDE.md). Proof: budget tests. Done: src/budget.ts + test/budget.test.js (429 `daily_budget` + Retry-After, atomic under 8 parallel uploads); README quota table checked against Cloudflare docs 2026-10-21. PR #21 not merged.
+- [ ] G4 release: version bump + CHANGELOG, npm publish by the Release workflow; tarball has THIRD_PARTY_LICENSES; provenance present; `npx htmlartifact@<v> --version` runs. Proof: `npm view`/`npm pack` output.
+- [x] G5 self-host: workos-setup and smoke take app/sandbox URLs and Pages project names from config, not hardcoded names. Proof: dry run with other names. Done: `scripts/deployment.ts`; `workos-setup --dry-run` and `smoke` resolved renamed projects/URLs (acme-art*) from a temp copy of deploy/, no spend.
+- [x] G6 restore safety: SECURITY.md restore revokes CI keys/codes issued before restore and reconciles deletes before reopening; runbook no longer relies on persistent Pages logs. Done: `scripts/restore-reconcile.ts` + `HTMLARTIFACT_MAINTENANCE`; test/restore.test.js reproduces a revoked key working after a simulated restore, then reconciles it; CLI run on real `wrangler d1 export` dumps and applied with `d1 execute --file`. SECURITY.md runbook rewritten; Pages logs documented as live-only (Cloudflare docs).
+- [ ] G7 independent security / tenant-isolation review (Codex) + two-account e2e and mobile/keyboard checks in the built-in browser; real findings fixed.
+- [ ] G8 web: no `__name` ReferenceError from the theme bootstrap; auth retry keeps next/invite; /history links work across the user's workspaces; web workspace list hides deleted workspaces.
+- [ ] G9 GA_AUDIT/TASKS reconciled into a final verdict tied to the released CLI version and deployed commit.
+
 ## GA blockers: workspace admins (2026-10-20, branch fix/last-admin-race)
 - [x] B1 two admins acting at once (self-demote, demote each other, both leave, remove each other) left 0 admins: per-workspace D1 lease (`admin_locks`, 30 s expiry) around role changes, removal and leave; live admin re-check inside; removal of the last admin refused (test/admins.test.js)
 - [x] Demotion now revokes the ex-admin's CI keys and the invite codes they issued (removal already did)

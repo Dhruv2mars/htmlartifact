@@ -14,6 +14,7 @@ import {
   findUser,
   page,
   refreshInto,
+  retryLocked,
   sendWebhook,
   signInTokens,
   startStack,
@@ -33,11 +34,16 @@ let ops; // the ops Worker (deploy/ops/wrangler.toml), with test-triggerable cro
 
 before(async () => {
   stack = await startStack({ directoryProvisioning: true });
+  // The app, this proxy and the ops Worker share one SQLite file. Two of them
+  // opening it at the same moment can abort workerd (an uncaught SQLITE_BUSY
+  // fatal), and every request to it then hangs: open it in turn, app first.
+  assert.equal((await fetch(`${stack.baseUrl}/healthz`)).status, 200);
   const state = path.join(stack.tmp, "state");
   proxy = await getPlatformProxy({
     configPath: testConfigPath(),
     persist: { path: path.join(state, "v3") }
   });
+  await rows("SELECT 1 FROM drafts LIMIT 1");
   // The deploy config names the production D1 database; local state is keyed
   // by database id, so point the ops Worker at the app's (root config) id.
   const appDatabaseId = fs.readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8").match(/database_id = "([^"]+)"/)[1];
@@ -62,6 +68,7 @@ before(async () => {
     vars: { WORKOS_API_URL: stack.emulator.url, WORKOS_API_KEY: stack.emulator.apiKey || "sk_test_default" },
     experimental: { disableExperimentalWarning: true }
   });
+  await runCron();
 });
 
 after(async () => {
@@ -70,7 +77,15 @@ after(async () => {
   await stack?.stop();
 });
 
-const upload = (token, body) => callApi(stack, token, "POST", "/api/uploads", body);
+// A 500 here is the app losing the shared SQLite file's lock (see retryLocked):
+// local-only, so it is retried. Production D1 has no such contention.
+async function upload(token, body) {
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await callApi(stack, token, "POST", "/api/uploads", body);
+    if (response.status !== 500 || attempt >= 3) return response;
+    await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+  }
+}
 // The stored objects, whichever backend this run uses (src/storage.ts).
 const r2Keys = async (prefix) =>
   STORAGE === "r2"
@@ -82,24 +97,12 @@ const putObject = (key, html) =>
     : exec("INSERT INTO blobs (key, chunk, data) VALUES (?, 0, ?)", key, html);
 const deleteObject = (key) =>
   STORAGE === "r2" ? proxy.env.ARTIFACTS.delete(key) : exec("DELETE FROM blobs WHERE key = ?", key);
-// The app, the ops Worker and this proxy share one local SQLite file; a read
-// racing a writer occasionally loses the lock. Retry only that transient error.
+// The app, the ops Worker and this proxy share one local SQLite file (see retryLocked).
 async function rows(sql, ...binds) {
   return retryLocked(async () => (await proxy.env.DB.prepare(sql).bind(...binds).all()).results);
 }
 // Direct writes from the test, retried the same way.
 const exec = (sql, ...binds) => retryLocked(() => proxy.env.DB.prepare(sql).bind(...binds).run());
-async function retryLocked(run) {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await run();
-    } catch (error) {
-      const message = String(error?.message);
-      if (attempt >= 8 || !(message.includes("session commit token") || message.includes("SQLITE_BUSY"))) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
-    }
-  }
-}
 const count = async (sql, ...binds) => Object.values((await rows(sql, ...binds))[0])[0];
 
 // Multi-page artifacts are served under a trailing slash.
@@ -351,6 +354,17 @@ describe("ops Worker cron", () => {
     const [freshRow] = await rows("SELECT source_ip, user_agent FROM draft_versions WHERE id = ?", fresh.body.versionId);
     assert.equal(freshRow.source_ip, "203.0.113.8");
     assert.ok(freshRow.user_agent);
+  });
+
+  test("the cron drops daily upload budgets once their day is over", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    await upload(alice, { html: page("Budget today") });
+    const iso = (offset) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    await exec("INSERT OR REPLACE INTO daily_budget (day, scope, used) VALUES (?, 'd1:rows', 10), (?, 'd1:rows', 10)", iso(-2), iso(-1));
+    await runCron();
+    await eventually(async () => (await count("SELECT COUNT(*) FROM daily_budget WHERE day = ?", iso(-2))) === 0, "old budget dropped", runCron);
+    assert.equal(await count("SELECT COUNT(*) FROM daily_budget WHERE day = ?", iso(-1)), 1, "yesterday's stays");
+    assert.ok((await count("SELECT COUNT(*) FROM daily_budget WHERE day = ?", iso(0))) >= 1, "today's stays");
   });
 });
 

@@ -12,7 +12,8 @@ import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
 import { activeMembership, bearerViewer, userStillMember } from "./auth.ts";
 import { deleteWorkspaceStatements, draftPrefix, isWorkspaceDeleted, membershipBeingUndone, pruneVersions, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
-import { stageObjects } from "./storage.ts";
+import { reserveBudget, secondsUntilUtcMidnight } from "./budget.ts";
+import { stageObjects, storageKind } from "./storage.ts";
 import {
   isMember,
   type AppEnv,
@@ -194,25 +195,7 @@ export function registerApi(app: Hono<AppEnv>): void {
     if (viewer.is_api_key) {
       return c.json({ ok: true, workspaces: [{ ...workspaceJson(viewer.workspace), current: true }] });
     }
-    const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
-      userId: viewer.account_id,
-      statuses: ["active"],
-      limit: 100
-    });
-    const workspaces: { id: string; name: string; handle: string | null; role: string | null; current: boolean }[] = [];
-    for (const m of page.data) {
-      // WorkOS deletes the organization after ours is gone (and can lag, or
-      // fail and be retried by the cron): a deleted workspace is not listed.
-      if (await isWorkspaceDeleted(c.env.DB, m.organizationId)) continue;
-      const workspace = await findWorkspace(c.env.DB, m.organizationId);
-      workspaces.push({
-        id: m.organizationId,
-        name: workspace?.name || m.organizationName || m.organizationId,
-        handle: workspace?.handle || null,
-        role: m.role?.slug || null,
-        current: m.organizationId === viewer.organization_id
-      });
-    }
+    const workspaces = await userWorkspaces(c, viewer.account_id, viewer.organization_id);
     return c.json({ ok: true, workspaces });
   });
 
@@ -570,12 +553,21 @@ export function registerApi(app: Hono<AppEnv>): void {
     return next();
   }, async (c) => {
     const viewer = c.get("viewer") as MemberViewer;
-    const options = { origin: c.get("origin"), handle: viewer.workspace.handle, organizationId: viewer.organization_id };
-    const drafts =
+    // ?cursor= (the previous page's nextCursor) pages on; ?slug= finds the
+    // artifact at one custom URL, however many the workspace has.
+    const options = {
+      origin: c.get("origin"),
+      handle: viewer.workspace.handle,
+      organizationId: viewer.organization_id,
+      cursor: c.req.query("cursor") || null,
+      slug: normalizeSlug(c.req.query("slug")),
+      limit: Number(c.req.query("limit")) || undefined
+    };
+    const { drafts, nextCursor } =
       c.req.query("scope") === "workspace"
         ? await listWorkspaceDrafts(c.env.DB, options)
         : await listMyDrafts(c.env.DB, { ...options, accountId: viewer.account_id });
-    return c.json({ ok: true, drafts, usage: await workspaceUsage(c, viewer.organization_id) });
+    return c.json({ ok: true, drafts, nextCursor, usage: await workspaceUsage(c, viewer.organization_id) });
   });
 
   // Deletes an artifact for real: every version and page in R2 (one key
@@ -817,6 +809,48 @@ async function allPages<T>(page: (after: string | undefined) => Promise<{ data: 
   return items;
 }
 
+export interface UserWorkspace {
+  id: string;
+  name: string;
+  handle: string | null;
+  role: string | null;
+  current: boolean;
+}
+
+// Every workspace a user is an active member of: every WorkOS page, then one
+// D1 read for all of them. WorkOS deletes the organization after ours is gone
+// (and can lag, or fail and be retried by the cron): a deleted workspace is
+// not listed.
+export async function userWorkspaces<E extends AppEnv>(
+  c: Context<E>,
+  userId: string,
+  currentOrganizationId: string | null
+): Promise<UserWorkspace[]> {
+  const { userManagement } = workos(c.get("config")).client;
+  const memberships = await allPages((after) => userManagement.listOrganizationMemberships({ userId, statuses: ["active"], limit: 100, after }));
+  if (!memberships.length) return [];
+  const { results } = await c.env.DB.prepare(
+    `SELECT j.value AS organization_id, w.name, w.handle,
+            EXISTS (SELECT 1 FROM deleted_workspaces d WHERE d.organization_id = j.value) AS deleted
+     FROM json_each(?) j LEFT JOIN workspaces w ON w.organization_id = j.value`
+  )
+    .bind(JSON.stringify(memberships.map((m) => m.organizationId)))
+    .all<{ organization_id: string; name: string | null; handle: string | null; deleted: number }>();
+  const ours = new Map(results.map((row) => [row.organization_id, row]));
+  return memberships
+    .filter((m) => !ours.get(m.organizationId)?.deleted)
+    .map((m) => {
+      const workspace = ours.get(m.organizationId);
+      return {
+        id: m.organizationId,
+        name: workspace?.name || m.organizationName || m.organizationId,
+        handle: workspace?.handle || null,
+        role: m.role?.slug || null,
+        current: m.organizationId === currentOrganizationId
+      };
+    });
+}
+
 // Every active WorkOS membership of organizationId, live.
 function activeMemberships<E extends AppEnv>(c: Context<E>, organizationId: string) {
   const { userManagement } = workos(c.get("config")).client;
@@ -961,6 +995,22 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   if (slugDraft && !canUpdateDraft(viewer, slugDraft)) {
     return c.json({ ok: false, error: `The custom URL "${slug}" belongs to a teammate's artifact; only they or a workspace admin can update it.` }, 403);
   }
+  // The CLI names the artifact it expects --slug to update (the one this file
+  // was published to). The slug now names another one (renamed, then reused):
+  // refuse rather than replace that one's content. `--force` replaces it.
+  const expected = typeof body.expectedDraftId === "string" ? body.expectedDraftId : null;
+  if (slugDraft && expected && slugDraft.id !== expected) {
+    return c.json(
+      {
+        ok: false,
+        code: "slug_names_another_artifact",
+        draftId: slugDraft.id,
+        title: slugDraft.title,
+        error: `The custom URL "${slug}" names artifact ${slugDraft.id} ("${slugDraft.title || "Untitled"}"), not ${expected}, which this file was published to. Uploading would replace ${slugDraft.id}'s content. Pick another slug, or re-run with --force to replace it.`
+      },
+      409
+    );
+  }
   if (slugDraft && draftId && slugDraft.id !== draftId) {
     return c.json(
       { ok: false, error: `The custom URL "${slug}" already names artifact ${slugDraft.id}. Upload with --slug alone to update it.` },
@@ -1025,6 +1075,16 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       validation.totalBytes,
       size === null ? Number.MAX_SAFE_INTEGER : databaseLimit - size + countedBytes
     ];
+  }
+
+  // Daily budgets (src/budget.ts): D1 rows written, the workspace's share
+  // first. Past either, uploads stop with a 429 until 00:00 UTC; reads,
+  // sign-ins and deletes keep working. Unchanged content still writes its
+  // metadata, so it counts as an upload of no pages.
+  const over = await overDailyBudget(c, unchanged ? [] : validation.pages);
+  if (over) {
+    c.header("Retry-After", String(secondsUntilUtcMidnight()));
+    return c.json({ ok: false, code: "daily_budget", error: `${over} Try again after 00:00 UTC.` }, 429);
   }
 
   const statements: D1PreparedStatement[] = [];
@@ -1283,6 +1343,27 @@ async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
     if (report.slug.status === "unavailable" || report.slug.status === "taken") report.ok = false;
   }
   return c.json(report);
+}
+
+// D1 rows an upload writes, doubled for index entries: the artifact, version,
+// usage counter and final update, the two budget rows, plus a row per extra
+// page and, on D1 storage, per <= 1 MB chunk.
+function uploadRows(c: Context<MemberEnv>, pages: { bytes: number }[]): number {
+  const chunks = storageKind(c.env) === "d1" ? pages.reduce((n, page) => n + Math.max(1, Math.ceil(page.bytes / 1_000_000)), 0) : 0;
+  return 2 * (6 + pages.length + chunks);
+}
+
+/** Why an upload doesn't fit today's budgets, or null once they are reserved. */
+async function overDailyBudget(c: Context<MemberEnv>, pages: { bytes: number }[]): Promise<string | null> {
+  const { workspaceRowsPerDay, rowsPerDay } = c.get("config").limits;
+  const rows = uploadRows(c, pages);
+  if (!(await reserveBudget(c.env.DB, `d1:rows:${c.get("viewer").organization_id}`, rows, workspaceRowsPerDay))) {
+    return "This workspace has reached today's upload limit.";
+  }
+  if (!(await reserveBudget(c.env.DB, "d1:rows", rows, rowsPerDay))) {
+    return "This htmlartifact deployment has reached today's upload limit.";
+  }
+  return null;
 }
 
 // A 507 if `bytes` more would overflow the workspace's share or the

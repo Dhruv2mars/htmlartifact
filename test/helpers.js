@@ -164,8 +164,13 @@ export async function breakWorkos(emulator, method, pathname, status = 503) {
 }
 
 export async function findOrganization(emulator, name) {
-  const { data } = await workosApi(emulator, "GET", "/organizations?limit=100");
-  return data.find((org) => org.name === name);
+  let after = "";
+  do {
+    const { data, list_metadata } = await workosApi(emulator, "GET", `/organizations?limit=100${after ? `&after=${after}` : ""}`);
+    const found = data.find((org) => org.name === name);
+    if (found) return found;
+    after = list_metadata?.after || "";
+  } while (after);
 }
 
 export async function findUser(emulator, email) {
@@ -235,7 +240,7 @@ export async function callApi(stack, token, method, pathname, body) {
   } catch {
     json = { text };
   }
-  return { status: response.status, body: json };
+  return { status: response.status, headers: response.headers, body: json };
 }
 
 // Delivers a correctly signed WorkOS webhook, as WorkOS would, including its
@@ -346,3 +351,17 @@ export function writeHtml(dir, name, html) {
 
 export const page = (title, body = "<p>hello</p>") =>
   `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
+
+// The app and a test's getPlatformProxy share one local SQLite file; a read
+// racing a writer occasionally loses the lock. Retries only that transient error.
+export async function retryLocked(run) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      const message = String(error?.message);
+      if (attempt >= 8 || !(message.includes("session commit token") || message.includes("SQLITE_BUSY"))) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+}

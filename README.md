@@ -178,9 +178,10 @@ pricing, checked 2026-10-19):
 |---|---|
 | D1: 500 MB per database (5 GB per account) | Uploads stop when the database would pass 450 MB (`HTMLARTIFACT_DATABASE_LIMIT_BYTES`); each workspace holds at most 50 MiB of HTML, every version counted (`HTMLARTIFACT_WORKSPACE_QUOTA_BYTES`); 1 MiB per upload (2 MiB flagged), 10 pages |
 | D1: 50 queries per request | An upload is one batch of ~2 statements per page + 1 per MB + ~8 |
-| D1: 100,000 rows written, 5 million rows read per day | An upload writes ~6–30 rows (artifact, version, pages, chunks, counters); opening an artifact reads ~10 |
+| D1: 100,000 rows written per day | Uploads may write 40,000 rows a day in all (`HTMLARTIFACT_UPLOAD_ROWS_PER_DAY`) and one workspace 4,000 (`HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY`), counted conservatively (a one-page upload counts 16, index entries included). Past either, uploads get a 429 with `Retry-After` until 00:00 UTC; reading, signing in, inviting and deleting keep working on the remaining 60,000 |
+| D1: 5 million rows read per day | Lists read one page of 100 (keyset cursor on an index); opening an artifact reads ~10 rows. Not budgeted in the app: past it, Cloudflare refuses D1 queries (errors, no charge) until 00:00 UTC |
 | Workers: 10 ms CPU per request (with a burst allowance) | The server validates HTML with the native HTMLRewriter (`src/html-policy-server.ts`); the CLI checks pages locally first (`src/html-policy.ts`, with line numbers). Measured in production: 1 MB pages pass even after the burst allowance is spent. If heavy uploads exhaust it, Cloudflare answers 503 for a few seconds and the CLI retries |
-| Workers + Pages Functions: 100,000 requests per day, shared by the app, the sandbox and the ops Worker | Opening an artifact in a browser is 2 requests (app page + sandbox frame); per-user rate limits (uploads 30/min, checks 60/min, sign-in polling per device code) and per-IP limits on API-key validation; the ops cron runs every 15 minutes (96/day) |
+| Workers + Pages Functions: 100,000 requests per day, shared by the app, the sandbox and the ops Worker | Opening an artifact in a browser is 2 requests (app page + sandbox frame); per-user rate limits (uploads 30/min, checks 60/min, sign-in polling per device code) and per-IP limits on API-key validation; the ops cron runs every 15 minutes (96/day). Not budgeted in the app (counting would cost a D1 write per request): past it, Cloudflare answers Worker and Functions requests with Error 1027 (no charge) until 00:00 UTC, so artifacts, sign-in and the API are down for the rest of the day; static assets stay free and unlimited (checked 2026-10-21: Workers limits, Pages Functions pricing) |
 | Cron triggers: 5 per account | 1 |
 | D1 Time Travel: 7 days | Deleted HTML stays restorable for 7 days (SECURITY.md) |
 | Pages static assets: unlimited | — |
@@ -199,23 +200,26 @@ Production deploys from `main` through GitHub Actions (`.github/workflows/deploy
 once CI has passed on the pushed commit; `staging` deploys to
 https://staging.htmlartifact.pages.dev the same way. To run your own copy:
 
-1. Cloudflare: create the Pages projects `htmlartifact` and
-   `htmlartifact-usercontent` and a D1 database, and put its ID in
+1. Cloudflare: create two Pages projects (the app and the sandbox for artifact
+   HTML) and a D1 database. Every name and URL of a deployment lives in
    `deploy/app/wrangler.toml`, `deploy/usercontent/wrangler.toml` and
-   `deploy/ops/wrangler.toml` (the hostnames in those files are this
-   deployment's; change them for yours).
+   `deploy/ops/wrangler.toml`: set yours there (project `name`s, the D1
+   `database_id`, `HTMLARTIFACT_PUBLIC_BASE_URL` and
+   `HTMLARTIFACT_SANDBOX_ORIGIN`, the ops Worker's name in the app's
+   `[[services]]`). The scripts below read them from there.
 2. WorkOS: create an environment with AuthKit, put `WORKOS_API_KEY` and
-   `WORKOS_CLIENT_ID` in `~/.config/htmlartifact/workos.env`, set your app's
-   URL in `scripts/workos-setup.ts` (`app`, hardcoded to this deployment), and
-   run `bun scripts/workos-setup.ts`. It registers the redirect URI
-   `<app>/auth/callback` and the webhook `<app>/webhooks/workos`
-   (`organization_membership.*`, `organization.deleted`, `user.deleted`,
-   `session.revoked`, `api_key.revoked`), and stores the secrets on both Pages
-   projects and the ops Worker.
+   `WORKOS_CLIENT_ID` in `~/.config/htmlartifact/workos.env`, check the plan
+   with `bun scripts/workos-setup.ts --dry-run`, then run it without
+   `--dry-run`. It registers the redirect URI `<app>/auth/callback` and the
+   webhook `<app>/webhooks/workos` (`organization_membership.*`,
+   `organization.deleted`, `user.deleted`, `session.revoked`,
+   `api_key.revoked`), and stores the secrets on both Pages projects and the
+   ops Worker.
 3. Set `HTMLARTIFACT_COOKIE_PASSWORD` (32+ characters) the same way on both
    Pages projects: `bunx wrangler pages secret put HTMLARTIFACT_COOKIE_PASSWORD --project-name=<project>`.
 4. `bun run deploy:all` (ops Worker, then both Pages projects), then
-   `bun run smoke -- https://<app host>`.
+   `bun run smoke` (or `bun run smoke -- <app url> <sandbox url>` for any
+   other host).
 
 The CLI defaults to `https://htmlartifact.pages.dev` (`DEFAULT_API_URL` in
 `cli/env.ts`); point it elsewhere with `HTMLARTIFACT_API_URL`. Releases are

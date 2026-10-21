@@ -149,9 +149,11 @@ export const upload = Command.make(
     const mapping = options.new || draft ? null : yield* findDraftMapping(apiUrl, source.resolved);
     const mappedDraftId = slug === undefined ? mapping?.draftId || null : null;
     const draftId = draft || mappedDraftId;
-    if (slug !== undefined && mapping?.draftId && mapping.slug !== slug.trim().toLowerCase() && !options.force) {
-      yield* refuseSlugOfAnotherArtifact(apiUrl, apiKey, slug, mapping.draftId, displayPath(source.resolved));
-    }
+    // `--slug` updates whichever artifact the slug names. Name the one this
+    // path was published to: if the slug now names another (renamed, then
+    // reused), the server refuses in the same request that would write, so no
+    // stale mapping or race can replace that one's content. `--force` skips it.
+    const expectedDraftId = slug !== undefined && mapping?.draftId && !options.force ? mapping.draftId : undefined;
 
     const ci = collectCiMetadata();
     const payload = {
@@ -159,6 +161,7 @@ export const upload = Command.make(
       filename: source.filename,
       draftId,
       slug,
+      expectedDraftId,
       description: Option.getOrUndefined(options.description),
       metadata: {
         ...collectGitMetadata(source.dir),
@@ -183,6 +186,17 @@ export const upload = Command.make(
     }
     const { ok, status, body } = result;
 
+    if (!ok && body.code === "slug_names_another_artifact") {
+      const wanted = slug!.trim().toLowerCase();
+      return yield* new CliError({
+        kind: "usage",
+        message: [
+          `--slug ${wanted} names artifact ${body.draftId} ("${body.title || "Untitled"}"), but ${displayPath(source.resolved)} was published to ${expectedDraftId}.`,
+          `Uploading would replace ${body.draftId}'s content with this file. Pick another slug, or re-run with --force to replace it.`
+        ].join("\n"),
+        details: { status, error: body.error, errors: [], issues: [] }
+      });
+    }
     if (!ok) {
       const staleMapping = status === 404 && mappedDraftId;
       const hint = staleMapping
@@ -256,24 +270,6 @@ export const upload = Command.make(
     );
   })
 ).pipe(Command.withDescription("Publish an artifact, or a new version of one."));
-
-// `--slug` updates whichever artifact the slug names. When that is not the one
-// this path was published to (and that one still exists), stop: the upload
-// would silently replace another artifact's content. `--force` goes ahead.
-const refuseSlugOfAnotherArtifact = (apiUrl: string, apiKey: string, slug: string, mappedDraftId: string, shownPath: string) =>
-  Effect.gen(function* () {
-    const wanted = slug.trim().toLowerCase();
-    const { drafts = [] } = (yield* api(apiUrl, "/api/drafts?scope=workspace", { apiKey })) as { drafts?: Json[] };
-    const named = drafts.find((d) => d.slug === wanted);
-    if (!named || named.draftId === mappedDraftId || !drafts.some((d) => d.draftId === mappedDraftId)) return;
-    return yield* new CliError({
-      kind: "usage",
-      message: [
-        `--slug ${wanted} names artifact ${named.draftId} ("${named.title || "Untitled"}"), but ${shownPath} was published to ${mappedDraftId}.`,
-        `Uploading would replace ${named.draftId}'s content with this file. Pick another slug, or re-run with --force to replace it.`
-      ].join("\n")
-    });
-  });
 
 export const check = Command.make(
   "check",
@@ -355,8 +351,14 @@ export const list = Command.make(
     const { apiUrl, apiKey } = yield* getAuth(Option.getOrUndefined(options.apiUrl));
     const workspace = Option.isSome(options.workspace) ? yield* resolveWorkspace(apiUrl, apiKey, options.workspace.value) : null;
     const query = new URLSearchParams({ ...(options.all ? { scope: "workspace" } : {}), ...(workspace ? { workspace: workspace.id } : {}) });
-    const body = yield* api(apiUrl, `/api/drafts${query.size ? `?${query}` : ""}`, { apiKey });
-    const drafts: Json[] = body.drafts || [];
+    // The server pages the feed (nextCursor); list shows all of it.
+    let body = yield* api(apiUrl, `/api/drafts${query.size ? `?${query}` : ""}`, { apiKey });
+    const drafts: Json[] = [...(body.drafts || [])];
+    while (body.nextCursor) {
+      query.set("cursor", body.nextCursor);
+      body = yield* api(apiUrl, `/api/drafts?${query}`, { apiKey });
+      drafts.push(...(body.drafts || []));
+    }
     const usage = formatUsage(body.usage);
 
     if (options.json) return yield* printJson({ drafts, usage: body.usage ?? null });
@@ -412,10 +414,13 @@ const parseDraftTarget = (input: string, apiUrl: string) =>
     return yield* new CliError({ kind: "usage", message: `Not an artifact URL: ${input}` });
   });
 
-// Custom URLs are looked up in the current workspace's list by publicUrl.
+// Custom URLs are looked up by slug in the current workspace, then matched by
+// publicUrl (so a /w/<other-workspace>/<slug> URL is not found here).
 const findDraftBySlugPath = (apiUrl: string, apiKey: string, slugPath: string, input: string) =>
   Effect.gen(function* () {
-    const { drafts } = (yield* api(apiUrl, "/api/drafts?scope=workspace", { apiKey })) as { drafts?: Json[] };
+    const slug = slugPath.split("/")[3] || "";
+    const query = new URLSearchParams({ scope: "workspace", slug });
+    const { drafts } = (yield* api(apiUrl, `/api/drafts?${query}`, { apiKey })) as { drafts?: Json[] };
     const match = (drafts || []).find((draft) => {
       try {
         return trimSlashes(new URL(draft.publicUrl).pathname) === slugPath;

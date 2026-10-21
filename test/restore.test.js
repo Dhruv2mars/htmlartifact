@@ -1,0 +1,165 @@
+import assert from "node:assert/strict";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { after, before, describe, test } from "node:test";
+import { getPlatformProxy } from "wrangler";
+import { reconcileStatements } from "../scripts/restore-reconcile.ts";
+import { STORAGE, accessToken, callApi, page, refreshInto, retryLocked, signInTokens, startStack, testConfigPath } from "./helpers.js";
+
+// A D1 Time Travel restore (SECURITY.md: Backups and restore) brings back the
+// database as it was at the bookmark: keys and invites revoked since are live
+// again, deleted artifacts and workspaces are back. scripts/restore-reconcile.ts
+// re-applies all of it from the export taken just before restoring. Here the
+// restore is simulated by writing a snapshot back into the local database.
+// D1 storage only (production's): a D1 restore does not bring back R2 objects.
+describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only" }, () => {
+  let stack;
+  let proxy;
+  before(async () => {
+    stack = await startStack();
+    assert.equal((await fetch(`${stack.baseUrl}/healthz`)).status, 200);
+    proxy = await getPlatformProxy({ configPath: testConfigPath(), persist: { path: path.join(stack.tmp, "state", "v3") } });
+    await all("SELECT 1 FROM drafts LIMIT 1");
+  });
+  after(async () => {
+    await proxy?.dispose();
+    await stack?.stop();
+  });
+
+  const all = (sql) => retryLocked(async () => (await proxy.env.DB.prepare(sql).all()).results);
+  const batch = (statements) => retryLocked(() => proxy.env.DB.batch(statements));
+
+  // Every table, as `wrangler d1 export` would capture it.
+  async function snapshot() {
+    const tables = await all("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'");
+    const data = {};
+    for (const { name } of tables) data[name] = await all(`SELECT * FROM "${name}"`);
+    const db = new DatabaseSync(":memory:");
+    for (const { name, sql } of tables) {
+      db.exec(sql);
+      for (const row of data[name]) {
+        const columns = Object.keys(row);
+        db.prepare(`INSERT INTO "${name}" (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`).run(
+          ...columns.map((c) => (row[c] instanceof ArrayBuffer ? new Uint8Array(row[c]) : row[c]))
+        );
+      }
+    }
+    return { data, query: (sql) => db.prepare(sql).all() };
+  }
+
+  // The restore: every table back to the snapshot.
+  async function restore({ data }) {
+    const statements = [];
+    for (const [name, rows] of Object.entries(data)) {
+      statements.push(proxy.env.DB.prepare(`DELETE FROM "${name}"`));
+      for (const row of rows) {
+        const columns = Object.keys(row);
+        statements.push(
+          proxy.env.DB.prepare(`INSERT INTO "${name}" (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`).bind(
+            ...columns.map((c) => row[c])
+          )
+        );
+      }
+    }
+    await batch(statements);
+  }
+
+  test("revoked keys and invites stay revoked, deleted artifacts, versions and workspaces stay deleted", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    const key = (await callApi(stack, alice, "POST", "/api/workspaces/api-keys", { name: "Restored CI" })).body;
+    assert.ok(key.token);
+    const invite = (await callApi(stack, alice, "POST", "/api/workspaces/invites", {})).body;
+    assert.ok(invite.code);
+    const single = (await callApi(stack, alice, "POST", "/api/workspaces/invites", { maxUses: 1 })).body;
+    assert.ok(single.code);
+    const doomed = (await callApi(stack, alice, "POST", "/api/uploads", { html: page("Doomed") })).body;
+    const kept = (await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-kept", html: page("Kept") })).body;
+    assert.equal((await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-kept", html: page("Kept v2") })).body.draftId, kept.draftId);
+    const reverted = (await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-reverted", html: page("Reverted v1") })).body;
+    let max = await signInTokens(stack, "max@both.test", "Acme");
+    const workspace = (await callApi(stack, max.accessToken, "POST", "/api/workspaces", { name: "Restored Co" })).body.workspace;
+    max = await refreshInto(stack, max, workspace.id);
+    assert.equal((await callApi(stack, max.accessToken, "POST", "/api/uploads", { html: page("Restored Co plan") })).status, 201);
+
+    const bookmark = await snapshot();
+
+    assert.equal((await callApi(stack, alice, "DELETE", `/api/workspaces/api-keys/${key.key.id}`)).status, 200);
+    assert.equal((await callApi(stack, alice, "DELETE", `/api/workspaces/invites/${invite.code}`)).status, 200);
+    assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${doomed.draftId}`)).status, 200);
+    assert.equal((await callApi(stack, max.accessToken, "DELETE", "/api/workspaces/current", { confirm: "Restored Co" })).status, 200);
+    // Kept's first version pruned; the single-use invite used up; a join's
+    // WorkOS delete still queued (an undone join is denied while it is); and
+    // today's budget spent further.
+    assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${kept.draftId}/versions?keepLatest=1`)).body.deleted, 1);
+    // Reverted's current version at the bookmark replaced, then pruned.
+    assert.equal((await callApi(stack, alice, "POST", "/api/uploads", { slug: "restore-reverted", html: page("Reverted v2") })).body.draftId, reverted.draftId);
+    assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${reverted.draftId}/versions?keepLatest=1`)).body.deleted, 1);
+    const sam = await accessToken(stack, "sam@new.test");
+    assert.equal((await callApi(stack, sam, "POST", "/api/workspaces/join", { code: single.code })).status, 200);
+    await batch([proxy.env.DB.prepare("INSERT INTO pending_deletions (kind, target) VALUES ('workos_membership', 'om_restored_undo')")]);
+    assert.equal((await callApi(stack, alice, "POST", "/api/uploads", { html: page("After the bookmark") })).status, 201);
+    const exported = await snapshot();
+
+    await restore(bookmark);
+    // The problem: all of it is back.
+    assert.equal((await callApi(stack, key.token, "GET", "/api/me")).status, 200, "the revoked key works again");
+    assert.equal((await callApi(stack, alice, "GET", "/api/drafts?scope=workspace&slug=")).body.drafts.filter((d) => d.draftId === doomed.draftId).length, 1);
+    assert.equal((await all(`SELECT COUNT(*) AS n FROM workspaces WHERE organization_id = '${workspace.id}'`))[0].n, 1);
+
+    const { sql, summary } = reconcileStatements(exported.query, (await snapshot()).query);
+    assert.deepEqual(
+      { ...summary, revocations: 0, epochs: 0, queuedDeletions: 0, budgets: 0 },
+      { workspaces: 1, artifacts: 2, versions: 1, ciKeys: 1, invites: 1, revocations: 0, epochs: 0, undoneJoins: 0, queuedDeletions: 0, budgets: 0, scrubbedUsers: 0 }
+    );
+    await batch(sql.map((statement) => proxy.env.DB.prepare(statement)));
+
+    assert.equal((await callApi(stack, key.token, "GET", "/api/me")).status, 401, "the key is revoked again");
+    const nora = await accessToken(stack, "nora@new.test");
+    assert.notEqual((await callApi(stack, nora, "POST", "/api/workspaces/join", { code: invite.code })).status, 200, "the invite is revoked again");
+    assert.notEqual((await callApi(stack, nora, "POST", "/api/workspaces/join", { code: single.code })).status, 200, "the used-up invite stays used up");
+    const versions = await all(`SELECT id FROM draft_versions WHERE draft_id = '${kept.draftId}'`);
+    assert.equal(versions.length, 1, "the pruned version is gone again");
+    assert.ok((await all("SELECT target FROM pending_deletions WHERE kind = 'r2_prefix'")).map((r) => r.target).some((t) => t.includes(`/drafts/${kept.draftId}/versions/`)), "its HTML is queued again");
+    assert.equal((await all("SELECT COUNT(*) AS n FROM pending_deletions WHERE target = 'om_restored_undo'"))[0].n, 1, "the queued delete is back");
+    const spent = (rows) => Object.fromEntries(rows.map((r) => [`${r.day}/${r.scope}`, r.used]));
+    const now = spent(await all("SELECT day, scope, used FROM daily_budget"));
+    for (const [k, used] of Object.entries(spent(exported.query("SELECT day, scope, used FROM daily_budget")))) assert.ok(now[k] >= used, `budget ${k}`);
+    const feed = (await callApi(stack, alice, "GET", "/api/drafts?scope=workspace")).body.drafts.map((d) => d.draftId);
+    assert.ok(!feed.includes(doomed.draftId), "the deleted artifact is gone again");
+    assert.ok(feed.includes(kept.draftId), "the rest is untouched");
+    // Its pruned v1 is not served again: v2 was lost to the restore, so the artifact goes.
+    assert.ok(!feed.includes(reverted.draftId), "an artifact left with only pruned versions is deleted");
+    assert.equal((await all(`SELECT COUNT(*) AS n FROM draft_versions WHERE draft_id = '${reverted.draftId}'`))[0].n, 0);
+    assert.equal((await fetch(reverted.publicUrl, { headers: { Authorization: `Bearer ${alice}` } })).status, 404);
+    assert.equal((await fetch(doomed.publicUrl, { headers: { Authorization: `Bearer ${alice}` } })).status, 404);
+    // Their HTML is queued for the cron again (deletion.test.js covers the cron).
+    const queued = (await all("SELECT target FROM pending_deletions WHERE kind = 'r2_prefix'")).map((r) => r.target);
+    assert.ok(queued.some((t) => t.endsWith(`/drafts/${doomed.draftId}/`)), "its HTML is queued for deletion");
+    assert.equal((await all(`SELECT COUNT(*) AS n FROM workspaces WHERE organization_id = '${workspace.id}'`))[0].n, 0);
+    assert.equal((await all(`SELECT COUNT(*) AS n FROM deleted_workspaces WHERE organization_id = '${workspace.id}'`))[0].n, 1);
+    assert.ok(queued.includes(`orgs/${workspace.id}/`), "the workspace's HTML is queued for deletion");
+    // Nothing is left to reconcile.
+    const again = reconcileStatements(exported.query, (await snapshot()).query).summary;
+    assert.equal(again.workspaces + again.artifacts + again.versions + again.ciKeys + again.invites, 0);
+  });
+});
+
+// Step 1 of the runbook: the service stays closed until the restore is reconciled.
+describe("maintenance switch", () => {
+  let stack;
+  before(async () => {
+    stack = await startStack({ sandbox: true, vars: { HTMLARTIFACT_MAINTENANCE: "on" } });
+  });
+  after(() => stack?.stop());
+
+  test("every route but /healthz answers 503, on the app and the sandbox", async () => {
+    assert.equal((await fetch(`${stack.baseUrl}/healthz`)).status, 200);
+    const api = await fetch(`${stack.baseUrl}/api/me`, { headers: { Authorization: "Bearer anything" } });
+    assert.equal(api.status, 503);
+    assert.equal((await api.json()).code, "maintenance");
+    assert.equal(api.headers.get("retry-after"), "300");
+    for (const url of [`${stack.baseUrl}/`, `${stack.baseUrl}/auth/sign-in`, `${stack.sandboxUrl}/a/anything`]) {
+      assert.equal((await fetch(url, { redirect: "manual" })).status, 503, url);
+    }
+  });
+});

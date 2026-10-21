@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Context, Hono, Next } from "hono";
-import { joinWithCode } from "./api.ts";
+import { joinWithCode, userWorkspaces } from "./api.ts";
 import { activeMembership, isSecure, sessionViewer } from "./auth.ts";
 import { randomToken } from "./crypto.ts";
 import { findWorkspace, saveWorkspace } from "./db.ts";
@@ -50,12 +50,13 @@ export function registerWeb(app: Hono<AppEnv>): void {
     const viewer = await sessionViewer(c);
     if (!viewer) return renderPage(c, { kind: "landing", session: null });
     if (!isMember(viewer)) return c.redirect("/workspaces");
-    const drafts = await listWorkspaceDrafts(c.env.DB, {
+    const { drafts, nextCursor } = await listWorkspaceDrafts(c.env.DB, {
       organizationId: viewer.organization_id,
       origin: c.get("origin"),
-      handle: viewer.workspace.handle
+      handle: viewer.workspace.handle,
+      cursor: c.req.query("cursor")
     });
-    return renderPage(c, { kind: "feed", session: toSession(viewer)!, artifacts: toArtifacts(drafts) });
+    return renderPage(c, { kind: "feed", session: toSession(viewer)!, artifacts: toArtifacts(drafts), older: olderLink("/", nextCursor) });
   });
 
   app.get("/docs", async (c) => renderPage(c, { kind: "docs", session: toSession(await sessionViewer(c)) }));
@@ -63,17 +64,28 @@ export function registerWeb(app: Hono<AppEnv>): void {
 
   app.get("/mine", signedIn, inWorkspace, async (c) => {
     const viewer = c.get("viewer");
-    const drafts = await listMyDrafts(c.env.DB, {
+    const { drafts, nextCursor } = await listMyDrafts(c.env.DB, {
       accountId: viewer.account_id,
       organizationId: viewer.organization_id,
       origin: c.get("origin"),
-      handle: viewer.workspace.handle
+      handle: viewer.workspace.handle,
+      cursor: c.req.query("cursor")
     });
-    return renderPage(c, { kind: "mine", session: toSession(viewer)!, artifacts: toArtifacts(drafts) });
+    return renderPage(c, { kind: "mine", session: toSession(viewer)!, artifacts: toArtifacts(drafts), older: olderLink("/mine", nextCursor) });
   });
 
-  // Version history of any artifact in the workspace, not only your own.
-  app.get("/history/:draftId", signedIn, inWorkspace, async (c) => {
+  // Version history of any artifact in the workspace, not only your own. A
+  // member of the artifact's workspace is switched into it, as artifact URLs
+  // do; anyone else gets the same 404 as for a missing artifact.
+  app.get("/history/:draftId", async (c, next) => {
+    const owner = await c.env.DB.prepare("SELECT organization_id FROM drafts WHERE id = ? AND deleted_at IS NULL")
+      .bind(c.req.param("draftId") || "")
+      .first<{ organization_id: string }>();
+    const viewer = await sessionViewer(c, { organizationId: owner?.organization_id });
+    if (!viewer) return renderPage(c, { kind: "sign-in", next: c.req.path }, 401);
+    c.set("viewer", viewer);
+    return next();
+  }, inWorkspace, async (c) => {
     const viewer = c.get("viewer");
     const draftId = c.req.param("draftId");
     if (!draftId) return c.notFound();
@@ -146,7 +158,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
           .first<{ organization_id: string; expires_at: number; uses_left: number }>()
       : null;
     if (!code || !invite) {
-      return renderPage(c, message("Invite not valid", "That invite code is invalid, expired, or used up. Ask whoever sent it for a new one.", false), 404);
+      return renderPage(c, message("Invite not valid", "That invite code is invalid, expired, or used up. Ask whoever sent it for a new one.", null), 404);
     }
     const viewer = await sessionViewer(c);
     if (!viewer) return renderPage(c, { kind: "sign-in", next: c.req.path }, 401);
@@ -168,7 +180,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
     const form = await c.req.parseBody();
     const result = await joinWithCode(c, c.get("viewer"), String(form.code || ""));
     if (!result.body.ok) {
-      return renderPage(c, message("Invite not valid", result.body.error, false), result.status);
+      return renderPage(c, message("Invite not valid", result.body.error, null), result.status);
     }
     return switchTo(c, result.body.workspace.id, safeNext(form.next));
   });
@@ -201,15 +213,16 @@ export function registerWeb(app: Hono<AppEnv>): void {
     const config = c.get("config");
     const secure = isSecure(c);
     c.header("Set-Cookie", clearAuthStateCookie(secure), { append: true });
-    if (c.req.query("error")) {
-      return renderPage(c, message("Sign-in problem", "Sign-in was cancelled or denied."), 403);
-    }
     const authState = readAuthState(c, config.cookiePassword);
+    const retry = retrySignIn(authState?.next);
+    if (c.req.query("error")) {
+      return renderPage(c, message("Sign-in problem", "Sign-in was cancelled or denied.", retry), 403);
+    }
     const { code, state } = c.req.query();
     if (!authState || !state || state !== authState.state) {
-      return renderPage(c, message("Sign-in problem", "Sign-in expired or state mismatch. Please retry."), 400);
+      return renderPage(c, message("Sign-in problem", "Sign-in expired or state mismatch. Please retry.", retry), 400);
     }
-    if (!code) return renderPage(c, message("Sign-in problem", "Missing authorization code."), 400);
+    if (!code) return renderPage(c, message("Sign-in problem", "Missing authorization code.", retry), 400);
 
     let sealedSession: string | undefined;
     let organizationId: string | undefined;
@@ -222,11 +235,11 @@ export function registerWeb(app: Hono<AppEnv>): void {
       }));
     } catch (error) {
       console.error("WorkOS sign-in failed:", error instanceof Error ? error.message : error);
-      return renderPage(c, message("Sign-in problem", "Sign-in could not be completed. Please retry."), 502);
+      return renderPage(c, message("Sign-in problem", "Sign-in could not be completed. Please retry.", retry), 502);
     }
     // sealSession: true always returns one; without it there is no session.
     if (!sealedSession) {
-      return renderPage(c, message("Sign-in problem", "Sign-in could not be completed. Please retry."), 502);
+      return renderPage(c, message("Sign-in problem", "Sign-in could not be completed. Please retry.", retry), 502);
     }
     c.header("Set-Cookie", sessionCookie(sealedSession, secure), { append: true });
     const next = safeNext(authState.next);
@@ -254,9 +267,16 @@ export function registerWeb(app: Hono<AppEnv>): void {
   });
 }
 
-function message(title: string, text: string, retry = true): Page {
+// A feed shows FEED_PAGE_SIZE artifacts; this links the next, older page.
+const olderLink = (path: string, cursor: string | null) => (cursor ? `${path}?cursor=${encodeURIComponent(cursor)}` : null);
+
+// `retry` is where "Try again" goes: sign-in again, back to the page (or
+// invite) the user was on.
+function message(title: string, text: string, retry: string | null = "/auth/sign-in"): Page {
   return { kind: "message", title, message: text, retry, session: null };
 }
+
+const retrySignIn = (next: string | undefined) => `/auth/sign-in?next=${encodeURIComponent(safeNext(next))}`;
 
 async function signedIn(c: Context<UserEnv>, next: Next): Promise<Response | void> {
   const viewer = await sessionViewer(c);
@@ -299,19 +319,6 @@ async function switchTo<E extends AppEnv>(c: Context<E>, organizationId: string,
 }
 
 async function listWorkspaces<E extends AppEnv>(c: Context<E>, viewer: Viewer): Promise<WorkspaceChoice[]> {
-  const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
-    userId: viewer.account_id,
-    statuses: ["active"],
-    limit: 100
-  });
-  const workspaces: WorkspaceChoice[] = [];
-  for (const m of page.data) {
-    const workspace = await findWorkspace(c.env.DB, m.organizationId);
-    workspaces.push({
-      id: m.organizationId,
-      name: workspace?.name || m.organizationName || m.organizationId,
-      current: m.organizationId === viewer.organization_id
-    });
-  }
-  return workspaces;
+  const workspaces = await userWorkspaces(c, viewer.account_id, viewer.organization_id);
+  return workspaces.map(({ id, name, current }) => ({ id, name, current }));
 }

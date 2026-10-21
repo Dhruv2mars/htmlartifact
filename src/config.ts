@@ -49,6 +49,12 @@ export function getConfig(env: Env): Config {
       // fills it for everyone.
       workspaceBytes: Number(env.HTMLARTIFACT_WORKSPACE_QUOTA_BYTES || 50 * 1024 * 1024),
       databaseBytes: Number(env.HTMLARTIFACT_DATABASE_LIMIT_BYTES || 450_000_000),
+      // D1 Free allows 100,000 rows written a day, then refuses every write
+      // until 00:00 UTC. Uploads may use 40,000 of them (~2,000–4,000
+      // uploads), and one workspace 4,000 (~200–400), so no tenant can use up
+      // the day for everyone; sign-ins, invites and webhooks keep the rest.
+      rowsPerDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_DAY || 40_000),
+      workspaceRowsPerDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY || 4_000),
       ...(env.ARTIFACTS
       ? {
           accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 4 * 1024 * 1024),

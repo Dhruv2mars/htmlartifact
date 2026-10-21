@@ -77,4 +77,4 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: bun run deploy:all -- --branch "$BRANCH"
       - if: env.GO == 'true'
-        run: bun run smoke -- "$([ "$BRANCH" = main ] && echo https://htmlartifact.pages.dev || echo https://staging.htmlartifact.pages.dev)"
+        run: bun run smoke -- $([ "$BRANCH" = main ] || echo --staging)

@@ -7,6 +7,8 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-21
+
 ### Added
 
 - A privacy notice for the hosted service at `/privacy`, linked from the
@@ -14,9 +16,31 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   and how to ask for access, correction or deletion.
 - The npm package ships `THIRD_PARTY_LICENSES`, generated at build time from
   the packages bundled into `dist/htmlartifact.js`.
+- Daily upload budgets that keep D1 writes inside Workers Free: 40,000 rows a
+  day per deployment and 4,000 per workspace (`HTMLARTIFACT_UPLOAD_ROWS_PER_DAY`,
+  `HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY`). Past either, uploads get a
+  429 `daily_budget` with `Retry-After` until 00:00 UTC; reading still works.
+- Feeds page by cursor: `GET /api/drafts` returns `nextCursor` (and takes
+  `cursor`, `limit` and `slug`), `htmlartifact list --all` follows it, and the
+  web feed links to older artifacts.
+- `scripts/restore-reconcile.ts` and an `HTMLARTIFACT_MAINTENANCE` switch for a
+  safe D1 Time Travel restore: revoked API keys and invite codes stay revoked,
+  deleted artifacts and workspaces stay deleted (SECURITY.md → Backups and restore).
+- `scripts/workos-setup.ts --dry-run`, and `workos-setup` and `smoke` read
+  project names and URLs from `deploy/*/wrangler.toml`, so a self-hosted
+  deployment needs no script edits.
 
 ### Fixed
 
+- Publishing to a slug overwrote another artifact when the slug had moved to
+  it since the local link was saved; the CLI now names the artifact it expects
+  and the API refuses (409 `slug_names_another_artifact`).
+- `read`, `publish` by slug and the workspace list missed artifacts beyond the
+  first 100, and users in over 100 workspaces missed some.
+- The web app: pages no longer throw `__name is not defined` (the theme
+  script); a failed sign-in's retry keeps the page or invite it was for; a
+  history link opens in its artifact's workspace; deleted workspaces leave the
+  workspace list at once.
 - /docs: the CI section now matches the README (workspace API keys from
   `workspace api-key create`, `--slug` in the example), and the self-hosting
   link points at the README's Deploying section.
@@ -185,7 +209,8 @@ First release.
   HTML stored in D1), with per-workspace and database quotas and rate limits
   sized to them.
 
-[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.0...v0.1.1
