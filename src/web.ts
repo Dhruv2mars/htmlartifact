@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Context, Hono, Next } from "hono";
-import { joinWithCode, userWorkspaces } from "./api.ts";
+import { joinWithCode, userWorkspaces, writeBudget, WORKSPACE_ROWS } from "./api.ts";
 import { activeMembership, isSecure, sessionViewer } from "./auth.ts";
 import { randomToken } from "./crypto.ts";
 import { findWorkspace, saveWorkspace } from "./db.ts";
@@ -120,7 +120,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
     });
   });
 
-  app.post("/workspaces", sameOrigin, signedIn, writes, async (c) => {
+  app.post("/workspaces", sameOrigin, signedIn, writes, writeBudget(WORKSPACE_ROWS), async (c) => {
     const viewer = c.get("viewer");
     const name = String((await c.req.parseBody()).name || "").trim().slice(0, 100);
     if (!name) return c.redirect("/workspaces");
