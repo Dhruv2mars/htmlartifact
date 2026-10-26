@@ -41,7 +41,11 @@ export function Terminal({
         </span>
         {title && <span className="ml-2 truncate">{title}</span>}
       </div>
-      <div className={cx("px-4 py-3.5 sm:px-5", !wrap && "overflow-x-auto [&_p]:whitespace-pre! [&_p]:[overflow-wrap:normal]!")}>
+      <div
+        className={cx("px-4 py-3.5 sm:px-5", !wrap && "overflow-x-auto [&_p]:whitespace-pre! [&_p]:[overflow-wrap:normal]!")}
+        // A region that scrolls sideways must be reachable by keyboard.
+        {...(!wrap ? { tabIndex: 0, role: "region", "aria-label": title ? `Terminal: ${title}` : "Terminal" } : {})}
+      >
         {lines.map((line, i) => {
           const style = { "--d": `${start + i * 45}ms` } as React.CSSProperties;
           if (line.kind === "gap") return <div key={i} className="h-2.5" />;

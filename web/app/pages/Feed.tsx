@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useSearchParams } from "react-router";
 import { AppShell, PageHead } from "../components/AppShell";
 import { ArtifactList } from "../components/ArtifactList";
@@ -7,20 +8,13 @@ import type { ArtifactSummary, Session } from "../page";
 
 export function Feed({ session, artifacts, older }: { session: Session; artifacts: ArtifactSummary[]; older: string | null }) {
   const name = session.workspace?.name ?? "Workspace";
-  // "?q=" pre-fills the filter (search from other pages lands here), on the
-  // server and in the browser alike.
-  const [params] = useSearchParams();
-  const q = params.get("q") ?? "";
   return (
     <AppShell session={session} section="feed" artifacts={artifacts}>
       <div className="mx-auto w-full max-w-[1120px] px-4 pb-24 pt-9 sm:px-6 sm:pt-12">
         <PageHead title={name}>Everything published in {name}, newest first. Only members can open these links.</PageHead>
         <div className="mt-8">
           {artifacts.length ? (
-            <>
-              <ArtifactList artifacts={artifacts} paged={Boolean(older)} initialQuery={q} />
-              <Older href={older && q ? `${older}&q=${encodeURIComponent(q)}` : older} />
-            </>
+            <Listing artifacts={artifacts} older={older} />
           ) : (
             <FirstArtifact workspace={name} />
           )}
@@ -38,10 +32,7 @@ export function Mine({ session, artifacts, older }: { session: Session; artifact
         <PageHead title="My artifacts">What you've published in {name}. Open an artifact's versions to see its history.</PageHead>
         <div className="mt-8">
           {artifacts.length ? (
-            <>
-              <ArtifactList artifacts={artifacts} mine paged={Boolean(older)} />
-              <Older href={older} />
-            </>
+            <Listing artifacts={artifacts} older={older} mine />
           ) : (
             <FirstArtifact workspace={name} mine />
           )}
@@ -81,6 +72,29 @@ function FirstArtifact({ workspace, mine = false }: { workspace: string; mine?: 
         </li>
       </ol>
     </section>
+  );
+}
+
+// A feed page and its filter. "?q=" pre-fills the filter (search from other
+// pages lands here) on the server and in the browser alike; the filter as it
+// stands now travels with the link to the next, older page.
+function Listing({ artifacts, older, mine = false }: { artifacts: ArtifactSummary[]; older: string | null; mine?: boolean }) {
+  const [params] = useSearchParams();
+  const [query, setQuery] = useState(params.get("q") ?? "");
+  const paged = Boolean(older) || params.has("cursor");
+  const q = query.trim();
+  return (
+    <>
+      <ArtifactList
+        artifacts={artifacts}
+        mine={mine}
+        paged={paged}
+        filterable={artifacts.length > 6 || paged || params.has("q")}
+        query={query}
+        onQueryChange={setQuery}
+      />
+      <Older href={older && q ? `${older}&q=${encodeURIComponent(q)}` : older} />
+    </>
   );
 }
 

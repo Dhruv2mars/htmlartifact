@@ -1,0 +1,105 @@
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { cx } from "../lib/cx";
+import { AlertIcon, CheckIcon, CopyIcon } from "./icons";
+
+export type CopyState = "idle" | "copied" | "failed";
+
+// One copy contract for every Copy button: the button keeps its size in
+// every state, says Copied or Not copied, and a polite status announces the
+// result. When the clipboard refuses (no permission, insecure context), the
+// text is selected so it can be copied by hand.
+export function useCopy(text: string, fallback?: RefObject<HTMLElement | null>): [CopyState, () => Promise<void>] {
+  const [state, setState] = useState<CopyState>("idle");
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  async function copy() {
+    let ok = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      ok = false;
+    }
+    setState(ok ? "copied" : "failed");
+    if (!ok && fallback?.current) select(fallback.current);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setState("idle"), ok ? 1800 : 6000);
+  }
+  return [state, copy];
+}
+
+function select(el: HTMLElement) {
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    el.focus();
+    el.select();
+    return;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  window.getSelection()?.removeAllRanges();
+  window.getSelection()?.addRange(range);
+}
+
+// `what` names the thing in announcements ("Command copied"). `compact` is
+// an icon button whose result floats above it as a small label, so the
+// field around it never reflows.
+export function CopyButton({
+  state,
+  onCopy,
+  what,
+  label = "Copy",
+  accessibleLabel,
+  compact = false,
+  tone = "paper",
+  size = "md",
+  className
+}: {
+  state: CopyState;
+  onCopy: () => void;
+  what: string;
+  label?: string;
+  accessibleLabel?: string;
+  compact?: boolean;
+  tone?: "paper" | "ink" | "ghost";
+  size?: "md" | "lg";
+  className?: string;
+}) {
+  const Icon = state === "copied" ? CheckIcon : state === "failed" ? AlertIcon : CopyIcon;
+  const text = state === "copied" ? "Copied" : state === "failed" ? "Not copied" : label;
+  return (
+    <span className={cx("relative inline-flex shrink-0", className)}>
+      <button
+        type="button"
+        onClick={onCopy}
+        aria-label={accessibleLabel}
+        className={cx(
+          "press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[7px] font-sans font-medium whitespace-nowrap",
+          size === "lg" ? "h-10 text-[13.5px]" : "h-8 text-[12.5px]",
+          // Wide enough for the longest state, so nothing around it moves.
+          compact ? (size === "lg" ? "w-10" : "w-8") : size === "lg" ? "min-w-[7.25rem] px-3" : "min-w-[6.5rem] px-2.5",
+          tone === "ink"
+            ? "bg-white/10 text-term-ink hover:bg-white/16"
+            : tone === "ghost"
+              ? "text-ink-2 hover:bg-wash hover:text-ink"
+              : "bg-paper-3 text-ink-2 hover:bg-wash hover:text-ink"
+        )}
+      >
+        <Icon className={cx(compact ? "size-4" : "size-3.5", state === "copied" && "text-pass", state === "failed" && "text-deny")} />
+        <span className={cx(compact && "sr-only")}>{text}</span>
+      </button>
+      {compact && (
+        <span
+          aria-hidden
+          className={cx(
+            "pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-[6px] bg-ink px-2 py-1 font-sans text-[12px] font-medium text-paper shadow-pop transition-[opacity,translate] duration-150 ease-out",
+            state === "idle" ? "translate-y-1 opacity-0" : "translate-y-0 opacity-100"
+          )}
+        >
+          {state === "failed" ? "Not copied" : "Copied"}
+        </span>
+      )}
+      <span className="sr-only" role="status">
+        {state === "copied" ? `${what} copied` : state === "failed" ? `Couldn't copy the ${what.toLowerCase()} automatically. It is selected: copy it from there.` : ""}
+      </span>
+    </span>
+  );
+}

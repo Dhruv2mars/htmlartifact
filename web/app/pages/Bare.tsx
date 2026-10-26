@@ -92,7 +92,7 @@ export function Message({ title, message, retry, retryLabel }: { title: string; 
 export function NotFound() {
   return (
     <Bare>
-      <p aria-hidden className="select-none font-expanded text-[104px] font-[800] leading-none tracking-[-0.05em] text-rule-2 sm:text-[136px]">
+      <p aria-hidden className="select-none font-expanded text-[104px] font-[800] leading-none tracking-[-0.05em] text-control sm:text-[136px]">
         404
       </p>
       <h1 className={h1}>Not found</h1>

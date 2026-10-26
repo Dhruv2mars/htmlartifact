@@ -12,7 +12,10 @@ PR merged with before/after screenshots.
 - [x] Critic round 0: 5.5 overall (identity 7, typography 6.5, layout 5, responsive 4.5, color 6.5, consistency 6, interaction 5.5, ux 5, copy 6.5, a11y 6); 24 findings (/tmp/ha-design/audits/round-0.md)
 - [x] Fix round 1 (commits f63b9c0, 476adb4): tokens v2, seal v2 medallion, AppShell (workspace pill, search scope, skip link), feed index, history, landing rebuild, viewer bar + static 404/expired, workspaces/join flows (next kept, inline join errors), docs/privacy reading layout, SSR via prerender (pages render without JS), OG/favicon
 - [x] Screenshot tool: isolated headless Helium over CDP (/tmp/ha-design/tools/shoot.ts) after T3 preview capture stalled; 181 shots in /tmp/ha-design/shots/r1
-- [ ] Sol round 1 + critic round 1 (running in parallel)
+- [x] Sol round 1: CHANGES, S1/S2 (?q= via useSearchParams; keep q on older link) fixed in 1658401
+- [x] Critic round 1: 7.5 overall (identity 8.5, typography 8, layout 8, responsive 7, color 8, consistency 8, interaction 7.5, ux 7, copy 8, a11y 7.5); 18/24 resolved, 2 new P1 (static 404 recovery, field contrast)
+- [x] Fix round 2 (cab41de): origin-aware static 404, phone viewer workspace link, control border token, version details, copy fallbacks, palette close, honest search scope, nested docs index, phone hero order; D1 suite 250/250
+- [ ] Sol round 2 + critic round 2 (running)
 - [ ] Repeat until every category >= 9
 - [ ] PR with before/after screenshots, bots/CI green, merged
 Out-of-scope issues found (spawned as separate full-send threads):

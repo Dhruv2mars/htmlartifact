@@ -9,19 +9,25 @@ const SERVER_ROWS = 30;
 // The workspace's documents, newest first: a title you can read, who
 // published it and from where, how many versions (the link to its history),
 // and when. The title opens the artifact.
-// `paged`: older artifacts are on later pages, so the filter covers only this one.
+// The filter is the page's (it also goes on the older-page link): `query`
+// and `onQueryChange`. `paged`: the feed has other pages, so the filter
+// covers only this one. `filterable`: show the filter field.
 export function ArtifactList({
   artifacts,
   mine = false,
   paged = false,
-  initialQuery = ""
+  filterable,
+  query,
+  onQueryChange
 }: {
   artifacts: ArtifactSummary[];
   mine?: boolean;
   paged?: boolean;
-  initialQuery?: string;
+  filterable: boolean;
+  query: string;
+  onQueryChange: (query: string) => void;
 }) {
-  const [query, setQuery] = useState(initialQuery);
+  const setQuery = onQueryChange;
   // The server renders the first rows only (Workers Free: 10 ms of CPU); the
   // browser renders the rest right after hydration.
   const [hydrated, setHydrated] = useState(false);
@@ -34,7 +40,7 @@ export function ArtifactList({
 
   return (
     <div>
-      {(artifacts.length > 6 || initialQuery) && (
+      {filterable && (
         <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
           <label className="flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-control border border-control bg-paper-2 px-3 text-fog transition-[border-color,box-shadow] duration-150 focus-within:border-intaglio focus-within:shadow-[0_0_0_3px_var(--wash)] sm:max-w-[22rem]">
             <SearchIcon className="size-4 shrink-0" />

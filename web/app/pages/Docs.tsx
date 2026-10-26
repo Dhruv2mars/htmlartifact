@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useRef, type ReactNode } from "react";
 import { CopyText } from "../components/CopyText";
 import { Facts, Fact, H3, ReadingPage, Section, type Toc } from "../components/ReadingPage";
 import { REPO_URL } from "../components/SiteHeader";
@@ -455,14 +455,15 @@ function Code(
   )
 ) {
   const text = props.commands ? props.commands.join("\n") : props.code;
+  const pre = useRef<HTMLPreElement>(null);
   return (
     <figure aria-label={props.name} className="mt-5 overflow-hidden rounded-card border border-rule bg-paper-2">
       <div className="flex h-10 items-center justify-between gap-3 border-b border-rule pl-4 pr-1">
         <span className="min-w-0 truncate font-mono text-[12px] text-fog font-condensed">{props.label}</span>
-        <CopyText text={text} />
+        <CopyText text={text} what={props.commands ? (props.commands.length > 1 ? "Commands" : "Command") : "File"} target={pre} />
       </div>
       {props.commands ? (
-        <pre className="whitespace-pre-wrap break-words px-4 py-3 text-[12.5px] leading-[1.75] text-ink sm:text-[13px]">
+        <pre ref={pre} className="whitespace-pre-wrap break-words px-4 py-3 text-[12.5px] leading-[1.75] text-ink sm:text-[13px]">
           {props.commands.map((c) => (
             <span key={c} className="block pl-[2ch] -indent-[2ch]">
               <span aria-hidden className="select-none text-fog">
@@ -473,7 +474,7 @@ function Code(
           ))}
         </pre>
       ) : (
-        <pre className="whitespace-pre-wrap break-words px-4 py-3.5 text-[12.5px] leading-[1.75] text-ink-2 sm:text-[13px]">
+        <pre ref={pre} className="whitespace-pre-wrap break-words px-4 py-3.5 text-[12.5px] leading-[1.75] text-ink-2 sm:text-[13px]">
           {props.code.split("\n").map((line, i) => {
             const body = line.trimStart();
             const hang = props.hang ? 2 : 0;

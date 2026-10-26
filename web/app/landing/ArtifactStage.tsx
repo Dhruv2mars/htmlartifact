@@ -156,7 +156,7 @@ function PlanDocument() {
   return (
     <article className="relative flex-1 bg-white px-5 py-6 font-[system-ui,-apple-system,'Segoe_UI',sans-serif] text-[13px] leading-relaxed text-[#1f2937] sm:px-8 sm:py-7 dark:bg-[#111827] dark:text-[#d1d5db]">
       <p className="text-[12px] font-semibold text-[#0f766e] dark:text-[#5eead4]">Plan, written by Claude</p>
-      <h3 className="mt-1 text-[21px] font-bold leading-tight tracking-tight text-[#111827] sm:text-[24px] dark:text-white">Billing migration plan</h3>
+      <p className="mt-1 text-[21px] font-bold leading-tight tracking-tight text-[#111827] sm:text-[24px] dark:text-white">Billing migration plan</p>
       <p className="mt-2 max-w-[56ch] text-[#4b5563] dark:text-[#b4bcc8]">
         Move subscriptions from the legacy invoice tables to the new ledger in six weeks, with dual writes until reads are cut over.
       </p>
@@ -210,7 +210,7 @@ function NotFoundPage() {
     <div className="grid flex-1 place-items-center px-6 py-10 text-center">
       <div>
         <Mark className="mx-auto size-9" />
-        <p className="mt-5 select-none font-expanded text-[64px] font-[800] leading-none tracking-[-0.05em] text-rule-2">404</p>
+        <p aria-hidden className="mt-5 select-none font-expanded text-[64px] font-[800] leading-none tracking-[-0.05em] text-control">404</p>
         <p className="mt-3 font-wide text-[22px] font-[700] tracking-[-0.02em] text-ink">Not found</p>
         <p className="mx-auto mt-2 max-w-[36ch] text-[14px] leading-relaxed text-fog">
           This artifact does not exist, or it belongs to a workspace you are not in.

@@ -92,7 +92,8 @@ function Description({ text }: { text: string }) {
 }
 
 function Version({ version: v, current }: { version: ArtifactVersion; current: boolean }) {
-  const subject = v.subject || (current ? "Latest version" : "No commit message");
+  // Uploads from outside git have no commit message: name the version instead.
+  const subject = v.subject || `Version ${v.number}`;
   const [open, setOpen] = useState(false);
   const details = `version-${v.number}-details`;
   return (
@@ -130,7 +131,7 @@ function Version({ version: v, current }: { version: ArtifactVersion; current: b
         {open && (
           <dl id={details} className="relative z-[1] mt-3 grid gap-x-4 gap-y-2 rounded-control border border-rule bg-paper-3/60 p-3.5 text-[13.5px] sm:grid-cols-[7rem_minmax(0,1fr)]">
             <dt className="text-fog">Commit message</dt>
-            <dd className="text-ink [overflow-wrap:anywhere]">{v.subject ?? "None"}</dd>
+            <dd className={cx("[overflow-wrap:anywhere]", v.subject ? "text-ink" : "text-fog")}>{v.subject ?? "None (uploaded outside a git repository, or without a commit)"}</dd>
             <dt className="text-fog">Branch</dt>
             <dd className="font-mono text-[12.5px] text-ink [overflow-wrap:anywhere]">{v.branch ?? "None"}</dd>
             <dt className="text-fog">Commit</dt>

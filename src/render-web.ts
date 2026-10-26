@@ -59,9 +59,11 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
 <label class="tool square hide" for="hide-bar" title="Hide bar">${icon(CHEVRON_UP)}</label>
 </div>
 </header>
+<main>
 <input class="toggle" type="checkbox" id="hide-bar" aria-label="Hide the artifact bar">
 <label class="show" for="hide-bar">${icon(CHEVRON_DOWN)}Show bar</label>
 <iframe class="artifact" title="${title}" src="${escapeHtml(frame.src)}" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
+</main>
 </body>
 </html>`;
 }
@@ -177,6 +179,7 @@ a { color: inherit; text-decoration: none; touch-action: manipulation; }
 body:has(.toggle:focus-visible) .hide, .toggle:focus-visible + .show { outline: 2px solid var(--intaglio); outline-offset: 2px; }
 body:has(.toggle:checked) .bar { display: none; }
 .toggle:checked + .show { display: flex; }
+main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 iframe.artifact { flex: 1 1 auto; display: block; width: 100%; min-height: 0; border: 0; background: #fff; }
 
 @media (max-width: 899px) {

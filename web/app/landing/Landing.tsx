@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { ButtonLink } from "../components/Button";
 import { CopyCommand } from "../components/CopyCommand";
 import { CopyText } from "../components/CopyText";
@@ -38,7 +39,7 @@ function Hero() {
             Your coding agents write plans, specs, reviews and reports as HTML. htmlartifact publishes each one to a link that opens
             only for people in your workspace.
           </p>
-          <div className="hero-rise mt-8 flex flex-col items-start gap-3 sm:flex-row sm:items-center" style={rise(120)}>
+          <div className="hero-rise mt-8 flex flex-col items-start gap-3 sm:flex-row sm:flex-wrap sm:items-center" style={rise(120)}>
             <CopyCommand command="npx htmlartifact login" size="lg" className="w-full sm:w-auto" />
             <a href="/docs" className="text-[15px] font-medium text-ink-2 underline decoration-rule-2 underline-offset-4 hover:text-ink hover:decoration-ink sm:hidden">
               Read the docs
@@ -229,6 +230,7 @@ const AGENT_FEATURES = [
 ] as const;
 
 function ForAgents() {
+  const snippet = useRef<HTMLPreElement>(null);
   return (
     <section className="border-y border-rule bg-paper-2">
       <div className={`${shell} grid gap-12 py-20 *:min-w-0 sm:py-28 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-16`}>
@@ -247,9 +249,9 @@ function ForAgents() {
           <div className="overflow-hidden rounded-card border border-rule bg-paper">
             <div className="flex items-center justify-between border-b border-rule py-1.5 pl-5 pr-1.5">
               <span className="font-mono text-[12px] text-fog">CLAUDE.md</span>
-              <CopyText text={AGENT_SNIPPET} />
+              <CopyText text={AGENT_SNIPPET} what="CLAUDE.md snippet" target={snippet} />
             </div>
-            <pre className="overflow-x-auto px-5 py-4 text-[12px] leading-[1.8] text-ink-2 sm:text-[12.5px]">{AGENT_SNIPPET}</pre>
+            <pre ref={snippet} tabIndex={0} aria-label="CLAUDE.md snippet" className="overflow-x-auto px-5 py-4 text-[12px] leading-[1.8] text-ink-2 sm:text-[12.5px]">{AGENT_SNIPPET}</pre>
           </div>
           <Terminal
             animate={false}
@@ -288,7 +290,7 @@ function Closing() {
       <div aria-hidden className="absolute inset-x-0 top-0 h-[2px] bg-[image:var(--foil)]" />
       <div className={`${shell} py-20 sm:py-24`}>
         <h2 className="max-w-[18ch] font-expanded text-title font-[800] tracking-[-0.035em] text-ink">Give your agents somewhere private to publish.</h2>
-        <div className="mt-9 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+        <div className="mt-9 flex flex-col items-start gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <CopyCommand command="npx htmlartifact login" size="lg" tone="ink" className="w-full sm:w-auto" />
           <a href={REPO_URL} className="text-[15px] font-medium text-ink-2 underline decoration-rule-2 underline-offset-4 hover:text-ink hover:decoration-ink sm:hidden">
             View on GitHub

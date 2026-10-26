@@ -74,13 +74,13 @@ function htmlPage({ title, body }: { title: string; body: string }): string {
 <title>${escapeHtml(title)}</title>
 <style>
 :root {
-  --paper: #f3f4f7; --ink: #0e1530; --ink-2: #283150; --fog: #576079; --rule-2: #c7cddb; --wash: #e9ecfb;
+  --paper: #f3f4f7; --ink: #0e1530; --ink-2: #283150; --fog: #576079; --rule-2: #c7cddb; --control: #7e869c; --wash: #e9ecfb;
   --intaglio: #2337c6; --intaglio-ink: #ffffff; --button: #0e1530; --button-ink: #f3f4f7; --button-hover: #283150;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #090e1c; --ink: #e8ebf5; --ink-2: #c3c9dc; --fog: #929bb5; --rule-2: #2b3453; --wash: #161f44;
+    --paper: #090e1c; --ink: #e8ebf5; --ink-2: #c3c9dc; --fog: #929bb5; --rule-2: #2b3453; --control: #5f6a8d; --wash: #161f44;
     --intaglio: #93a2ff; --intaglio-ink: #0a0f1e; --button: #e8ebf5; --button-ink: #090e1c; --button-hover: #c3c9dc;
   }
 }
@@ -103,7 +103,7 @@ main { width: 100%; max-width: 460px; text-align: center; }
 .mark .dot { fill: var(--intaglio-ink); }
 .code {
   margin: 40px 0 0; font-size: 104px; font-weight: 800; line-height: 1; letter-spacing: -0.055em;
-  color: var(--rule-2); font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none;
+  color: var(--control); font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none;
 }
 h1 { margin: 22px 0 0; font-size: 30px; font-weight: 700; line-height: 1.1; letter-spacing: -0.026em; text-wrap: balance; }
 h1.spaced { margin-top: 36px; }

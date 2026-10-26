@@ -75,23 +75,27 @@ export function AppShell({
             {tabs}
           </nav>
           <div className="ml-auto flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setPaletteOpen(true)}
-              className="press hidden h-9 w-56 items-center gap-2 rounded-control border border-rule bg-paper-2 pl-3 pr-1.5 text-[13.5px] text-fog hover:border-rule-2 hover:text-ink lg:flex"
-            >
-              <SearchIcon className="size-3.5" />
-              Search artifacts
-              <kbd className="ml-auto rounded-[5px] border border-rule bg-paper px-1.5 py-px font-sans text-[12px] text-fog">⌘K</kbd>
-            </button>
-            <button
-              type="button"
-              onClick={() => setPaletteOpen(true)}
-              aria-label="Search artifacts"
-              className="press grid size-9 place-items-center rounded-control text-fog hover:bg-wash hover:text-ink lg:hidden"
-            >
-              <SearchIcon className="size-4" />
-            </button>
+            {workspace && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setPaletteOpen(true)}
+                  className="press hidden h-9 w-56 items-center gap-2 rounded-control border border-rule bg-paper-2 pl-3 pr-1.5 text-[13.5px] text-fog hover:border-rule-2 hover:text-ink lg:flex"
+                >
+                  <SearchIcon className="size-3.5" />
+                  Search artifacts
+                  <kbd className="ml-auto rounded-[5px] border border-rule bg-paper px-1.5 py-px font-sans text-[12px] text-fog">⌘K</kbd>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaletteOpen(true)}
+                  aria-label="Search artifacts"
+                  className="press grid size-9 place-items-center rounded-control text-fog hover:bg-wash hover:text-ink lg:hidden"
+                >
+                  <SearchIcon className="size-4" />
+                </button>
+              </>
+            )}
             <ThemeToggle />
             <AccountMenu session={session} />
           </div>
@@ -255,10 +259,11 @@ function Palette({
               )}
               {!artifacts && workspace && query.trim() && (
                 <Command.Group heading="Artifacts" className={heading}>
-                  <Command.Item value={`search ${query}`} onSelect={() => go(`/?q=${encodeURIComponent(query.trim())}`)} className={item}>
-                    <SearchIcon className="size-4 text-fog" />
-                    <span className="min-w-0 flex-1 truncate">
-                      Filter {workspace.name}'s newest artifacts for “{query.trim()}”
+                  <Command.Item value={`search ${query}`} onSelect={() => go(`/?q=${encodeURIComponent(query.trim())}`)} className={cx(item, "h-auto min-h-11 py-2")}>
+                    <SearchIcon className="size-4 shrink-0 text-fog" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">Filter newest artifacts for “{query.trim()}”</span>
+                      <span className="block truncate text-[12.5px] text-fog">In {workspace.name}</span>
                     </span>
                   </Command.Item>
                 </Command.Group>

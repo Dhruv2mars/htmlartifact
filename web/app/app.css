@@ -202,7 +202,6 @@
   white-space: nowrap;
   overflow: hidden;
   color: var(--fog);
-  opacity: 0.7;
   user-select: none;
 }
 
