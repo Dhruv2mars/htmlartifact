@@ -115,7 +115,7 @@ function Steps() {
                 <h3 className="font-wide text-[19px] font-[680] tracking-[-0.015em] text-ink">{step.title}</h3>
               </div>
               <p className="mt-2 max-w-[44ch] text-[15px] leading-relaxed text-fog">{step.body}</p>
-              <pre className="mt-5 whitespace-pre-wrap break-words rounded-control bg-paper-3 px-4 py-3 text-[11.5px] leading-[1.8] text-ink ring-1 ring-rule sm:text-[12.5px]">
+              <pre className="mt-5 whitespace-pre-wrap break-words rounded-control bg-paper-3 px-4 py-3 text-[12px] leading-[1.8] text-ink ring-1 ring-rule sm:text-[12.5px]">
                 {step.lines.map((l, j) =>
                   "cmd" in l ? (
                     <span key={j} className="block">
@@ -248,7 +248,7 @@ function ForAgents() {
               <span className="font-mono text-[12px] text-fog">CLAUDE.md</span>
               <CopyText text={AGENT_SNIPPET} />
             </div>
-            <pre className="overflow-x-auto px-5 py-4 text-[11.5px] leading-[1.8] text-ink-2 sm:text-[12.5px]">{AGENT_SNIPPET}</pre>
+            <pre className="overflow-x-auto px-5 py-4 text-[12px] leading-[1.8] text-ink-2 sm:text-[12.5px]">{AGENT_SNIPPET}</pre>
           </div>
           <Terminal
             animate={false}

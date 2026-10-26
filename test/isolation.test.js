@@ -900,9 +900,12 @@ const ROUTES = {
       for (const actor of webActors()) {
         const r = await actor.browser.post("/join", { code: A.usedCode, next: `/d/${A.plan.draftId}` });
         const m = await actor.browser.post("/join", { code: MISSING_CODE, next: `/d/${A.plan.draftId}` });
-        assertDenied(`${key} used-up A code as ${actor.name}`, { status: r.status, text: r.text_ }, {
+        // The form gives back what was typed, so the person can fix it: the
+        // only allowed difference is the caller's own input, at the same spots.
+        assert.ok(r.text_.includes(A.usedCode) && m.text_.includes(MISSING_CODE), `${key}: the typed code is given back`);
+        assertDenied(`${key} used-up A code as ${actor.name}`, { status: r.status, text: r.text_.replaceAll(A.usedCode, "<typed>") }, {
           status: 404,
-          missing: { status: m.status, text: m.text_ }
+          missing: { status: m.status, text: m.text_.replaceAll(MISSING_CODE, "<typed>") }
         });
       }
     }

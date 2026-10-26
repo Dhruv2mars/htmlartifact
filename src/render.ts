@@ -23,6 +23,22 @@ export function renderNotFound(): string {
   return page;
 }
 
+// Shown in the artifact frame when its capability token has expired (a tab
+// left open for a long time): same shell, no action but a reload.
+let expired: string | undefined;
+
+export function renderExpired(): string {
+  expired ??= htmlPage({
+    title: "Expired",
+    body: `<main>
+<p class="brand">${mark()}<span>htmlartifact</span></p>
+<h1 class="spaced">This view expired</h1>
+<p class="lead">Reload the page to keep reading.</p>
+</main>`
+  });
+  return expired;
+}
+
 // The house mark (web/app/components/Logo.tsx Mark): the htmlartifact seal's
 // rosette knocked out of a solid intaglio disc.
 function mark(): string {
@@ -77,6 +93,7 @@ main { width: 100%; max-width: 460px; text-align: center; }
   color: var(--rule-2); font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none;
 }
 h1 { margin: 22px 0 0; font-size: 30px; font-weight: 700; line-height: 1.1; letter-spacing: -0.026em; text-wrap: balance; }
+h1.spaced { margin-top: 36px; }
 .lead { margin: 12px auto 0; max-width: 400px; font-size: 15.5px; color: var(--ink-2); text-wrap: balance; }
 .hint { margin: 8px auto 0; max-width: 360px; font-size: 14px; line-height: 1.55; color: var(--fog); text-wrap: balance; }
 .button {

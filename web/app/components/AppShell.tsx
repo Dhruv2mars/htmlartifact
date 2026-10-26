@@ -82,7 +82,7 @@ export function AppShell({
             >
               <SearchIcon className="size-3.5" />
               Search artifacts
-              <kbd className="ml-auto rounded-[5px] border border-rule bg-paper px-1.5 py-px font-sans text-[11.5px] text-fog">⌘K</kbd>
+              <kbd className="ml-auto rounded-[5px] border border-rule bg-paper px-1.5 py-px font-sans text-[12px] text-fog">⌘K</kbd>
             </button>
             <button
               type="button"
@@ -98,11 +98,11 @@ export function AppShell({
         </div>
         <div className="mx-auto flex h-11 max-w-[1120px] items-stretch gap-4 px-4 sm:px-6 md:hidden">
           {workspace && (
-            <div className="flex min-w-0 shrink items-center">
-              <WorkspacePill name={workspace.name} id={workspace.id} current={section === "workspaces"} divider={false} />
+            <div className="flex min-w-0 flex-1 items-center">
+              <WorkspacePill name={workspace.name} id={workspace.id} current={section === "workspaces"} compact />
             </div>
           )}
-          <nav aria-label="Workspace" className="flex shrink-0 items-stretch gap-5">
+          <nav aria-label="Workspace" className="flex shrink-0 items-stretch gap-4">
             {tabs}
           </nav>
         </div>
@@ -116,7 +116,8 @@ export function AppShell({
 }
 
 // The workspace you're in; opens the list to switch, create or join.
-function WorkspacePill({ name, id, current, divider = true }: { name: string; id: string; current: boolean; divider?: boolean }) {
+// `compact` (the phone row): no divider and no seal, so the name gets the room.
+function WorkspacePill({ name, id, current, compact = false }: { name: string; id: string; current: boolean; compact?: boolean }) {
   return (
     <a
       href="/workspaces"
@@ -124,8 +125,8 @@ function WorkspacePill({ name, id, current, divider = true }: { name: string; id
       title="Switch workspace"
       className="press group -ml-1.5 flex h-8 min-w-0 max-w-full items-center gap-2 rounded-control px-1.5 text-[14px] font-medium text-ink hover:bg-wash aria-[current=page]:bg-wash md:max-w-[16rem]"
     >
-      {divider && <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-rule-2" />}
-      <Seal id={id} size={18} />
+      {!compact && <span aria-hidden className="mx-0.5 h-4 w-px shrink-0 bg-rule-2" />}
+      {!compact && <Seal id={id} size={18} />}
       <span className="truncate">{name}</span>
       <span className="sr-only">: switch workspace</span>
       <ChevronUpDown className="size-3.5 shrink-0 text-fog group-hover:text-ink" />
@@ -230,7 +231,7 @@ function Palette({
                 placeholder={artifacts ? "Search by title, author or repository" : "Search artifacts, or go to a page"}
                 className="h-13 w-full bg-transparent text-[16px] text-ink outline-none placeholder:text-fog"
               />
-              <kbd className="hidden shrink-0 rounded-[5px] border border-rule px-1.5 py-px text-[11.5px] text-fog sm:block">Esc</kbd>
+              <kbd className="hidden shrink-0 rounded-[5px] border border-rule px-1.5 py-px text-[12px] text-fog sm:block">Esc</kbd>
             </div>
             <Command.List className="max-h-[min(440px,60vh)] overflow-y-auto p-2">
               <Command.Empty className="px-3 py-8 text-center text-[14px] text-fog">

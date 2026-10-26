@@ -16,10 +16,10 @@ export function SiteHeader({ session, current }: { session: Session | null; curr
     <>
       <SkipLink />
       <header className="vt-header sticky top-0 z-20 border-b border-rule/70 bg-paper/85 backdrop-blur-md backdrop-saturate-150">
-        <div className="mx-auto flex h-16 max-w-[1240px] items-center gap-4 px-5 sm:gap-6 sm:px-8">
+        <div className="mx-auto flex h-16 max-w-[1240px] items-center gap-2 px-4 min-[380px]:gap-4 sm:gap-6 sm:px-8">
           <Logo />
           <nav aria-label="Site" className="flex items-center gap-0.5 text-[14px] text-ink-2 sm:ml-2">
-            <a href="/docs" aria-current={current === "docs" ? "page" : undefined} className={link}>
+            <a href="/docs" aria-current={current === "docs" ? "page" : undefined} className={`${link} max-[359px]:hidden`}>
               Docs
             </a>
             <a href={REPO_URL} className={`${link} hidden items-center gap-1.5 sm:inline-flex`}>

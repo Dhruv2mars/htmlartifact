@@ -56,7 +56,7 @@ export function ArtifactDetail({ session, artifact, versions }: { session: Sessi
           </div>
           <div className="hidden md:block">
             <Seal id={artifact.id} size={152} label={`Seal of artifact ${artifact.id}`} />
-            <p className="mt-3 text-center font-mono text-[11.5px] text-fog">No. {artifact.id}</p>
+            <p className="mt-3 text-center font-mono text-[12px] text-fog">No. {artifact.id}</p>
           </div>
         </header>
 
@@ -111,10 +111,10 @@ function Version({ version: v, current }: { version: ArtifactVersion; current: b
             <span className="sr-only">Open version {v.number}: </span>
             {subject}
           </a>
-          {current && <span className="shrink-0 rounded-chip bg-wash px-1.5 py-0.5 text-[11.5px] font-medium text-intaglio">Current</span>}
-          {v.dirty && <span className="shrink-0 rounded-chip bg-hold-wash px-1.5 py-0.5 text-[11.5px] font-medium text-hold">Uncommitted changes</span>}
+          {current && <span className="shrink-0 rounded-chip bg-wash px-1.5 py-0.5 text-[12px] font-medium text-intaglio">Latest</span>}
+          {v.dirty && <span className="shrink-0 rounded-chip bg-hold-wash px-1.5 py-0.5 text-[12px] font-medium text-hold">Uncommitted changes</span>}
         </div>
-        <p className="mt-1.5 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11.5px] text-fog">
+        <p className="mt-1.5 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 font-mono text-[12px] text-fog">
           {v.branch && (
             <span className="min-w-0 max-w-full truncate" title={v.branch}>
               {v.branch}

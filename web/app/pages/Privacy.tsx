@@ -1,6 +1,6 @@
 import { REPO_URL } from "../components/SiteHeader";
 import type { Session } from "../page";
-import { Fact, Facts, ReadingPage, Section } from "./Docs";
+import { Fact, Facts, ReadingPage, Section } from "../components/ReadingPage";
 
 // What the hosted service (htmlartifact.pages.dev) keeps. SECURITY.md's data
 // handling sections are the source of truth; keep the two in step.

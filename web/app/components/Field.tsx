@@ -2,7 +2,7 @@ import { useId, type InputHTMLAttributes, type ReactNode } from "react";
 import { cx } from "../lib/cx";
 import { AlertIcon } from "./icons";
 
-export const inputClass =
+const inputClass =
   "h-11 w-full min-w-0 rounded-control border border-rule-2 bg-paper-2 px-3.5 text-[16px] text-ink outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-fog hover:border-fog/50 focus:border-intaglio focus:shadow-[0_0_0_3px_var(--wash)] aria-invalid:border-deny aria-invalid:focus:shadow-[0_0_0_3px_var(--deny-wash)] sm:text-[15px]";
 
 // A form field with a visible label, an optional hint and an error, all tied

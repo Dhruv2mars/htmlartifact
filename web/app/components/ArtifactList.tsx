@@ -88,7 +88,7 @@ function Row({ artifact: a, mine }: { artifact: ArtifactSummary; mine: boolean }
           {(a.repo || (!mine && a.author)) && (
             <p className="flex min-w-0 items-baseline gap-x-2.5">
               {!mine && a.author && <span className="min-w-0 shrink truncate text-ink-2">{a.author}</span>}
-              {a.repo && <span className="min-w-0 shrink truncate font-mono text-[11px]">{a.repo}</span>}
+              {a.repo && <span className="min-w-0 shrink truncate font-mono text-[12px]">{a.repo}</span>}
             </p>
           )}
           <p className="flex items-baseline gap-x-2.5">
@@ -99,7 +99,7 @@ function Row({ artifact: a, mine }: { artifact: ArtifactSummary; mine: boolean }
       </div>
       <div className="hidden min-w-0 text-[13.5px] md:block">
         {who ? <p className={mine ? "truncate font-mono text-[12px] text-fog" : "truncate text-ink-2"}>{who}</p> : <p className="text-fog">—</p>}
-        {!mine && a.repo && <p className="mt-0.5 truncate font-mono text-[11.5px] text-fog">{a.repo}</p>}
+        {!mine && a.repo && <p className="mt-0.5 truncate font-mono text-[12px] text-fog">{a.repo}</p>}
       </div>
       <div className="hidden md:block">
         <VersionsLink artifact={a} count={versions} title={title} />

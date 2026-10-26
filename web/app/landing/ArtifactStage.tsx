@@ -47,7 +47,7 @@ export function ArtifactStage() {
             <i className="size-2.5 rounded-full bg-rule-2" />
             <i className="size-2.5 rounded-full bg-rule-2" />
           </span>
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-control bg-paper-3 px-3 py-1.5 font-mono text-[11.5px] text-fog mr-14 sm:mr-24 lg:mr-28">
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-control bg-paper-3 px-3 py-1.5 font-mono text-[12px] text-fog mr-14 sm:mr-24 lg:mr-28">
             <LockIcon className="size-3.5 shrink-0" />
             <span className="truncate">
               {HOST}/d/<span className="text-ink">{HERO_ID}</span>
@@ -136,7 +136,7 @@ function ViewerBar() {
         /
       </span>
       <span className="min-w-0 truncate font-medium text-ink">Billing migration plan</span>
-      <span className="shrink-0 rounded-chip bg-wash px-1.5 py-px text-[11.5px] font-medium text-intaglio">v3 Latest</span>
+      <span className="shrink-0 rounded-chip bg-wash px-1.5 py-px text-[12px] font-medium text-intaglio">v3 Latest</span>
       <span className="ml-auto flex shrink-0 items-center gap-1.5 text-ink-2">
         <HistoryIcon className="size-3.5" />
         <span className="hidden sm:inline">History</span>
@@ -155,7 +155,7 @@ function PlanDocument() {
   ];
   return (
     <article className="relative flex-1 bg-white px-5 py-6 font-[system-ui,-apple-system,'Segoe_UI',sans-serif] text-[13px] leading-relaxed text-[#1f2937] sm:px-8 sm:py-7 dark:bg-[#111827] dark:text-[#d1d5db]">
-      <p className="text-[11.5px] font-semibold text-[#0f766e] dark:text-[#5eead4]">Plan, written by Claude</p>
+      <p className="text-[12px] font-semibold text-[#0f766e] dark:text-[#5eead4]">Plan, written by Claude</p>
       <h3 className="mt-1 text-[21px] font-bold leading-tight tracking-tight text-[#111827] sm:text-[24px] dark:text-white">Billing migration plan</h3>
       <p className="mt-2 max-w-[56ch] text-[#4b5563] dark:text-[#b4bcc8]">
         Move subscriptions from the legacy invoice tables to the new ledger in six weeks, with dual writes until reads are cut over.
@@ -170,17 +170,17 @@ function PlanDocument() {
                 style={{ left: `${(p.from / 6) * 100}%`, width: `${((p.to - p.from) / 6) * 100}%` }}
               />
             </span>
-            <span className="text-[11.5px] tabular-nums text-[#4b5563] dark:text-[#b4bcc8]">{p.weeks}</span>
+            <span className="text-[12px] tabular-nums text-[#4b5563] dark:text-[#b4bcc8]">{p.weeks}</span>
           </div>
         ))}
       </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <div className="rounded-lg border border-[#e5e7eb] p-3 dark:border-white/12">
-          <p className="text-[11.5px] font-semibold text-[#b45309] dark:text-[#fbbf24]">Risk</p>
+          <p className="text-[12px] font-semibold text-[#b45309] dark:text-[#fbbf24]">Risk</p>
           <p className="mt-1">Proration drift during backfill. Mitigation: nightly diff job, alert above 0.01%.</p>
         </div>
         <div className="rounded-lg border border-[#e5e7eb] p-3 dark:border-white/12">
-          <p className="text-[11.5px] font-semibold text-[#4338ca] dark:text-[#a5b4fc]">Open question</p>
+          <p className="text-[12px] font-semibold text-[#4338ca] dark:text-[#a5b4fc]">Open question</p>
           <p className="mt-1">Do annual plans renew on the old ledger if they started before the cut-over?</p>
         </div>
       </div>

@@ -28,12 +28,12 @@ export function Terminal({
   return (
     <div
       className={cx(
-        "relative overflow-hidden rounded-card bg-term font-mono text-[11.5px] leading-[1.7] sm:text-[12.5px] text-term-ink shadow-sheet ring-1 ring-white/10",
+        "relative overflow-hidden rounded-card bg-term font-mono text-[12px] leading-[1.7] sm:text-[12.5px] text-term-ink shadow-sheet ring-1 ring-white/10",
         animate && "term-animate",
         className
       )}
     >
-      <div className="flex items-center gap-2 border-b border-white/10 px-4 py-2.5 text-[11.5px] text-term-fog">
+      <div className="flex items-center gap-2 border-b border-white/10 px-4 py-2.5 text-[12px] text-term-fog">
         <span className="flex gap-1.5" aria-hidden>
           <i className="size-2.5 rounded-full bg-white/15" />
           <i className="size-2.5 rounded-full bg-white/15" />

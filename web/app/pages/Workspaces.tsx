@@ -1,11 +1,10 @@
 import { useEffect, useRef, type ReactNode, type Ref } from "react";
-import { useRouteLoaderData } from "react-router";
 import { AppShell, PageHead } from "../components/AppShell";
 import { Field } from "../components/Field";
 import { LockIcon } from "../components/icons";
 import { Seal } from "../components/Seal";
 import { Submit } from "../components/Submit";
-import type { JoinFailure, Page, Session, WorkspaceChoice } from "../page";
+import type { JoinFailure, Session, WorkspaceChoice } from "../page";
 
 // Every way into a workspace: switch to one you're in, create one, or join
 // with a code. `next` is the link that brought them here (joining or
@@ -21,8 +20,7 @@ export function Workspaces({
   next: string | null;
   join?: JoinFailure | null;
 }) {
-  const fromPage = useFailedJoin();
-  const failed = join ?? fromPage;
+  const failed = join ?? null;
   // Only a link to an artifact means "you followed someone else's link".
   const followedLink = Boolean(next && /^\/(d|w|history)\//.test(next));
   const canSwitch = workspaces.some((w) => !w.current);
@@ -170,13 +168,6 @@ const COMMANDS = [
   ["Join", "npx htmlartifact workspace join <code>"],
   ["Invite", "npx htmlartifact workspace invite"]
 ] as const;
-
-// The refused code from the page data, for a router that passes only
-// session, workspaces and next.
-function useFailedJoin(): JoinFailure | null {
-  const page = useRouteLoaderData("root") as Page | undefined;
-  return page?.kind === "workspaces" ? (page.join ?? null) : null;
-}
 
 function FormPanel({
   ref,

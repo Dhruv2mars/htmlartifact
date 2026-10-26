@@ -89,7 +89,7 @@ function PageBody() {
     case "sign-in":
       return <SignIn next={page.next} />;
     case "message":
-      return <Message title={page.title} message={page.message} retry={page.retry} retryLabel={(page as { retryLabel?: string | null }).retryLabel ?? null} />;
+      return <Message title={page.title} message={page.message} retry={page.retry} retryLabel={page.retryLabel ?? null} />;
     case "not-found":
       return <NotFound />;
     case "feed":
@@ -99,7 +99,7 @@ function PageBody() {
     case "artifact":
       return <ArtifactDetail session={page.session} artifact={page.artifact} versions={page.versions} />;
     case "workspaces":
-      return <Workspaces session={page.session} workspaces={page.workspaces} next={page.next} />;
+      return <Workspaces session={page.session} workspaces={page.workspaces} next={page.next} join={page.join ?? null} />;
     case "join":
       return <Join {...page} />;
   }
