@@ -8,7 +8,7 @@ import { getDraftWithVersions, listMyDrafts, listWorkspaceDrafts } from "./draft
 import { normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { safeNext } from "./public-url.ts";
 import { clientIp, rateLimit } from "./rate-limit.ts";
-import type { Page, WorkspaceChoice } from "../web/app/page.ts";
+import type { JoinFailure, Page, WorkspaceChoice } from "../web/app/page.ts";
 import { renderPage, toArtifacts, toSession, toVersions } from "./frontend.ts";
 import { isMember, type AppEnv, type MemberEnv, type UserEnv, type Viewer } from "./types.ts";
 import {
@@ -110,14 +110,7 @@ export function registerWeb(app: Hono<AppEnv>): void {
   app.get("/mine/:draftId", signedIn, inWorkspace, (c) => c.redirect(`/history/${encodeURIComponent(c.req.param("draftId") || "")}`, 301));
 
   app.get("/workspaces", signedIn, workosReads, async (c) => {
-    const viewer = c.get("viewer");
-    const next = safeNext(c.req.query("next"));
-    return renderPage(c, {
-      kind: "workspaces",
-      session: toSession(viewer)!,
-      workspaces: await listWorkspaces(c, viewer),
-      next: next === "/" ? null : next
-    });
+    return renderPage(c, await workspacesPage(c, c.get("viewer"), safeNext(c.req.query("next"))));
   });
 
   app.post("/workspaces", sameOrigin, signedIn, writes, writeBudget(WORKSPACE_ROWS), async (c) => {
@@ -140,8 +133,10 @@ export function registerWeb(app: Hono<AppEnv>): void {
     return switchTo(c, organization.id);
   });
 
+  // next: the link they followed, so switching takes them back to it.
   app.post("/workspaces/switch", sameOrigin, signedIn, workosReads, async (c) => {
-    return switchTo(c, String((await c.req.parseBody()).id || ""));
+    const form = await c.req.parseBody();
+    return switchTo(c, String(form.id || ""), safeNext(form.next));
   });
 
   // A shareable join link: /join/HA-XXXX-XXXX-XXXX. Signed out, a live code
@@ -158,7 +153,8 @@ export function registerWeb(app: Hono<AppEnv>): void {
           .first<{ organization_id: string; expires_at: number; uses_left: number }>()
       : null;
     if (!code || !invite) {
-      return renderPage(c, message("Invite not valid", "That invite code is invalid, expired, or used up. Ask whoever sent it for a new one.", null), 404);
+      const text = "That invite link is invalid, expired, or used up. Ask whoever sent it for a new one.";
+      return renderPage(c, message("Invite not valid", text, "/workspaces", "Enter another code"), 404);
     }
     const viewer = await sessionViewer(c);
     if (!viewer) return renderPage(c, { kind: "sign-in", next: c.req.path }, 401);
@@ -176,11 +172,16 @@ export function registerWeb(app: Hono<AppEnv>): void {
     });
   });
 
+  // A refused code comes back to the form, as typed, with the reason and the
+  // link they were heading to.
   app.post("/join", sameOrigin, signedIn, writes, async (c) => {
     const form = await c.req.parseBody();
-    const result = await joinWithCode(c, c.get("viewer"), String(form.code || ""));
+    const typed = typeof form.code === "string" ? form.code.trim().slice(0, 200) : "";
+    const result = await joinWithCode(c, c.get("viewer"), typed);
     if (!result.body.ok) {
-      return renderPage(c, message("Invite not valid", result.body.error, null), result.status);
+      const error =
+        result.status === 404 ? "That invite code is invalid, expired, or used up. Check it for typos, or ask whoever sent it for a new one." : result.body.error;
+      return renderPage(c, await workspacesPage(c, c.get("viewer"), safeNext(form.next), { code: typed, error }), result.status);
     }
     return switchTo(c, result.body.workspace.id, safeNext(form.next));
   });
@@ -270,10 +271,10 @@ export function registerWeb(app: Hono<AppEnv>): void {
 // A feed shows FEED_PAGE_SIZE artifacts; this links the next, older page.
 const olderLink = (path: string, cursor: string | null) => (cursor ? `${path}?cursor=${encodeURIComponent(cursor)}` : null);
 
-// `retry` is where "Try again" goes: sign-in again, back to the page (or
-// invite) the user was on.
-function message(title: string, text: string, retry: string | null = "/auth/sign-in"): Page {
-  return { kind: "message", title, message: text, retry, session: null };
+// `retry` is where the retry button goes: sign-in again, back to the page (or
+// invite) the user was on. `retryLabel` names it when "Try again" doesn't fit.
+function message(title: string, text: string, retry: string | null = "/auth/sign-in", retryLabel?: string): Page {
+  return { kind: "message", title, message: text, retry, ...(retryLabel ? { retryLabel } : {}), session: null };
 }
 
 const retrySignIn = (next: string | undefined) => `/auth/sign-in?next=${encodeURIComponent(safeNext(next))}`;
@@ -312,13 +313,21 @@ function refererOrigin(value: string | undefined): string | null {
 // Moves the browser session into a workspace the user belongs to; one that
 // needs a fresh login (SSO) gets one.
 async function switchTo<E extends AppEnv>(c: Context<E>, organizationId: string, next = "/"): Promise<Response> {
-  if (!organizationId) return c.redirect("/workspaces");
+  if (!organizationId) return c.redirect(next === "/" ? "/workspaces" : `/workspaces?next=${encodeURIComponent(next)}`);
   const viewer = await sessionViewer(c, { organizationId });
   if (viewer?.organization_id === organizationId) return c.redirect(next);
   return c.redirect(`/auth/sign-in?org=${encodeURIComponent(organizationId)}&next=${encodeURIComponent(next)}`);
 }
 
-async function listWorkspaces<E extends AppEnv>(c: Context<E>, viewer: Viewer): Promise<WorkspaceChoice[]> {
+// The workspaces page: switch, create, join. `next` (already safeNext'd) is
+// where joining or switching goes afterwards; `join`, a refused code.
+async function workspacesPage<E extends AppEnv>(c: Context<E>, viewer: Viewer, next: string, join?: JoinFailure): Promise<Page> {
   const workspaces = await userWorkspaces(c, viewer.account_id, viewer.organization_id);
-  return workspaces.map(({ id, name, current }) => ({ id, name, current }));
+  return {
+    kind: "workspaces",
+    session: toSession(viewer)!,
+    workspaces: workspaces.map(({ id, name, current }): WorkspaceChoice => ({ id, name, current })),
+    next: next === "/" ? null : next,
+    join: join ?? null
+  };
 }

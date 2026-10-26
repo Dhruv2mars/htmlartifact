@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { draftAccess } from "./auth.ts";
 import { mintCapability } from "./capability.ts";
 import { findWorkspaceByHandle } from "./db.ts";
+import { draftUrl } from "./public-url.ts";
 import { renderNotFound } from "./render.ts";
 import { renderArtifactFrame } from "./render-web.ts";
 import { getHtmlObject } from "./storage.ts";
@@ -71,7 +72,19 @@ async function serve(c: Context<AppEnv>, ref: DraftRef) {
   c.header("Content-Security-Policy", frameContentSecurityPolicy(sandboxOrigin));
   c.header("Referrer-Policy", "no-referrer");
   c.header("Cache-Control", "private, no-store");
-  return c.html(renderArtifactFrame({ title: draft.title, src }));
+  return c.html(
+    renderArtifactFrame({
+      title: draft.title,
+      src,
+      id: draft.id,
+      workspace: viewer.workspace?.name ?? null,
+      version: version.version_number,
+      latest: version.id === draft.current_version_id,
+      latestUrl: draftUrl("", draft, viewer.workspace?.handle),
+      historyUrl: `/history/${encodeURIComponent(draft.id)}`,
+      feedUrl: "/"
+    })
+  );
 }
 
 // The page that `parts` (path segments below the artifact or version root)

@@ -4,14 +4,18 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Security printing for agent output: cool paper, navy ink, intaglio blue.
-   The seal (guilloche) is the one loud thing; everything else stays quiet. */
-@theme {
+/* Security printing for agent output: cool paper, navy intaglio ink, one
+   blue. The seal is the one ornament; everything else is type, hairlines and
+   serial numbers. Every text colour below passes WCAG AA on every surface it
+   is used on (checked: fog 5.4:1 on paper-3 light, 6.5:1 on paper-2 dark).
+   `inline`, so a nested `.dark` (the closing band) re-themes its subtree. */
+@theme inline {
   --font-sans: "Archivo Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Martian Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 
   --color-paper: var(--paper);
   --color-paper-2: var(--paper-2);
+  --color-paper-3: var(--paper-3);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-fog: var(--fog);
@@ -23,31 +27,53 @@
   --color-pass: var(--pass);
   --color-deny: var(--deny);
   --color-hold: var(--hold);
+  --color-hold-wash: var(--hold-wash);
+  --color-deny-wash: var(--deny-wash);
+  --color-term: var(--term);
+  --color-term-ink: var(--term-ink);
+  --color-term-fog: var(--term-fog);
+
+  --radius-chip: 6px;
+  --radius-control: 10px;
+  --radius-card: 14px;
+  --radius-sheet: 20px;
+
+  --shadow-sheet: 0 1px 0 rgb(255 255 255 / 0.6) inset, 0 1px 2px rgb(14 21 48 / 0.04), 0 24px 48px -28px rgb(14 21 48 / 0.28);
+  --shadow-pop: 0 2px 6px rgb(14 21 48 / 0.06), 0 28px 56px -24px rgb(14 21 48 / 0.4);
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 
-  --text-display: clamp(2.75rem, 1.6rem + 5.2vw, 6.25rem);
-  --text-display--line-height: 0.94;
-  --text-title: clamp(1.875rem, 1.4rem + 2vw, 3rem);
-  --text-title--line-height: 1.02;
+  --text-display: clamp(3rem, 1.7rem + 5.6vw, 6.5rem);
+  --text-display--line-height: 0.92;
+  --text-title: clamp(2rem, 1.45rem + 2.3vw, 3.25rem);
+  --text-title--line-height: 1;
+  --text-page: clamp(1.875rem, 1.6rem + 1.1vw, 2.5rem);
+  --text-page--line-height: 1.05;
 }
 
 :root {
-  --paper: #f5f6f8;
+  --paper: #f3f4f7;
   --paper-2: #ffffff;
-  --ink: #121a33;
-  --ink-2: #2b3452;
-  --fog: #5e6782;
-  --rule: #dfe2ea;
-  --rule-2: #c9cedb;
+  --paper-3: #eceef3;
+  --ink: #0e1530;
+  --ink-2: #283150;
+  --fog: #576079;
+  --rule: #dde1ea;
+  --rule-2: #c7cddb;
   --intaglio: #2337c6;
   --intaglio-ink: #ffffff;
-  --wash: #e8ebfa;
-  --pass: #0f7a55;
-  --deny: #b42a37;
+  --wash: #e9ecfb;
+  --pass: #0d7a52;
+  --deny: #b3283a;
   --hold: #8a5a00;
+  --hold-wash: #f6efe2;
+  --deny-wash: #fbecee;
+  --term: #0e1530;
+  --term-ink: #dfe3f3;
+  --term-fog: #9aa3c0;
+  --foil: linear-gradient(90deg, #6f7dff, #3fbfae 22%, #c78be0 46%, #e9b76a 70%, #6f7dff);
   --seal-0: #2337c6;
   --seal-1: #0f7a6b;
   --seal-2: #7a2e8c;
@@ -57,24 +83,33 @@
 }
 
 .dark {
-  --paper: #0b1020;
-  --paper-2: #11172b;
-  --ink: #e7eaf4;
+  --paper: #090e1c;
+  --paper-2: #0f1529;
+  --paper-3: #0c1224;
+  --ink: #e8ebf5;
   --ink-2: #c3c9dc;
-  --fog: #8e97b3;
-  --rule: #1f2741;
-  --rule-2: #2c3554;
-  --intaglio: #8c9bff;
-  --intaglio-ink: #0b1020;
-  --wash: #161e3d;
+  --fog: #929bb5;
+  --rule: #1d2540;
+  --rule-2: #2b3453;
+  --intaglio: #93a2ff;
+  --intaglio-ink: #0a0f1e;
+  --wash: #161f44;
   --pass: #4fd1a1;
-  --deny: #ff7b86;
+  --deny: #ff8590;
   --hold: #f0b84a;
-  --seal-0: #8c9bff;
+  --hold-wash: #2a2312;
+  --deny-wash: #2c1520;
+  --term: #060a16;
+  --term-ink: #dfe3f3;
+  --term-fog: #9aa3c0;
+  --foil: linear-gradient(90deg, #8c9bff, #4fd1b8 22%, #d79cf0 46%, #f0c27a 70%, #8c9bff);
+  --seal-0: #93a2ff;
   --seal-1: #4fc9b4;
   --seal-2: #d08ce0;
   --seal-3: #ff8f9c;
   --seal-4: #f0c060;
+  --shadow-sheet: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 48px -28px rgb(0 0 0 / 0.7);
+  --shadow-pop: 0 0 0 1px rgb(255 255 255 / 0.04), 0 28px 56px -20px rgb(0 0 0 / 0.75);
   color-scheme: dark;
 }
 
@@ -184,33 +219,34 @@
   transform-origin: 50% 50%;
 }
 
-/* ---- Hero: the one orchestrated moment. Pure CSS, so it plays the same
-   before and after hydration. `--d` is each element's delay. ---- */
+/* ---- Hero: the one orchestrated moment, under 900 ms. Pure CSS, so it plays
+   the same before and after hydration; every element is in the first paint.
+   `--d` is each element's delay. ---- */
 .hero-rise {
-  animation: rise 700ms var(--ease-out) var(--d, 0ms) both;
+  animation: rise 640ms var(--ease-out) var(--d, 0ms) both;
 }
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(12px);
   }
 }
 .hero-seal .seal {
-  animation: seal-settle 1400ms var(--ease-out) 120ms both;
+  animation: seal-settle 1200ms var(--ease-out) 260ms both;
 }
 .hero-seal .seal [data-layer="0"] {
-  animation: lock-cw 1600ms var(--ease-out) 120ms both;
+  animation: lock-cw 1300ms var(--ease-out) 260ms both;
 }
 .hero-seal .seal [data-layer="1"] {
-  animation: lock-ccw 1600ms var(--ease-out) 200ms both;
+  animation: lock-ccw 1300ms var(--ease-out) 320ms both;
 }
 .hero-seal .seal [data-layer="2"] {
-  animation: lock-cw 1600ms var(--ease-out) 280ms both;
+  animation: lock-cw 1300ms var(--ease-out) 380ms both;
 }
 @keyframes seal-settle {
   from {
     opacity: 0;
-    transform: scale(0.94);
+    transform: scale(0.92);
   }
 }
 @keyframes lock-cw {
@@ -227,55 +263,20 @@
 }
 
 .term-animate .term-line {
-  animation: line-in 260ms var(--ease-out) var(--d, 0ms) both;
+  animation: line-in 240ms var(--ease-out) var(--d, 0ms) both;
 }
 @keyframes line-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
-  }
-}
-.term-animate .term-type {
-  display: inline-block;
-  vertical-align: bottom;
-  overflow: hidden;
-  white-space: nowrap;
-  width: calc(var(--n) * 1ch);
-  animation: type calc(var(--n) * 22ms) steps(var(--n), end) calc(var(--d, 0ms) + 120ms) both;
-}
-@keyframes type {
-  from {
-    clip-path: inset(0 100% 0 0);
-  }
-  to {
-    clip-path: inset(0 0 0 0);
-  }
-}
-
-/* The artifact "prints" into the window, top to bottom. */
-.hero-seq .stage-print {
-  animation: print 800ms var(--ease-in-out) var(--d, 0ms) both;
-}
-.hero-seq .stage {
-  animation: rise 600ms var(--ease-out) calc(var(--d, 0ms) - 500ms) both;
-}
-@keyframes print {
-  from {
-    clip-path: inset(0 0 100% 0);
-  }
-  to {
-    clip-path: inset(0 0 0 0);
+    transform: translateY(3px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .hero-rise,
-  .hero-seq .stage,
   .hero-seal .seal,
   .hero-seal .seal [data-layer],
-  .term-animate .term-line,
-  .term-animate .term-type,
-  .hero-seq .stage-print {
+  .term-animate .term-line {
     animation: fade 300ms ease both;
   }
   @keyframes fade {
@@ -285,33 +286,39 @@
   }
 }
 
-/* Docs body copy. */
-.docs-prose > p,
-.docs-prose li {
-  margin-top: 1rem;
-  font-size: 16px;
-  line-height: 1.7;
-  color: var(--ink-2);
-  max-width: 68ch;
-}
-.docs-prose :not(pre) > code,
-.docs-prose dd code,
-.docs-prose dt + dd code {
-  font-size: 0.82em;
-  padding: 0.12em 0.4em;
-  border-radius: 6px;
-  background: var(--wash);
-  color: var(--ink);
-}
-.docs-prose a {
-  color: var(--intaglio);
-  text-underline-offset: 3px;
-}
-.docs-prose a:hover {
-  text-decoration: underline;
-}
-.docs-prose h2 a:hover {
-  text-decoration: none;
+/* Docs body copy: the reading system of /docs and /privacy (pages/Docs.tsx).
+   In the components layer, so a utility on an element always wins. */
+@layer components {
+  .docs-prose :where(p, li) {
+    font-size: 16px;
+    line-height: 1.7;
+    color: var(--ink-2);
+  }
+  .docs-prose :where(p, ul, ol, dl) {
+    margin-top: 1rem;
+  }
+  /* Inline code: a hairline chip on the page. Never breaks inside a flag;
+     a long identifier opts in with `whitespace-normal wrap-anywhere`. */
+  .docs-prose :where(p, li, dd) code {
+    font-size: 0.84em;
+    padding: 0.1em 0.3em;
+    border-radius: 5px;
+    background: var(--paper-2);
+    box-shadow: inset 0 0 0 1px var(--rule);
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .docs-prose :where(p, li, dd) a {
+    color: var(--intaglio);
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-decoration-color: color-mix(in oklab, var(--intaglio) 40%, transparent);
+    text-underline-offset: 3px;
+    transition: text-decoration-color 150ms var(--ease-out);
+  }
+  .docs-prose :where(p, li, dd) a:hover {
+    text-decoration-color: currentColor;
+  }
 }
 
 /* The invite's seal locks in once, like the hero's. A rare page: delight. */

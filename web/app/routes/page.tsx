@@ -89,7 +89,7 @@ function PageBody() {
     case "sign-in":
       return <SignIn next={page.next} />;
     case "message":
-      return <Message title={page.title} message={page.message} retry={page.retry} />;
+      return <Message title={page.title} message={page.message} retry={page.retry} retryLabel={(page as { retryLabel?: string | null }).retryLabel ?? null} />;
     case "not-found":
       return <NotFound />;
     case "feed":

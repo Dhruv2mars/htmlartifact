@@ -1,5 +1,20 @@
 # htmlartifact — GA checklist
 
+## Design overhaul (2026-10-26, branch design/overhaul, one PR, full send)
+Done = every web page and the artifact viewer/404 pages are redesigned; the
+Codex critic (gpt-6.1-sol, high) scores every category at least 9/10 on fresh
+screenshots (390 and 1280 wide, light and dark, worst/empty fixtures); Sol
+loop agrees on the code; typecheck, lint, web build and the D1 suite pass;
+PR merged with before/after screenshots.
+- [x] Worktree from origin/main; local dev (`dev:local` on :8799, fixtures on :5199)
+- [x] Baseline: 75 screenshots in /tmp/ha-design/shots/r0 (T3 preview); preview capture stalled after 75 shots (T3 host, not the app)
+- [x] Walkthrough: Haiku CU in Helium did landing + docs; stopped after it reported 2 tabs gone from Dhruv's Play Console window (it says it never acted there; not verified, not restored)
+- [ ] Critic round 0 (baseline scores)
+- [ ] Fix round 1, sol loop, critic round 1
+- [ ] Repeat until every category >= 9
+- [ ] PR with before/after screenshots, bots/CI green, merged
+Out-of-scope issues found (spawned as separate full-send threads):
+
 ## GA launch gates (2026-10-21, branch fix/ga-launch-gates)
 Done = every box below has its proof named next to it (test name, command output, or live URL check). Nothing is ticked on reasoning alone.
 - [x] G0 main CI green again: the 30df113 test step hung on test/deletion.test.js (300 s per test) and was cancelled at 20 min, so Deploy skipped. Proof: CI green on main, Deploy + smoke green. Done: main c650946 (PR #27) CI, Deploy (smoke step) and Release all success; local `bun run smoke` 11/11 against production afterwards.

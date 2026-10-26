@@ -3,7 +3,8 @@ import type { ArtifactSummary, ArtifactVersion, Page, Session } from "./page";
 // Dev-only pages for `react-router dev` (the real Worker supplies these).
 // Pick one with ?page=<kind>; add &fixture=worst for break-ui data, or
 // &fixture=empty for empty states. artifact takes &teammate; join takes
-// &member=current|other.
+// &member=current|other; workspaces takes &next[=/path] (a followed link)
+// and &error (a refused invite code); message takes &retry=none|signin.
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
@@ -36,6 +37,9 @@ const worstArtifacts: ArtifactSummary[] = [
   ...Array.from({ length: 40 }, (_, i) => ({ ...artifacts[i % artifacts.length]!, id: `gen${String(i).padStart(9, "0")}`, title: `${artifacts[i % artifacts.length]!.title} #${i + 1}` }))
 ];
 
+// Workspace names are capped at 100 characters (POST /workspaces); this is 100.
+const LONG_WORKSPACE = "Northwind Platform Engineering, Infrastructure, Developer Experience and Internal Tools Group (EMEA)";
+
 const versions = (n: number, worst = false): ArtifactVersion[] =>
   Array.from({ length: n }, (_, i) => ({
     number: n - i,
@@ -61,8 +65,20 @@ export function fixturePage(url: URL): Page {
       return { kind: "privacy", session: null };
     case "sign-in":
       return { kind: "sign-in", next: "/d/k3j9x0a1b2c4" };
-    case "message":
-      return { kind: "message", title: "Invite not valid", message: "That invite is invalid, expired, or used up.", retry: null, session: null };
+    case "message": {
+      // Default: what a dead /join/<code> link shows (src/web.ts).
+      const retry = url.searchParams.get("retry");
+      if (retry === "none") return { kind: "message", title: "Invite not valid", message: "That invite is invalid, expired, or used up.", retry: null, session: null };
+      if (retry === "signin") return { kind: "message", title: "Sign-in problem", message: "Sign-in was cancelled or denied.", retry: "/auth/sign-in?next=%2F", session: null };
+      return {
+        kind: "message",
+        title: "Invite not valid",
+        message: "That invite link is invalid, expired, or used up. Ask whoever sent it for a new one.",
+        retry: "/workspaces",
+        retryLabel: "Enter another code",
+        session: null
+      };
+    }
     case "not-found":
       return { kind: "not-found", session: null };
     case "feed":
@@ -78,19 +94,36 @@ export function fixturePage(url: URL): Page {
           : { id: "k3j9x0a1b2c4", title: "Billing migration plan", description: "Six weeks from legacy invoices to the new ledger, with dual writes.", url: "https://htmlartifact.pages.dev/d/k3j9x0a1b2c4", author: "Marcus Lee", mine: !url.searchParams.has("teammate") },
         versions: versions(worst ? 60 : 3, worst)
       };
-    case "workspaces":
+    case "workspaces": {
+      const next = url.searchParams.get("next");
       return {
         kind: "workspaces",
         session: empty ? { ...s, workspace: null } : s,
-        workspaces: empty ? [] : worst ? [{ id: "org_WORST", name: worstSession.workspace!.name, current: true }, ...Array.from({ length: 12 }, (_, i) => ({ id: `org_${i}`, name: `Workspace ${i} ${"long ".repeat(i)}`, current: false }))] : [{ id: "org_01NWND", name: "Northwind", current: true }, { id: "org_01SIDE", name: "Side project", current: false }],
-        next: url.searchParams.has("next") ? "/d/k3j9x0a1b2c4" : null
+        workspaces: empty
+          ? []
+          : worst
+            ? [
+                { id: "org_WORST", name: worstSession.workspace!.name, current: true },
+                { id: "org_LONG", name: LONG_WORKSPACE, current: false },
+                { id: "org_UNBROKEN", name: "W".repeat(100), current: false },
+                ...Array.from({ length: 12 }, (_, i) => ({ id: `org_${i}`, name: `Workspace ${i} ${"long ".repeat(i)}`, current: false }))
+              ]
+            : [
+                { id: "org_01NWND", name: "Northwind", current: true },
+                { id: "org_01SIDE", name: "Side project", current: false }
+              ],
+        next: next === null ? null : next.startsWith("/") ? next : "/d/k3j9x0a1b2c4",
+        join: url.searchParams.has("error")
+          ? { code: worst ? `https://htmlartifact.pages.dev/join/${"HA-7KQ2-MX9P-4TRZ".repeat(4)}` : "HA-7KQ2-MX9P-4TRZ", error: "That invite code is invalid, expired, or used up. Check it for typos, or ask whoever sent it for a new one." }
+          : null
       };
+    }
     case "join":
       return {
         kind: "join",
         session: s,
         code: "HA-7KQ2-MX9P-4TRA",
-        workspace: { id: "org_01NWND", name: worst ? worstSession.workspace!.name : "Northwind" },
+        workspace: { id: "org_01NWND", name: worst ? LONG_WORKSPACE : "Northwind" },
         expiresAt: new Date(Date.now() + 6 * 86_400_000).toISOString(),
         usesLeft: worst ? 1 : 49,
         member: url.searchParams.get("member") === "current" ? "current" : url.searchParams.get("member") === "other" ? "other" : null

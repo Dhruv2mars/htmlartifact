@@ -1,33 +1,22 @@
-import { useEffect, useRef, useState } from "react";
 import { cx } from "../lib/cx";
+import { useCopy } from "./Copy";
 import { CheckIcon, CopyIcon } from "./icons";
 
-// A small "Copy" button for a block of text.
-export function CopyText({ text, label = "Copy" }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      return;
-    }
-    setCopied(true);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopied(false), 1600);
-  }
+// A small "Copy" button for a block of text or a link. It says "Copied", or
+// "Couldn't copy" when the clipboard refuses (select the text instead).
+export function CopyText({ text, label = "Copy", className }: { text: string; label?: string; className?: string }) {
+  const [state, copy] = useCopy(text);
   return (
     <button
       type="button"
       onClick={copy}
-      className="press inline-flex h-7 shrink-0 items-center whitespace-nowrap gap-1.5 rounded-full px-2.5 text-[12px] text-fog hover:bg-wash hover:text-ink"
+      className={cx(
+        "press inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[7px] px-2.5 text-[12.5px] font-medium text-ink-2 hover:bg-wash hover:text-ink",
+        className
+      )}
     >
-      <span className="grid size-3.5 place-items-center" aria-hidden>
-        <CopyIcon className={cx("col-start-1 row-start-1 size-3.5 transition-[opacity,filter,scale] duration-200 ease-out", copied && "scale-75 opacity-0 blur-[2px]")} />
-        <CheckIcon className={cx("col-start-1 row-start-1 size-3.5 text-pass transition-[opacity,filter,scale] duration-200 ease-out", !copied && "scale-75 opacity-0 blur-[2px]")} />
-      </span>
-      <span role="status">{copied ? "Copied" : label}</span>
+      {state === "copied" ? <CheckIcon className="size-3.5 text-pass" /> : <CopyIcon className="size-3.5" />}
+      <span aria-live="polite">{state === "copied" ? "Copied" : state === "failed" ? "Couldn't copy" : label}</span>
     </button>
   );
 }

@@ -32,3 +32,21 @@ export const ChevronDown = (p: P) => (
 export const SearchIcon = (p: P) => (
   <svg {...base} {...p}><circle cx="7" cy="7" r="4.25" /><path d="m10.25 10.25 3.5 3.5" /></svg>
 );
+export const ChevronUpDown = (p: P) => (
+  <svg {...base} {...p}><path d="m5 6 3-3 3 3M5 10l3 3 3-3" /></svg>
+);
+export const ChevronRight = (p: P) => (
+  <svg {...base} {...p}><path d="m6.25 4 4 4-4 4" /></svg>
+);
+export const ArrowLeft = (p: P) => (
+  <svg {...base} {...p}><path d="M12.5 8h-9M7 4.25 3.25 8 7 11.75" /></svg>
+);
+export const HistoryIcon = (p: P) => (
+  <svg {...base} {...p}><path d="M2.75 8a5.25 5.25 0 1 0 1.6-3.77M2.5 2.75v2.5H5" /><path d="M8 5.25V8l1.9 1.4" /></svg>
+);
+export const AlertIcon = (p: P) => (
+  <svg {...base} {...p}><circle cx="8" cy="8" r="6.25" /><path d="M8 4.75V8.5M8 11.1v.15" /></svg>
+);
+export const PlusIcon = (p: P) => (
+  <svg {...base} {...p}><path d="M8 3v10M3 8h10" /></svg>
+);
