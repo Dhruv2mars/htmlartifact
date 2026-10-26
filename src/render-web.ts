@@ -30,7 +30,7 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
   const state = frame.latest
     ? `<span class="chip now">Latest</span>`
     : `<span class="chip old">Older version</span><a class="latest" href="${escapeHtml(frame.latestUrl)}">` +
-      `<span class="wide">Go to latest</span><span class="narrow">Latest<span class="sr"> version</span></span>${icon(ARROW_RIGHT)}</a>`;
+      `<span class="wide">Go to latest</span><span class="narrow">Latest<span class="sr"> version</span></span></a>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -46,9 +46,11 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
 <header class="bar">
 <div class="where">
 <span class="seal ink-${ink}">${sealSvg(frame.id, 20, "currentColor")}</span>
+<div class="path">
 <a class="ws" href="${escapeHtml(frame.feedUrl)}"><span class="sr">All artifacts in </span>${workspace ?? "your workspace"}</a>
 <span class="sep" aria-hidden="true">/</span>
 <h1 class="title" title="${title}">${title}</h1>
+</div>
 <span class="version"><span class="chip num${frame.latest ? "" : " old"}"><span aria-hidden="true">v${version}</span><span class="sr">Version ${version}</span></span>${state}</span>
 </div>
 <div class="tools">
@@ -69,7 +71,6 @@ const LOCK = '<rect x="3.25" y="7" width="9.5" height="6.75" rx="1.5"/><path d="
 const HISTORY = '<path d="M2.75 8a5.25 5.25 0 1 0 1.6-3.77M2.5 2.75v2.5H5"/><path d="M8 5.25V8l1.9 1.4"/>';
 const CHEVRON_UP = '<path d="m4.5 9.75 3.5-3.5 3.5 3.5"/>';
 const CHEVRON_DOWN = '<path d="m4.5 6.25 3.5 3.5 3.5-3.5"/>';
-const ARROW_RIGHT = '<path d="M3.5 8h9M8.75 4.25 12.5 8l-3.75 3.75"/>';
 
 function icon(paths: string): string {
   return `<svg class="i" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -117,6 +118,7 @@ a { color: inherit; text-decoration: none; touch-action: manipulation; }
 }
 .bar::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; background: var(--foil); }
 .where { flex: 1; min-width: 0; display: flex; align-items: center; }
+.path { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; }
 .seal { flex: none; width: 20px; height: 20px; margin-right: 8px; }
 .seal svg { display: block; }
 .ink-0 { color: var(--seal-0); } .ink-1 { color: var(--seal-1); } .ink-2 { color: var(--seal-2); } .ink-3 { color: var(--seal-3); } .ink-4 { color: var(--seal-4); }
@@ -182,12 +184,15 @@ iframe.artifact { flex: 1 1 auto; display: block; width: 100%; min-height: 0; bo
 }
 @media (max-width: 639px) {
   .bar { gap: 8px; padding: 2px 6px 0 12px; }
-  .ws, .sep { display: none; }
+  .sep { display: none; }
   .seal { margin-right: 10px; }
-  .title {
-    margin: 0; white-space: normal; overflow-wrap: anywhere; line-height: 17px;
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  /* Two lines: the workspace (a link back to its artifacts), then the title. */
+  .path { flex-direction: column; align-items: flex-start; }
+  .ws {
+    max-width: 100%; min-width: 0; margin: 0 0 1px -4px; padding: 0 4px; line-height: 16px;
+    font-size: 12px; color: var(--fog);
   }
+  .title { max-width: 100%; margin: 0; line-height: 18px; }
   .version { margin-left: 8px; gap: 2px; }
   .chip:not(.num) { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .latest .wide { display: none; }

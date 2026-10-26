@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "../components/AppShell";
 import { ButtonLink } from "../components/Button";
-import { CopyText } from "../components/CopyText";
-import { ArrowLeft } from "../components/icons";
+import { CopyLink } from "../components/CopyLink";
+import { ArrowLeft, ChevronDown } from "../components/icons";
 import { Seal } from "../components/Seal";
 import { Time } from "../components/Time";
 import { cx } from "../lib/cx";
-import { bytes } from "../lib/time";
+import { bytes, fullDate } from "../lib/time";
 import type { ArtifactHead, ArtifactVersion, Session } from "../page";
 
 const SERVER_ROWS = 30;
@@ -42,16 +42,11 @@ export function ArtifactDetail({ session, artifact, versions }: { session: Sessi
             </h1>
             {!artifact.mine && artifact.author && <p className="mt-2.5 text-[14.5px] text-ink-2 [overflow-wrap:anywhere]">By {artifact.author}</p>}
             {artifact.description && <Description text={artifact.description} />}
-            <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:items-center">
+            <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:items-start">
               <ButtonLink href={artifact.url} className="shrink-0">
                 Open latest version
               </ButtonLink>
-              <div className="flex h-10 min-w-0 items-center gap-1 rounded-control border border-rule-2 bg-paper-2 pl-3.5 pr-1 sm:max-w-[30rem] sm:flex-1">
-                <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fog" title={artifact.url}>
-                  {artifact.url}
-                </span>
-                <CopyText text={artifact.url} label="Copy link" />
-              </div>
+              <CopyLink url={artifact.url} className="min-w-0 sm:max-w-[30rem] sm:flex-1" />
             </div>
           </div>
           <div className="hidden md:block">
@@ -98,6 +93,8 @@ function Description({ text }: { text: string }) {
 
 function Version({ version: v, current }: { version: ArtifactVersion; current: boolean }) {
   const subject = v.subject || (current ? "Latest version" : "No commit message");
+  const [open, setOpen] = useState(false);
+  const details = `version-${v.number}-details`;
   return (
     <li className="group relative grid grid-cols-[3.25rem_minmax(0,1fr)] gap-x-3 px-4 py-4 transition-colors duration-150 hover:bg-paper-3/60 sm:grid-cols-[3.75rem_minmax(0,1fr)_auto] sm:px-5">
       <span className="pt-px font-mono text-[13px] font-medium text-ink">v{v.number}</span>
@@ -105,7 +102,6 @@ function Version({ version: v, current }: { version: ArtifactVersion; current: b
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <a
             href={v.url}
-            title={v.subject ?? undefined}
             className="line-clamp-2 min-w-0 text-[15px] leading-snug text-ink outline-none [overflow-wrap:anywhere] after:absolute after:inset-0 focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-intaglio"
           >
             <span className="sr-only">Open version {v.number}: </span>
@@ -114,16 +110,40 @@ function Version({ version: v, current }: { version: ArtifactVersion; current: b
           {current && <span className="shrink-0 rounded-chip bg-wash px-1.5 py-0.5 text-[12px] font-medium text-intaglio">Latest</span>}
           {v.dirty && <span className="shrink-0 rounded-chip bg-hold-wash px-1.5 py-0.5 text-[12px] font-medium text-hold">Uncommitted changes</span>}
         </div>
-        <p className="mt-1.5 flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 font-mono text-[12px] text-fog">
-          {v.branch && (
-            <span className="min-w-0 max-w-full truncate" title={v.branch}>
-              {v.branch}
-            </span>
-          )}
+        <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[12px] text-fog">
+          {v.branch && <span className="min-w-0 max-w-full truncate">{v.branch}</span>}
           {v.commit && <span>{v.commit}</span>}
           <span>{bytes(v.size)}</span>
           <Time iso={v.createdAt} className="font-sans text-[12.5px] sm:hidden" />
-        </p>
+          <button
+            type="button"
+            onClick={() => setOpen(!open)}
+            aria-expanded={open}
+            aria-controls={details}
+            className="relative z-[1] -my-1 inline-flex h-7 items-center gap-1 rounded-chip px-1.5 font-sans text-[12.5px] font-medium text-intaglio hover:bg-wash"
+          >
+            {open ? "Hide details" : "Details"}
+            <span className="sr-only"> of version {v.number}</span>
+            <ChevronDown className={cx("size-3.5 transition-transform duration-150", open && "rotate-180")} />
+          </button>
+        </div>
+        {open && (
+          <dl id={details} className="relative z-[1] mt-3 grid gap-x-4 gap-y-2 rounded-control border border-rule bg-paper-3/60 p-3.5 text-[13.5px] sm:grid-cols-[7rem_minmax(0,1fr)]">
+            <dt className="text-fog">Commit message</dt>
+            <dd className="text-ink [overflow-wrap:anywhere]">{v.subject ?? "None"}</dd>
+            <dt className="text-fog">Branch</dt>
+            <dd className="font-mono text-[12.5px] text-ink [overflow-wrap:anywhere]">{v.branch ?? "None"}</dd>
+            <dt className="text-fog">Commit</dt>
+            <dd className="font-mono text-[12.5px] text-ink">
+              {v.commit ?? "None"}
+              {v.dirty && <span className="ml-2 font-sans text-hold">with uncommitted changes</span>}
+            </dd>
+            <dt className="text-fog">Size</dt>
+            <dd className="text-ink">{bytes(v.size)}</dd>
+            <dt className="text-fog">Published</dt>
+            <dd className="text-ink">{fullDate(v.createdAt) || "Unknown"}</dd>
+          </dl>
+        )}
       </div>
       <Time iso={v.createdAt} className="hidden self-start pt-0.5 text-right text-[13px] text-fog sm:block" />
     </li>

@@ -220,8 +220,11 @@ function requireSignIn(c: Context<AppEnv>): Response {
   return c.text("Sign in required. Use `htmlartifact read <url>`.\n", 401);
 }
 
+// Off the app's own origin (the sandbox), the page links back to the app.
 export function notFound(c: Context<AppEnv>): Response | Promise<Response> {
-  return c.html(renderNotFound(), 404);
+  const app = c.get("config").publicBaseUrl;
+  const elsewhere = app && new URL(c.req.url).origin !== new URL(app).origin;
+  return c.html(renderNotFound(elsewhere ? app : null), 404);
 }
 
 // Path segments below the first `rootLength` segments, decoded once; null if

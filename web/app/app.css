@@ -21,6 +21,7 @@
   --color-fog: var(--fog);
   --color-rule: var(--rule);
   --color-rule-2: var(--rule-2);
+  --color-control: var(--control);
   --color-intaglio: var(--intaglio);
   --color-intaglio-ink: var(--intaglio-ink);
   --color-wash: var(--wash);
@@ -62,6 +63,7 @@
   --fog: #576079;
   --rule: #dde1ea;
   --rule-2: #c7cddb;
+  --control: #7e869c; /* editable-field boundary: ≥3:1 on paper and paper-2 */
   --intaglio: #2337c6;
   --intaglio-ink: #ffffff;
   --wash: #e9ecfb;
@@ -91,6 +93,7 @@
   --fog: #929bb5;
   --rule: #1d2540;
   --rule-2: #2b3453;
+  --control: #5f6a8d;
   --intaglio: #93a2ff;
   --intaglio-ink: #0a0f1e;
   --wash: #161f44;

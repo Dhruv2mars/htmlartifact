@@ -64,7 +64,8 @@ export function fixturePage(url: URL): Page {
     case "privacy":
       return { kind: "privacy", session: null };
     case "sign-in":
-      return { kind: "sign-in", next: "/d/k3j9x0a1b2c4" };
+      // ?next=/join/<code> for the invite variant, ?next=/mine for the plain one.
+      return { kind: "sign-in", next: url.searchParams.get("next") ?? "/d/k3j9x0a1b2c4" };
     case "message": {
       // Default: what a dead /join/<code> link shows (src/web.ts).
       const retry = url.searchParams.get("retry");

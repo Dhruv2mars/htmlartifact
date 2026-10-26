@@ -15,7 +15,7 @@ const HOST = "htmlartifact.pages.dev";
 const VIEWERS = [
   { key: "member", label: "Member" },
   { key: "signed-out", label: "Signed out" },
-  { key: "outsider", label: "Other workspace" }
+  { key: "outsider", label: "Non-member" }
 ] as const;
 type ViewerKey = (typeof VIEWERS)[number]["key"];
 
@@ -84,7 +84,7 @@ export function ArtifactStage() {
           </div>
         </div>
 
-        <div id="stage-panel" role="tabpanel" aria-labelledby={`tab-${active}`} className="relative grid min-h-[420px] sm:min-h-[452px]">
+        <div id="stage-panel" role="tabpanel" aria-labelledby={`tab-${active}`} className="relative grid min-h-[340px] sm:min-h-[452px]">
           <Panel show={active === "member"}>
             <ViewerBar />
             <PlanDocument />
@@ -174,7 +174,7 @@ function PlanDocument() {
           </div>
         ))}
       </div>
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+      <div className="mt-5 hidden gap-3 sm:grid sm:grid-cols-2">
         <div className="rounded-lg border border-[#e5e7eb] p-3 dark:border-white/12">
           <p className="text-[12px] font-semibold text-[#b45309] dark:text-[#fbbf24]">Risk</p>
           <p className="mt-1">Proration drift during backfill. Mitigation: nightly diff job, alert above 0.01%.</p>

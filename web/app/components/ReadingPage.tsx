@@ -4,7 +4,8 @@ import type { Session } from "../page";
 import { ChevronDown } from "./icons";
 import { SiteFooter, SiteHeader } from "./SiteHeader";
 
-export type Toc = ReadonlyArray<{ id: string; title: string }>;
+// Sections, and optionally their sub-sections (listed under them in the index).
+export type Toc = ReadonlyArray<{ id: string; title: string; children?: ReadonlyArray<{ id: string; title: string }> }>;
 
 export const H3 = "font-wide text-[17px] font-[680] leading-snug tracking-[-0.01em] text-ink";
 
@@ -27,6 +28,7 @@ export function ReadingPage({
   children: ReactNode;
 }) {
   const active = useActiveSection(sections);
+  const parent = sections.find((s) => s.id === active || s.children?.some((c) => c.id === active))?.id ?? null;
   return (
     <div>
       {/* The header and the mobile index stick as one block, so the index
@@ -35,7 +37,7 @@ export function ReadingPage({
           layers with backdrop blur break full-page screenshots.) */}
       <div className="sticky top-0 z-20 [&>header]:static">
         <SiteHeader session={session} current={current} />
-        <MobileToc sections={sections} active={active} />
+        <MobileToc sections={sections} active={active} parent={parent} />
       </div>
       <main id="main" tabIndex={-1} className="outline-none">
         <div className="mx-auto max-w-[1240px] px-5 pb-24 pt-10 sm:px-8 lg:grid lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:gap-16 lg:pt-16 xl:gap-24">
@@ -47,12 +49,27 @@ export function ReadingPage({
                   <li key={s.id}>
                     <a
                       href={`#${s.id}`}
-                      aria-current={active === s.id ? "true" : undefined}
+                      aria-current={parent === s.id ? "true" : undefined}
                       className="-ml-px flex gap-3 border-l-2 border-transparent py-1.5 pl-4 text-[14px] leading-snug text-ink-2 transition-colors duration-150 hover:text-ink aria-[current=true]:border-intaglio aria-[current=true]:font-medium aria-[current=true]:text-ink"
                     >
                       <Serial n={i} />
                       {s.title}
                     </a>
+                    {s.children && (
+                      <ol className="mb-1 ml-[3.25rem]">
+                        {s.children.map((c) => (
+                          <li key={c.id}>
+                            <a
+                              href={`#${c.id}`}
+                              aria-current={active === c.id ? "true" : undefined}
+                              className="block py-1 text-[13px] leading-snug text-fog transition-colors duration-150 hover:text-ink aria-[current=true]:text-ink"
+                            >
+                              {c.title}
+                            </a>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
                   </li>
                 ))}
               </ol>
@@ -70,7 +87,7 @@ export function ReadingPage({
   );
 }
 
-function MobileToc({ sections, active }: { sections: Toc; active: string | null }) {
+function MobileToc({ sections, active, parent }: { sections: Toc; active: string | null; parent: string | null }) {
   const ref = useRef<HTMLDetailsElement>(null);
   // Close after a jump, on Escape, and on a tap outside.
   useEffect(() => {
@@ -82,7 +99,8 @@ function MobileToc({ sections, active }: { sections: Toc; active: string | null 
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, []);
-  const current = sections.find((s) => s.id === active);
+  const current = sections.find((s) => s.id === parent);
+  const child = current?.children?.find((c) => c.id === active);
   return (
     <details
       ref={ref}
@@ -101,7 +119,7 @@ function MobileToc({ sections, active }: { sections: Toc; active: string | null 
             <span aria-hidden className="text-fog">
               /
             </span>
-            <span className="min-w-0 truncate text-ink-2">{current.title}</span>
+            <span className="min-w-0 truncate text-ink-2">{child ? `${current.title}: ${child.title}` : current.title}</span>
           </>
         )}
         <ChevronDown className="ml-auto size-4 shrink-0 text-fog transition-transform duration-200 group-open:rotate-180" />
@@ -118,12 +136,27 @@ function MobileToc({ sections, active }: { sections: Toc; active: string | null 
             <li key={s.id}>
               <a
                 href={`#${s.id}`}
-                aria-current={active === s.id ? "true" : undefined}
+                aria-current={parent === s.id ? "true" : undefined}
                 className="flex h-11 items-center gap-3 rounded-control px-3 text-[15px] text-ink-2 hover:bg-wash hover:text-ink aria-[current=true]:bg-wash aria-[current=true]:font-medium aria-[current=true]:text-ink"
               >
                 <Serial n={i} />
                 {s.title}
               </a>
+              {s.children && (
+                <ol className="mb-1 grid grid-cols-2 gap-x-2 pl-[2.4rem]">
+                  {s.children.map((c) => (
+                    <li key={c.id}>
+                      <a
+                        href={`#${c.id}`}
+                        aria-current={active === c.id ? "true" : undefined}
+                        className="flex min-h-10 items-center rounded-control px-3 text-[14px] leading-snug text-ink-2 hover:bg-wash hover:text-ink aria-[current=true]:font-medium aria-[current=true]:text-ink"
+                      >
+                        {c.title}
+                      </a>
+                    </li>
+                  ))}
+                </ol>
+              )}
             </li>
           ))}
         </ol>
@@ -137,7 +170,10 @@ function MobileToc({ sections, active }: { sections: Toc; active: string | null 
 function useActiveSection(sections: Toc): string | null {
   const [active, setActive] = useState<string | null>(null);
   useEffect(() => {
-    const els = sections.map((s) => document.getElementById(s.id)).filter((el): el is HTMLElement => el !== null);
+    const els = sections
+      .flatMap((s) => [s, ...(s.children ?? [])])
+      .map((s) => document.getElementById(s.id))
+      .filter((el): el is HTMLElement => el !== null);
     let frame = 0;
     const update = () => {
       frame = 0;

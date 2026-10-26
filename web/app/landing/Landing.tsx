@@ -62,17 +62,18 @@ function Hero() {
           </div>
         </div>
         <div className="hero-rise" style={rise(160)}>
-          <ArtifactStage />
           <Terminal
-            className="mt-8 lg:hidden"
+            className="mb-12 lg:hidden"
             title="~/northwind/billing"
             animate={false}
             lines={[
               { kind: "cmd", text: "npx htmlartifact upload plan.html" },
               { kind: "out", text: "Published version 3", tone: "pass" },
-              { kind: "out", text: `htmlartifact.pages.dev/d/${HERO_ID}` }
+              // A zero-width space after "/d/": a narrow phone breaks there, not inside the ID.
+              { kind: "out", text: `htmlartifact.pages.dev/d/\u200b${HERO_ID}` }
             ]}
           />
+          <ArtifactStage />
         </div>
       </div>
     </section>

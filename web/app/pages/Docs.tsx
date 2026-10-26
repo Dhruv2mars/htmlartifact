@@ -9,7 +9,18 @@ import type { Session } from "../page";
 const SECTIONS: Toc = [
   { id: "start", title: "Get started" },
   { id: "agents", title: "With an agent" },
-  { id: "commands", title: "Commands" },
+  {
+    id: "commands",
+    title: "Commands",
+    children: [
+      { id: "account", title: "Account" },
+      { id: "workspaces", title: "Workspaces and members" },
+      { id: "publishing-commands", title: "Publishing and reading" },
+      { id: "automation", title: "CI and automation" },
+      { id: "admin", title: "Admin" },
+      { id: "output", title: "Output and exit codes" }
+    ]
+  },
   { id: "access", title: "Who can see what" },
   { id: "ci", title: "CI" },
   { id: "publishing", title: "What you can publish" },

@@ -18,7 +18,7 @@ export function Feed({ session, artifacts, older }: { session: Session; artifact
         <div className="mt-8">
           {artifacts.length ? (
             <>
-              <ArtifactList artifacts={artifacts} initialQuery={q} />
+              <ArtifactList artifacts={artifacts} paged={Boolean(older)} initialQuery={q} />
               <Older href={older && q ? `${older}&q=${encodeURIComponent(q)}` : older} />
             </>
           ) : (
@@ -39,7 +39,7 @@ export function Mine({ session, artifacts, older }: { session: Session; artifact
         <div className="mt-8">
           {artifacts.length ? (
             <>
-              <ArtifactList artifacts={artifacts} mine />
+              <ArtifactList artifacts={artifacts} mine paged={Boolean(older)} />
               <Older href={older} />
             </>
           ) : (

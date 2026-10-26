@@ -6,20 +6,33 @@
 
 import { makeSeal } from "../web/app/lib/seal.ts";
 
-let page: string | undefined;
+const pages = new Map<string, string>();
 
-export function renderNotFound(): string {
-  page ??= htmlPage({
-    title: "Not found",
-    body: `<main>
+// `app`: the app's own origin when this is served anywhere else (the sandbox
+// origin, inside an artifact's frame): the way out is a new tab on the app,
+// since the frame may not navigate its parent. On the app origin, the page
+// offers home and the workspace list (to join with an invite code). Either
+// way the bytes depend only on where it is served, never on what was asked.
+export function renderNotFound(app: string | null = null): string {
+  const key = app ?? "";
+  let page = pages.get(key);
+  if (!page) {
+    const actions = app
+      ? `<a class="button" href="${escapeHtml(`${app}/`)}" target="_blank" rel="noopener">Open htmlartifact<span class="sr"> in a new tab</span></a>`
+      : `<a class="button" href="/">Go to htmlartifact</a><a class="button line" href="/workspaces">Your workspaces</a>`;
+    page = htmlPage({
+      title: "Not found",
+      body: `<main>
 <p class="brand">${mark()}<span>htmlartifact</span></p>
 <p class="code" aria-hidden="true">404</p>
 <h1>Not found</h1>
 <p class="lead">This artifact does not exist, or it belongs to a workspace you are not in.</p>
-<p class="hint">If someone shared it with you, ask them to invite you to their workspace.</p>
-<a class="button" href="/">Go to htmlartifact</a>
+<p class="hint">If someone shared it with you, ask them for an invite to their workspace, then join it from your workspaces.</p>
+<p class="actions">${actions}</p>
 </main>`
-  });
+    });
+    pages.set(key, page);
+  }
   return page;
 }
 
@@ -61,13 +74,13 @@ function htmlPage({ title, body }: { title: string; body: string }): string {
 <title>${escapeHtml(title)}</title>
 <style>
 :root {
-  --paper: #f3f4f7; --ink: #0e1530; --ink-2: #283150; --fog: #576079; --rule-2: #c7cddb;
+  --paper: #f3f4f7; --ink: #0e1530; --ink-2: #283150; --fog: #576079; --rule-2: #c7cddb; --wash: #e9ecfb;
   --intaglio: #2337c6; --intaglio-ink: #ffffff; --button: #0e1530; --button-ink: #f3f4f7; --button-hover: #283150;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #090e1c; --ink: #e8ebf5; --ink-2: #c3c9dc; --fog: #929bb5; --rule-2: #2b3453;
+    --paper: #090e1c; --ink: #e8ebf5; --ink-2: #c3c9dc; --fog: #929bb5; --rule-2: #2b3453; --wash: #161f44;
     --intaglio: #93a2ff; --intaglio-ink: #0a0f1e; --button: #e8ebf5; --button-ink: #090e1c; --button-hover: #c3c9dc;
   }
 }
@@ -96,13 +109,16 @@ h1 { margin: 22px 0 0; font-size: 30px; font-weight: 700; line-height: 1.1; lett
 h1.spaced { margin-top: 36px; }
 .lead { margin: 12px auto 0; max-width: 400px; font-size: 15.5px; color: var(--ink-2); text-wrap: balance; }
 .hint { margin: 8px auto 0; max-width: 360px; font-size: 14px; line-height: 1.55; color: var(--fog); text-wrap: balance; }
+.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin: 32px 0 0; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .button {
-  display: inline-flex; align-items: center; justify-content: center; height: 44px; margin-top: 32px; padding: 0 20px;
+  display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 20px;
   border-radius: 10px; background: var(--button); color: var(--button-ink);
   font-size: 15px; font-weight: 500; text-decoration: none; white-space: nowrap; touch-action: manipulation;
 }
 .button:focus-visible { outline: 2px solid var(--intaglio); outline-offset: 3px; }
-@media (hover: hover) { .button:hover { background: var(--button-hover); } }
+.button.line { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1px var(--rule-2); }
+@media (hover: hover) { .button:hover { background: var(--button-hover); } .button.line:hover { background: var(--wash); } }
 @media (min-width: 640px) { .code { font-size: 128px; } }
 </style>
 </head>

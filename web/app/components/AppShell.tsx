@@ -4,7 +4,7 @@ import { Command } from "cmdk";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "../lib/cx";
 import type { ArtifactSummary, Session } from "../page";
-import { ChevronDown, ChevronUpDown, SearchIcon } from "./icons";
+import { ChevronDown, ChevronUpDown, CloseIcon, SearchIcon } from "./icons";
 import { Logo } from "./Logo";
 import { Seal } from "./Seal";
 import { REPO_URL } from "./SiteHeader";
@@ -231,7 +231,12 @@ function Palette({
                 placeholder={artifacts ? "Search by title, author or repository" : "Search artifacts, or go to a page"}
                 className="h-13 w-full bg-transparent text-[16px] text-ink outline-none placeholder:text-fog"
               />
-              <kbd className="hidden shrink-0 rounded-[5px] border border-rule px-1.5 py-px text-[12px] text-fog sm:block">Esc</kbd>
+              <Dialog.Close
+                aria-label="Close search"
+                className="press -mr-2 grid size-9 shrink-0 place-items-center rounded-control text-fog hover:bg-wash hover:text-ink"
+              >
+                <CloseIcon className="size-4" />
+              </Dialog.Close>
             </div>
             <Command.List className="max-h-[min(440px,60vh)] overflow-y-auto p-2">
               <Command.Empty className="px-3 py-8 text-center text-[14px] text-fog">
@@ -253,7 +258,7 @@ function Palette({
                   <Command.Item value={`search ${query}`} onSelect={() => go(`/?q=${encodeURIComponent(query.trim())}`)} className={item}>
                     <SearchIcon className="size-4 text-fog" />
                     <span className="min-w-0 flex-1 truncate">
-                      Search {workspace.name} for “{query.trim()}”
+                      Filter {workspace.name}'s newest artifacts for “{query.trim()}”
                     </span>
                   </Command.Item>
                 </Command.Group>
