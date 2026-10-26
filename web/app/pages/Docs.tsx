@@ -477,13 +477,14 @@ function Code(
         <pre ref={pre} className="whitespace-pre-wrap break-words px-4 py-3.5 text-[12.5px] leading-[1.75] text-ink-2 sm:text-[13px]">
           {props.code.split("\n").map((line, i) => {
             const body = line.trimStart();
+            const indent = line.length - body.length;
             const hang = props.hang ? 2 : 0;
+            // The leading spaces are real text (so a manual copy keeps YAML
+            // indentation); the hanging indent puts wrapped lines under the
+            // content, `hang` deeper.
             return (
-              <span
-                key={i}
-                className="block"
-                style={{ paddingLeft: `${line.length - body.length + hang}ch`, textIndent: `-${hang}ch` }}
-              >
+              <span key={i} className="block" style={{ paddingLeft: `${indent + hang}ch`, textIndent: `-${indent + hang}ch` }}>
+                {line.slice(0, indent)}
                 {body ? <Words text={body} /> : " "}
               </span>
             );
