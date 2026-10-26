@@ -9,8 +9,10 @@ PR merged with before/after screenshots.
 - [x] Worktree from origin/main; local dev (`dev:local` on :8799, fixtures on :5199)
 - [x] Baseline: 75 screenshots in /tmp/ha-design/shots/r0 (T3 preview); preview capture stalled after 75 shots (T3 host, not the app)
 - [x] Walkthrough: Haiku CU in Helium did landing + docs; stopped after it reported 2 tabs gone from Dhruv's Play Console window (it says it never acted there; not verified, not restored)
-- [ ] Critic round 0 (baseline scores)
-- [ ] Fix round 1, sol loop, critic round 1
+- [x] Critic round 0: 5.5 overall (identity 7, typography 6.5, layout 5, responsive 4.5, color 6.5, consistency 6, interaction 5.5, ux 5, copy 6.5, a11y 6); 24 findings (/tmp/ha-design/audits/round-0.md)
+- [x] Fix round 1 (commits f63b9c0, 476adb4): tokens v2, seal v2 medallion, AppShell (workspace pill, search scope, skip link), feed index, history, landing rebuild, viewer bar + static 404/expired, workspaces/join flows (next kept, inline join errors), docs/privacy reading layout, SSR via prerender (pages render without JS), OG/favicon
+- [x] Screenshot tool: isolated headless Helium over CDP (/tmp/ha-design/tools/shoot.ts) after T3 preview capture stalled; 181 shots in /tmp/ha-design/shots/r1
+- [ ] Sol round 1 + critic round 1 (running in parallel)
 - [ ] Repeat until every category >= 9
 - [ ] PR with before/after screenshots, bots/CI green, merged
 Out-of-scope issues found (spawned as separate full-send threads):

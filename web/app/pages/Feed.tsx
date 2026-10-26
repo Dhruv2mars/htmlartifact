@@ -1,20 +1,16 @@
-import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { AppShell, PageHead } from "../components/AppShell";
 import { ArtifactList } from "../components/ArtifactList";
 import { ButtonLink } from "../components/Button";
 import { CommandBlock } from "../components/CommandBlock";
 import type { ArtifactSummary, Session } from "../page";
 
-// "?q=" pre-fills the filter (search from other pages lands here).
-function useQueryParam(): string {
-  const [q, setQ] = useState("");
-  useEffect(() => setQ(new URLSearchParams(window.location.search).get("q") ?? ""), []);
-  return q;
-}
-
 export function Feed({ session, artifacts, older }: { session: Session; artifacts: ArtifactSummary[]; older: string | null }) {
   const name = session.workspace?.name ?? "Workspace";
-  const q = useQueryParam();
+  // "?q=" pre-fills the filter (search from other pages lands here), on the
+  // server and in the browser alike.
+  const [params] = useSearchParams();
+  const q = params.get("q") ?? "";
   return (
     <AppShell session={session} section="feed" artifacts={artifacts}>
       <div className="mx-auto w-full max-w-[1120px] px-4 pb-24 pt-9 sm:px-6 sm:pt-12">
@@ -22,8 +18,8 @@ export function Feed({ session, artifacts, older }: { session: Session; artifact
         <div className="mt-8">
           {artifacts.length ? (
             <>
-              <ArtifactList key={q} artifacts={artifacts} initialQuery={q} />
-              <Older href={older} />
+              <ArtifactList artifacts={artifacts} initialQuery={q} />
+              <Older href={older && q ? `${older}&q=${encodeURIComponent(q)}` : older} />
             </>
           ) : (
             <FirstArtifact workspace={name} />

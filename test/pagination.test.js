@@ -108,13 +108,13 @@ test("the web feed links to older artifacts", async () => {
   const browser = new Browser(stack);
   const feed = await browser.signIn("alice@acme.test", { workspace: "Acme" });
   assert.equal(feed.status, 200);
-  const older = feed.text_.match(/href="(\/\?cursor=[^"]+)"[^>]*>Older artifacts/);
+  const older = feed.text_.match(/href="(\/\?cursor=[^"]+)"[^>]*>Show older artifacts/);
   assert.ok(older, "the first page links to the next");
   assert.doesNotMatch(feed.text_, />Seeded 0</);
   const rest = await browser.get(older[1].replaceAll("&amp;", "&"));
   assert.equal(rest.status, 200);
   assert.match(rest.text_, />Seeded 0</);
-  assert.doesNotMatch(rest.text_, />Older artifacts</);
+  assert.doesNotMatch(rest.text_, />Show older artifacts</);
 });
 
 test("a history link opens in its artifact's workspace for members, and is a 404 for others", async () => {

@@ -900,12 +900,16 @@ const ROUTES = {
       for (const actor of webActors()) {
         const r = await actor.browser.post("/join", { code: A.usedCode, next: `/d/${A.plan.draftId}` });
         const m = await actor.browser.post("/join", { code: MISSING_CODE, next: `/d/${A.plan.draftId}` });
-        // The form gives back what was typed, so the person can fix it: the
-        // only allowed difference is the caller's own input, at the same spots.
+        // The form gives back what was sent (the typed code, and the link to
+        // return to), so the person can fix it and still land on their link.
+        // That is only the caller's own input: mask it, then the two answers
+        // must match byte for byte and carry nothing else of A's.
+        const next = `/d/${A.plan.draftId}`;
         assert.ok(r.text_.includes(A.usedCode) && m.text_.includes(MISSING_CODE), `${key}: the typed code is given back`);
-        assertDenied(`${key} used-up A code as ${actor.name}`, { status: r.status, text: r.text_.replaceAll(A.usedCode, "<typed>") }, {
+        const own = (text, code) => text.replaceAll(code, "<typed>").replaceAll(next, "<next>");
+        assertDenied(`${key} used-up A code as ${actor.name}`, { status: r.status, text: own(r.text_, A.usedCode) }, {
           status: 404,
-          missing: { status: m.status, text: m.text_.replaceAll(MISSING_CODE, "<typed>") }
+          missing: { status: m.status, text: own(m.text_, MISSING_CODE) }
         });
       }
     }
