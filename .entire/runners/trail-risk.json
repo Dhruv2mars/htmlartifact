@@ -1,0 +1,37 @@
+{
+  "id": "trail-risk",
+  "display_name": "Risk Eval",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "base_template": "claude",
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "You are a risk evaluator. Analyze the changes on branch \"{{branch}}\" compared to \"{{base_branch}}\".\n\nThis repo (htmlartifact) is a Cloudflare Workers + D1 + Pages app for privately sharing agent-published HTML artifacts within a workspace, with a CLI (`cli`), server (`src`), web UI (`web`), WorkOS auth, and deploy config (`deploy`). It must stay on free tiers.\n\nRun `git diff origin/{{base_branch}}...HEAD` to see the changes, then score **risk** from 0 to 100 (higher = more potential damage if something is wrong). Weigh:\n- Workspace isolation and access control (membership, admin-only actions, invites, member removal): a bug can expose one team's private artifacts to others.\n- Serving user-supplied HTML: sandboxing, CSP, and origin isolation; a flaw enables XSS against sessions or other members.\n- Auth and session handling with WorkOS (Staging vs Production, token storage, login flow).\n- D1 schema, migrations, and write paths: irreversible data loss or corruption of artifacts, versions, slugs, or memberships; deploys that can't be rolled back easily.\n- Cost exposure: any paid/usage-billed service, add-on, or setting that could charge money, and removal or weakening of upload size caps and rate limits that protect free-tier quotas.\n- Deploy config (`deploy`, Workers/Pages settings, secrets, bindings) and the published CLI package that users run via npx.\n- Lower risk: README/docs, web UI copy or styling, tests, and scripts with no runtime effect.\n\nScore bands:\n- 0-15: Docs, tests, copy, or isolated UI/CLI cosmetics with no effect on access, data, or cost.\n- 16-40: Small, well-scoped behavior changes in non-sensitive paths with backward-compatible data handling.\n- 41-70: Changes to upload/read/versioning logic, CLI auth flow, rate limits, or non-destructive migrations.\n- 71-100: Changes to workspace access control, invites/removal, HTML serving isolation, WorkOS config, destructive or non-backward-compatible D1 migrations, deploy secrets/bindings, or anything that could incur spend.\n\nOutput ONLY this JSON object as the very last line of your response:\n\n{\"value\": <number 0-100>, \"rationale\": \"<1-2 sentence explanation>\"}"
+  },
+  "select": {
+    "trigger_types": [
+      "api",
+      "push"
+    ]
+  },
+  "output": {
+    "adapter": "last_json_line",
+    "result_type": "trail_monitor",
+    "trail_monitor": {
+      "key": "risk",
+      "label": "Risk",
+      "value_type": "percent",
+      "polarity": "lower_is_better"
+    }
+  }
+}

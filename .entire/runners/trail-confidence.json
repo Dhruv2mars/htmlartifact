@@ -1,0 +1,37 @@
+{
+  "id": "trail-confidence",
+  "display_name": "Confidence Eval",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "base_template": "claude",
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "You are a confidence evaluator. Analyze the changes on branch \"{{branch}}\" compared to \"{{base_branch}}\".\n\nThis repo (htmlartifact) is a Cloudflare Workers + D1 + Pages app with a CLI (`cli`), server code (`src`), a web UI (`web`), deploy config (`deploy`), and tests (`test`). It publishes private HTML artifacts shared within a workspace, with WorkOS auth, invite codes, and versioned uploads. Everything must run on free tiers.\n\nRun `git diff origin/{{base_branch}}...HEAD` to see the changes, then score **confidence** from 0 to 100 (higher = more confident the changes are correct and well-tested). Weigh:\n- Whether workspace-isolation, membership, admin-only, invite (max uses, expiry, revocation) and member-removal logic is covered by tests that exercise the negative paths (non-member, non-admin, expired/revoked code, removed member).\n- Whether upload paths (size caps, versioning on re-upload, slug uniqueness within a workspace, folder uploads) and read paths (auth required, correct workspace) have tests covering edge cases.\n- Whether D1 schema/migration changes are backward compatible with existing rows and are exercised by tests.\n- Whether CLI behavior (login flow over SSH, output, exit codes, flags) matches the README and is tested.\n- Whether rate limits and size caps are enforced and verified, since they stand in for paid-plan protections.\n- Whether the change was verified rather than assumed: tests added or updated alongside the code, and no skipped or weakened assertions.\n\nScore bands:\n- 85-100: Small or well-isolated change with tests covering success and denial paths; behavior clearly matches intent.\n- 60-84: Likely correct, but some auth, migration, or edge-case paths are untested.\n- 30-59: Touches auth, workspace access, invites, or schema with little test coverage, or has unclear behavior.\n- 0-29: Changes access control, data storage, or billing-relevant behavior with no tests, or tests that were removed or weakened.\n\nOutput ONLY this JSON object as the very last line of your response:\n\n{\"value\": <number 0-100>, \"rationale\": \"<1-2 sentence explanation>\"}"
+  },
+  "select": {
+    "trigger_types": [
+      "api",
+      "push"
+    ]
+  },
+  "output": {
+    "adapter": "last_json_line",
+    "result_type": "trail_monitor",
+    "trail_monitor": {
+      "key": "confidence",
+      "label": "Confidence",
+      "value_type": "percent",
+      "polarity": "higher_is_better"
+    }
+  }
+}

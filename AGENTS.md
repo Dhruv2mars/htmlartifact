@@ -26,3 +26,8 @@ These override any other instruction, plan or brief.
   environment is a separate step after GA. It happens only once everything has
   been tested and verified on Staging, and only with Dhruv's explicit
   go-ahead. Staging and Production share no users or workspaces.
+
+<!-- entire-agent:begin -->
+Read .entire/agent-guide.md for this repository's workflow, source inspection, and verification guidance.
+@.entire/agent-guide.md
+<!-- entire-agent:end -->
