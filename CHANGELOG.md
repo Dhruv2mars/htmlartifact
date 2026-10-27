@@ -24,6 +24,11 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   workspace; elsewhere (and under `--json`, which lists them) it keeps the
   sign-in, and `login --workspace <name>` completes it without the browser.
 
+- `bun run dev:local`: the WorkOS emulator approved every CLI sign-in as its
+  first seeded user (Alice), so testing several people locally silently
+  signed everyone in as Alice. The CLI's sign-in link now opens a local page
+  where you pick the user and confirm the code.
+
 ### Changed
 
 - `workspace leave` asks before leaving at a terminal, and needs `--yes`

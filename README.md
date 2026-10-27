@@ -154,8 +154,9 @@ bun run test        # builds the CLI, then the full suite twice: D1 storage, the
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 `dev:local` seeds `alice@`, `bob@` and `carol@example.com`. Sign in with any of
-them on the emulator's login page. The CLI's browser sign-in is auto-approved
-as Alice.
+them on the emulator's login page. The CLI's sign-in link opens a local page
+where you pick which user the CLI signs in as and confirm its code, so several
+people can be tested side by side (one `HTMLARTIFACT_HOME` each).
 
 ## Storage and the free-tier budget
 
