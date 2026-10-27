@@ -52,7 +52,9 @@ free hosted `linux-small` queue) and reports it on the trail as a gate:
 | cli | the built CLI (`--version`, `--help`, `check` on a two-page site) on your Node and on Node 20.10, the `engines` minimum (downloaded once from nodejs.org and checked against its SHASUMS256.txt) |
 
 Buildkite covers Linux; run it locally for macOS. Windows is no longer
-tested. A trail merges only when, on its latest commit, rebased on `main`:
+tested. Buildkite's Free plan (no card) includes 2,000 Linux vCPU-minutes a
+month and a run uses about 25 (11 minutes on 2 vCPUs), so about 80 pushes a
+month across all branches; push finished work, not every commit. A trail merges only when, on its latest commit, rebased on `main`:
 
 - Buildkite's `bun run check` passed, so `entire trail merge --dry-run`
   passes, and every finding from the trail's review agents is fixed or
