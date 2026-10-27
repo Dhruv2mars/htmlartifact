@@ -285,11 +285,11 @@ export function Docs({ session }: { session: Session | null }) {
         {COMMAND_GROUPS.map((group) => (
           <div key={group.id} id={group.id} className="mt-10 scroll-mt-[8.5rem] lg:scroll-mt-24">
             <h3 className={H3}>{group.title}</h3>
-            {group.note && <p className="mt-1 text-[14px] text-fog">{group.note}</p>}
-            <dl className="mt-4 divide-y divide-rule border-y border-rule">
+            {group.note && <p className="mt-1 text-[14px] text-muted">{group.note}</p>}
+            <dl className="mt-4 divide-y divide-line border-y border-line">
               {group.commands.map((c) => (
                 <div key={c.names[0]} className="grid gap-1.5 py-3.5 sm:grid-cols-[13.5rem_minmax(0,1fr)] sm:gap-6">
-                  <dt className="min-w-0 text-[13px] leading-6 text-ink">
+                  <dt className="min-w-0 text-[13px] leading-6 text-foreground">
                     {c.names.map((name) => (
                       <code key={name} className="block">
                         {name.split(" ").map((token, i) => (
@@ -301,7 +301,7 @@ export function Docs({ session }: { session: Session | null }) {
                       </code>
                     ))}
                   </dt>
-                  <dd className="min-w-0 text-[15px] leading-relaxed text-ink-2">{c.body}</dd>
+                  <dd className="min-w-0 text-[15px] leading-relaxed text-muted">{c.body}</dd>
                 </div>
               ))}
             </dl>
@@ -313,13 +313,13 @@ export function Docs({ session }: { session: Session | null }) {
             Every command takes <code>--json</code>. Standard output is then one JSON object, errors included, and anything else goes
             to standard error. Each command exits with one of these codes:
           </p>
-          <dl className="mt-4 divide-y divide-rule border-y border-rule">
+          <dl className="mt-4 divide-y divide-line border-y border-line">
             {EXIT_CODES.map(([code, meaning]) => (
               <div key={code} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-4 py-2">
-                <dt className="text-[13px] leading-6 text-ink">
+                <dt className="text-[13px] leading-6 text-foreground">
                   <code>{code}</code>
                 </dt>
-                <dd className="min-w-0 text-[15px] leading-relaxed text-ink-2">{meaning}</dd>
+                <dd className="min-w-0 text-[15px] leading-relaxed text-muted">{meaning}</dd>
               </div>
             ))}
           </dl>
@@ -387,7 +387,7 @@ export function Docs({ session }: { session: Session | null }) {
           name="Commands to check and publish a folder"
           commands={["npx htmlartifact check ./report", "npx htmlartifact upload ./report --slug q4-report"]}
         />
-        <ul className="list-disc space-y-2 pl-5 marker:text-fog">
+        <ul className="list-disc space-y-2 pl-5 marker:text-muted">
           <li>
             Pages must be self-contained. Inline scripts and styles run; external scripts, forms, iframes and embeds are refused, and
             linked stylesheets need https URLs.
@@ -435,7 +435,7 @@ function Step({ id, title, who, children }: { id: string; title: string; who: st
     <li id={id} className="scroll-mt-[8.5rem] lg:scroll-mt-24">
       <h3 className={cx(H3, "flex flex-wrap items-center gap-x-2.5 gap-y-1")}>
         {title}
-        <span className="rounded-chip border border-rule-2 px-1.5 py-px font-sans text-[12px] font-medium tracking-normal text-fog font-stretch-normal">
+        <span className="rounded-chip border border-border px-1.5 py-px font-sans text-[12px] font-medium tracking-normal text-muted font-stretch-normal">
           {who}
         </span>
       </h3>
@@ -457,16 +457,16 @@ function Code(
   const text = props.commands ? props.commands.join("\n") : props.code;
   const pre = useRef<HTMLPreElement>(null);
   return (
-    <figure aria-label={props.name} className="mt-5 overflow-hidden rounded-card border border-rule bg-paper-2">
-      <div className="flex h-10 items-center justify-between gap-3 border-b border-rule pl-4 pr-1">
-        <span className="min-w-0 truncate font-mono text-[12px] text-fog font-condensed">{props.label}</span>
+    <figure aria-label={props.name} className="mt-5 overflow-hidden rounded-card border border-line bg-card">
+      <div className="flex h-10 items-center justify-between gap-3 border-b border-line pl-4 pr-1">
+        <span className="min-w-0 truncate font-mono text-[12px] text-muted">{props.label}</span>
         <CopyText text={text} what={props.commands ? (props.commands.length > 1 ? "Commands" : "Command") : "File"} target={pre} />
       </div>
       {props.commands ? (
-        <pre ref={pre} className="whitespace-pre-wrap break-words px-4 py-3 text-[12.5px] leading-[1.75] text-ink sm:text-[13px]">
+        <pre ref={pre} className="whitespace-pre-wrap break-words px-4 py-3 text-[12.5px] leading-[1.75] text-foreground sm:text-[13px]">
           {props.commands.map((c) => (
             <span key={c} className="block pl-[2ch] -indent-[2ch]">
-              <span aria-hidden className="select-none text-fog">
+              <span aria-hidden className="select-none text-muted">
                 ${" "}
               </span>
               <Words text={c} />
@@ -474,7 +474,7 @@ function Code(
           ))}
         </pre>
       ) : (
-        <pre ref={pre} className="whitespace-pre-wrap break-words px-4 py-3.5 text-[12.5px] leading-[1.75] text-ink-2 sm:text-[13px]">
+        <pre ref={pre} className="whitespace-pre-wrap break-words px-4 py-3.5 text-[12.5px] leading-[1.75] text-muted sm:text-[13px]">
           {props.code.split("\n").map((line, i) => {
             const body = line.trimStart();
             const indent = line.length - body.length;
@@ -492,7 +492,7 @@ function Code(
         </pre>
       )}
       {props.commands && props.note && (
-        <p className="mt-0 border-t border-rule bg-paper-3 px-4 py-2.5 text-[13.5px] leading-relaxed text-fog">{props.note}</p>
+        <p className="mt-0 border-t border-line bg-surface px-4 py-2.5 text-[13.5px] leading-relaxed text-muted">{props.note}</p>
       )}
     </figure>
   );

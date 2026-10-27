@@ -76,25 +76,25 @@ export function CopyButton({
         onClick={onCopy}
         aria-label={accessibleLabel}
         className={cx(
-          "press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[7px] font-sans font-medium whitespace-nowrap",
+          "press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[6px] font-sans font-medium whitespace-nowrap",
           size === "lg" ? "h-10 text-[13.5px]" : "h-8 text-[12.5px]",
           // Wide enough for the longest state, so nothing around it moves.
           compact ? (size === "lg" ? "w-10" : "w-8") : size === "lg" ? "min-w-[7.25rem] px-3" : "min-w-[6.5rem] px-2.5",
           tone === "ink"
-            ? "bg-white/10 text-term-ink hover:bg-white/16"
+            ? "text-term-fog hover:bg-white/10 hover:text-term-ink"
             : tone === "ghost"
-              ? "text-ink-2 hover:bg-wash hover:text-ink"
-              : "bg-paper-3 text-ink-2 hover:bg-wash hover:text-ink"
+              ? "text-muted hover:bg-surface hover:text-foreground"
+              : "text-muted hover:bg-surface hover:text-foreground"
         )}
       >
-        <Icon className={cx(compact ? "size-4" : "size-3.5", state === "copied" && "text-pass", state === "failed" && "text-deny")} />
+        <Icon className={cx(compact ? "size-[15px]" : "size-3.5", state === "copied" && "text-open", state === "failed" && "text-deny")} />
         <span className={cx(compact && "sr-only")}>{text}</span>
       </button>
       {compact && (
         <span
           aria-hidden
           className={cx(
-            "pointer-events-none absolute whitespace-nowrap rounded-[6px] bg-ink px-2 py-1 font-sans text-[12px] font-medium text-paper shadow-pop transition-[opacity,translate] duration-150 ease-out",
+            "pointer-events-none absolute z-10 whitespace-nowrap rounded-[6px] bg-foreground px-2 py-1 font-sans text-[12px] font-medium text-background transition-[opacity,translate] duration-150 ease-out",
             feedback === "left" ? "right-full top-1/2 mr-2 -translate-y-1/2" : "bottom-full right-0 mb-2",
             state === "idle"
               ? feedback === "left"

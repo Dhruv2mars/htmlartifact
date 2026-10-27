@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "../lib/cx";
 import type { Session } from "../page";
 import { ChevronDown } from "./icons";
+import { Rule } from "./Sheet";
 import { SiteFooter, SiteHeader } from "./SiteHeader";
 
 // Sections, and optionally their sub-sections (listed under them in the index).
 export type Toc = ReadonlyArray<{ id: string; title: string; children?: ReadonlyArray<{ id: string; title: string }> }>;
 
-export const H3 = "font-wide text-[17px] font-[680] leading-snug tracking-[-0.01em] text-ink";
+export const H3 = " text-[17px] font-medium leading-snug tracking-[-0.01em] text-foreground";
 
 // The reading system for /docs and /privacy: one ~68ch column, an "On this
 // page" index that is a sticky sidebar on desktop and a sticky disclosure on
@@ -35,34 +36,38 @@ export function ReadingPage({
           sits flush under the header without guessing its height. (The
           header's own sticky is switched off inside it: nested sticky
           layers with backdrop blur break full-page screenshots.) */}
-      <div className="sticky top-0 z-20 [&>header]:static">
-        <SiteHeader session={session} current={current} />
+      <div className="sticky top-0 z-30 bg-background/80 backdrop-blur-md backdrop-saturate-150 [&>header]:static [&>header]:bg-transparent [&>header]:backdrop-blur-none">
+        <SiteHeader session={session} current={current} width="app" />
         <MobileToc sections={sections} active={active} parent={parent} />
       </div>
       <main id="main" tabIndex={-1} className="outline-none">
-        <div className="mx-auto max-w-[1240px] px-5 pb-24 pt-10 sm:px-8 lg:grid lg:grid-cols-[12.5rem_minmax(0,1fr)] lg:gap-16 lg:pt-16 xl:gap-24">
-          <aside className="hidden lg:block">
-            <nav aria-label="On this page" className="sticky top-24">
-              <p className="text-[13px] font-medium text-ink">On this page</p>
-              <ol className="mt-3 border-l border-rule">
+        <Rule width="app" inner="px-4 pb-10 pt-12 sm:px-6 sm:pt-16 lg:pl-[calc(14rem+2.5rem)]">
+          <h1 className="text-page font-medium tracking-[-0.035em] text-foreground">{title}</h1>
+          <p className="mt-3 max-w-[60ch] text-[16px] leading-relaxed text-muted sm:text-[17px]">{intro}</p>
+        </Rule>
+        <div className="mx-auto max-w-[1040px] border-x border-line lg:grid lg:grid-cols-[14rem_minmax(0,1fr)]">
+          <aside className="hidden border-r border-line lg:block">
+            <nav aria-label="On this page" className="sticky top-20 px-5 py-8">
+              <p className="font-mono text-[12.5px] text-muted">On this page</p>
+              <ol className="mt-3 border-l border-line">
                 {sections.map((s, i) => (
                   <li key={s.id}>
                     <a
                       href={`#${s.id}`}
                       aria-current={parent === s.id ? "true" : undefined}
-                      className="-ml-px flex gap-3 border-l-2 border-transparent py-1.5 pl-4 text-[14px] leading-snug text-ink-2 transition-colors duration-150 hover:text-ink aria-[current=true]:border-intaglio aria-[current=true]:font-medium aria-[current=true]:text-ink"
+                      className="-ml-px flex gap-3 border-l border-transparent py-1.5 pl-3.5 text-[13.5px] leading-snug text-muted transition-colors duration-150 hover:text-foreground aria-[current=true]:border-foreground aria-[current=true]:text-foreground"
                     >
                       <Serial n={i} />
                       {s.title}
                     </a>
                     {s.children && (
-                      <ol className="mb-1 ml-[3.25rem]">
+                      <ol className="mb-1 ml-[2.9rem]">
                         {s.children.map((c) => (
                           <li key={c.id}>
                             <a
                               href={`#${c.id}`}
                               aria-current={active === c.id ? "true" : undefined}
-                              className="block py-1 text-[13px] leading-snug text-fog transition-colors duration-150 hover:text-ink aria-[current=true]:text-ink"
+                              className="block py-1 text-[13px] leading-snug text-muted transition-colors duration-150 hover:text-foreground aria-[current=true]:text-foreground"
                             >
                               {c.title}
                             </a>
@@ -75,14 +80,12 @@ export function ReadingPage({
               </ol>
             </nav>
           </aside>
-          <article className="docs-prose min-w-0 max-w-[68ch]">
-            <h1 className="font-wide text-page font-[740] tracking-[-0.03em] text-ink">{title}</h1>
-            <p className="mt-4 text-[17px] leading-relaxed text-ink-2 sm:text-[18px]">{intro}</p>
-            {children}
-          </article>
+          <article className="docs-prose min-w-0 max-w-[72ch] px-4 pb-20 pt-2 sm:px-6 lg:px-10">{children}</article>
         </div>
       </main>
-      <SiteFooter />
+      <div className="border-t border-line">
+        <SiteFooter width="app" />
+      </div>
     </div>
   );
 }
@@ -104,7 +107,7 @@ function MobileToc({ sections, active, parent }: { sections: Toc; active: string
   return (
     <details
       ref={ref}
-      className="group relative border-b border-rule bg-paper/90 backdrop-blur-md backdrop-saturate-150 lg:hidden"
+      className="group relative border-b border-line lg:hidden"
       onKeyDown={(e) => {
         if (e.key === "Escape" && ref.current?.open) {
           ref.current.open = false;
@@ -112,32 +115,32 @@ function MobileToc({ sections, active, parent }: { sections: Toc; active: string
         }
       }}
     >
-      <summary className="mx-auto flex h-12 max-w-[1240px] cursor-pointer list-none items-center gap-2 px-5 text-[14px] focus-visible:outline-offset-[-3px] sm:px-8 [&::-webkit-details-marker]:hidden">
-        <span className="shrink-0 font-medium text-ink">On this page</span>
+      <summary className="mx-auto flex h-11 max-w-[1040px] cursor-pointer list-none items-center gap-2 border-x border-line px-4 text-[13.5px] focus-visible:outline-offset-[-3px] sm:px-6 [&::-webkit-details-marker]:hidden">
+        <span className="shrink-0 font-mono text-[12.5px] text-muted">On this page</span>
         {current && (
           <>
-            <span aria-hidden className="text-fog">
+            <span aria-hidden className="text-faint">
               /
             </span>
-            <span className="min-w-0 truncate text-ink-2">{child ? `${current.title}: ${child.title}` : current.title}</span>
+            <span className="min-w-0 truncate text-foreground">{child ? `${current.title}: ${child.title}` : current.title}</span>
           </>
         )}
-        <ChevronDown className="ml-auto size-4 shrink-0 text-fog transition-transform duration-200 group-open:rotate-180" />
+        <ChevronDown className="ml-auto size-4 shrink-0 text-muted transition-transform duration-200 group-open:rotate-180" />
       </summary>
       <nav
         aria-label="On this page"
-        className="absolute inset-x-0 top-full max-h-[calc(100dvh-8rem)] overflow-y-auto border-b border-rule bg-paper-2 shadow-pop"
+        className="absolute inset-x-0 top-full max-h-[calc(100dvh-8rem)] overflow-y-auto border-b border-line bg-background"
         onClick={(e) => {
           if ((e.target as HTMLElement).closest("a") && ref.current) ref.current.open = false;
         }}
       >
-        <ol className="mx-auto max-w-[1240px] px-2 py-2 sm:px-5">
+        <ol className="mx-auto max-w-[1040px] border-x border-line px-2 py-2 sm:px-4">
           {sections.map((s, i) => (
             <li key={s.id}>
               <a
                 href={`#${s.id}`}
                 aria-current={parent === s.id ? "true" : undefined}
-                className="flex h-11 items-center gap-3 rounded-control px-3 text-[15px] text-ink-2 hover:bg-wash hover:text-ink aria-[current=true]:bg-wash aria-[current=true]:font-medium aria-[current=true]:text-ink"
+                className="flex h-11 items-center gap-3 rounded-control px-3 text-[15px] text-muted hover:bg-surface hover:text-foreground aria-[current=true]:bg-surface aria-[current=true]:font-medium aria-[current=true]:text-foreground"
               >
                 <Serial n={i} />
                 {s.title}
@@ -149,7 +152,7 @@ function MobileToc({ sections, active, parent }: { sections: Toc; active: string
                       <a
                         href={`#${c.id}`}
                         aria-current={active === c.id ? "true" : undefined}
-                        className="flex min-h-10 items-center rounded-control px-3 text-[14px] leading-snug text-ink-2 hover:bg-wash hover:text-ink aria-[current=true]:font-medium aria-[current=true]:text-ink"
+                        className="flex min-h-10 items-center rounded-control px-3 text-[14px] leading-snug text-muted hover:bg-surface hover:text-foreground aria-[current=true]:font-medium aria-[current=true]:text-foreground"
                       >
                         {c.title}
                       </a>
@@ -200,7 +203,7 @@ function useActiveSection(sections: Toc): string | null {
 
 function Serial({ n }: { n: number }) {
   return (
-    <span aria-hidden className="font-mono text-[12px] font-normal tabular-nums text-fog font-condensed">
+    <span aria-hidden className="font-mono text-[12px] font-normal tabular-nums text-faint">
       {String(n + 1).padStart(2, "0")}
     </span>
   );
@@ -211,12 +214,12 @@ function Serial({ n }: { n: number }) {
 export function Section({ toc, id, children }: { toc: Toc; id: string; children: ReactNode }) {
   const index = toc.findIndex((s) => s.id === id);
   return (
-    <section id={id} aria-labelledby={`${id}-h`} className="mt-12 scroll-mt-[8.5rem] border-t border-rule pt-8 lg:mt-16 lg:scroll-mt-24">
-      <h2 id={`${id}-h`} className="flex items-baseline gap-3 font-wide text-[24px] font-[700] leading-tight tracking-[-0.02em] text-ink">
+    <section id={id} aria-labelledby={`${id}-h`} className="scroll-mt-[8.5rem] border-t border-line pt-8 first:border-t-0 [&:not(:first-child)]:mt-12 lg:scroll-mt-24">
+      <h2 id={`${id}-h`} className="flex items-baseline gap-3 text-[22px] font-medium leading-tight tracking-[-0.025em] text-foreground">
         <Serial n={index} />
         <a href={`#${id}`} className="group/h min-w-0 rounded-[4px]">
           {toc[index]!.title}
-          <span aria-hidden className="ml-2 text-fog opacity-0 transition-opacity duration-150 group-hover/h:opacity-100 group-focus-visible/h:opacity-100">
+          <span aria-hidden className="ml-2 text-faint opacity-0 transition-opacity duration-150 group-hover/h:opacity-100 group-focus-visible/h:opacity-100">
             #
           </span>
         </a>
@@ -228,13 +231,13 @@ export function Section({ toc, id, children }: { toc: Toc; id: string; children:
 
 // Plain facts with a lead sentence, between hairlines.
 export function Facts({ children }: { children: ReactNode }) {
-  return <ul className="mt-5 divide-y divide-rule border-y border-rule">{children}</ul>;
+  return <ul className="mt-5 divide-y divide-line border-y border-line">{children}</ul>;
 }
 
 export function Fact({ title, children }: { title: string; children: ReactNode }) {
   return (
     <li className="py-3.5">
-      <strong className="font-medium text-ink">{title}</strong> {children}
+      <strong className="font-medium text-foreground">{title}</strong> {children}
     </li>
   );
 }

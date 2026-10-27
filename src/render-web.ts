@@ -2,7 +2,7 @@
 // because it must carry no script at all. Every other page is React
 // (src/frontend.ts).
 
-import { makeSeal, sealSvg } from "../web/app/lib/seal.ts";
+import { sealSvg } from "../web/app/lib/seal.ts";
 
 export interface ArtifactFrame {
   title: string;
@@ -26,7 +26,6 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
   const title = escapeHtml(frame.title);
   const workspace = frame.workspace ? escapeHtml(frame.workspace) : null;
   const version = escapeHtml(frame.version);
-  const ink = makeSeal(frame.id, 20).ink;
   const state = frame.latest
     ? `<span class="chip now">Latest</span>`
     : `<span class="chip old">Older version</span><a class="latest" href="${escapeHtml(frame.latestUrl)}">` +
@@ -45,7 +44,7 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
 <body>
 <header class="bar">
 <div class="where">
-<span class="seal ink-${ink}">${sealSvg(frame.id, 20, "currentColor")}</span>
+<span class="seal">${sealSvg(frame.id, 20, "currentColor")}</span>
 <div class="path">
 <a class="ws" href="${escapeHtml(frame.feedUrl)}"><span class="sr">All artifacts in </span>${workspace ?? "your workspace"}</a>
 <span class="sep" aria-hidden="true">/</span>
@@ -82,20 +81,18 @@ function icon(paths: string): string {
 // no font-src, so type is a system stack tuned to the app's metrics.
 const FRAME_CSS = `
 :root {
-  --paper: #f3f4f7; --paper-2: #ffffff; --ink: #0e1530; --ink-2: #283150; --fog: #576079;
-  --rule: #dde1ea; --rule-2: #c7cddb; --intaglio: #2337c6; --wash: #e9ecfb; --hold: #8a5a00; --hold-wash: #f6efe2;
-  --foil: linear-gradient(90deg, #6f7dff, #3fbfae 22%, #c78be0 46%, #e9b76a 70%, #6f7dff);
-  --seal-0: #2337c6; --seal-1: #0f7a6b; --seal-2: #7a2e8c; --seal-3: #9e2b3a; --seal-4: #8f6410;
-  --lift: 0 1px 2px rgb(14 21 48 / 0.06), 0 8px 20px -8px rgb(14 21 48 / 0.28);
+  --paper: #fafafa; --paper-2: #ffffff; --ink: #09090b; --ink-2: #52525b; --fog: #52525b;
+  --rule: #e9e9ec; --rule-2: #e4e4e7; --intaglio: #09090b; --wash: #f4f4f5; --hold: #b45309; --hold-wash: #fffbeb;
+  --seal: #52525b;
+  --lift: 0 0 0 1px #e4e4e7, 0 8px 20px -10px rgb(0 0 0 / 0.18);
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #090e1c; --paper-2: #0f1529; --ink: #e8ebf5; --ink-2: #c3c9dc; --fog: #929bb5;
-    --rule: #1d2540; --rule-2: #2b3453; --intaglio: #93a2ff; --wash: #161f44; --hold: #f0b84a; --hold-wash: #2a2312;
-    --foil: linear-gradient(90deg, #8c9bff, #4fd1b8 22%, #d79cf0 46%, #f0c27a 70%, #8c9bff);
-    --seal-0: #93a2ff; --seal-1: #4fc9b4; --seal-2: #d08ce0; --seal-3: #ff8f9c; --seal-4: #f0c060;
-    --lift: 0 0 0 1px rgb(255 255 255 / 0.04), 0 6px 16px -8px rgb(0 0 0 / 0.55);
+    --paper: #09090b; --paper-2: #18181b; --ink: #fafafa; --ink-2: #a1a1aa; --fog: #a1a1aa;
+    --rule: #1f1f23; --rule-2: #27272a; --intaglio: #fafafa; --wash: #18181b; --hold: #fbbf24; --hold-wash: rgb(251 191 36 / 0.08);
+    --seal: #a1a1aa;
+    --lift: 0 0 0 1px #27272a, 0 8px 20px -10px rgb(0 0 0 / 0.6);
   }
 }
 * { box-sizing: border-box; }
@@ -104,7 +101,7 @@ body {
   margin: 0; height: 100vh; height: 100dvh; overflow: hidden;
   display: flex; flex-direction: column;
   background: var(--paper); color: var(--ink);
-  font: 14px/1.4 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  font: 14px/1.4 "Geist", ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent;
 }
@@ -114,16 +111,15 @@ a { color: inherit; text-decoration: none; touch-action: manipulation; }
 .i { flex: none; display: block; }
 
 .bar {
-  position: relative; flex: none; height: 46px; padding: 2px 10px 0 16px;
+  position: relative; flex: none; height: 44px; padding: 0 10px 0 16px;
   display: flex; align-items: center; gap: 16px;
   background: var(--paper); border-bottom: 1px solid var(--rule);
 }
-.bar::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; background: var(--foil); }
 .where { flex: 1; min-width: 0; display: flex; align-items: center; }
 .path { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; }
 .seal { flex: none; width: 20px; height: 20px; margin-right: 8px; }
 .seal svg { display: block; }
-.ink-0 { color: var(--seal-0); } .ink-1 { color: var(--seal-1); } .ink-2 { color: var(--seal-2); } .ink-3 { color: var(--seal-3); } .ink-4 { color: var(--seal-4); }
+.seal { color: var(--seal); }
 .ws {
   flex: 0 1 auto; min-width: 3.5em; max-width: 13rem; padding: 3px 6px; border-radius: 6px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -140,7 +136,7 @@ a { color: inherit; text-decoration: none; touch-action: manipulation; }
   display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: 6px;
   font-size: 12px; font-weight: 600; letter-spacing: 0; white-space: nowrap; font-variant-numeric: tabular-nums;
 }
-.chip.num { padding: 0 5px; border: 1px solid var(--rule-2); color: var(--ink-2); }
+.chip.num { padding: 0 5px; border: 1px solid var(--rule-2); color: var(--ink-2); font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; }
 .chip.num.old { border-color: color-mix(in srgb, var(--hold) 45%, transparent); color: var(--hold); }
 .chip.now { background: var(--wash); color: var(--intaglio); }
 .chip.old:not(.num) { background: var(--hold-wash); color: var(--hold); }
@@ -170,7 +166,6 @@ a { color: inherit; text-decoration: none; touch-action: manipulation; }
   background: var(--paper); color: var(--ink-2); border: 1px solid var(--rule-2); border-top: 0; border-radius: 0 0 8px 8px;
   box-shadow: var(--lift); font-size: 12.5px; font-weight: 500; cursor: pointer; user-select: none; -webkit-user-select: none;
 }
-.show::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; background: var(--foil); }
 .show .i { width: 14px; height: 14px; }
 @media (hover: hover) {
   .ws:hover, .tool:hover, .show:hover { background: var(--wash); color: var(--ink); }

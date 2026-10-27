@@ -74,14 +74,14 @@ function htmlPage({ title, body }: { title: string; body: string }): string {
 <title>${escapeHtml(title)}</title>
 <style>
 :root {
-  --paper: #f3f4f7; --ink: #0e1530; --ink-2: #283150; --fog: #576079; --rule-2: #c7cddb; --control: #7e869c; --wash: #e9ecfb;
-  --intaglio: #2337c6; --intaglio-ink: #ffffff; --button: #0e1530; --button-ink: #f3f4f7; --button-hover: #283150;
+  --paper: #fafafa; --ink: #09090b; --ink-2: #52525b; --fog: #52525b; --rule-2: #e4e4e7; --control: #71717a; --wash: #f4f4f5;
+  --intaglio: #09090b; --intaglio-ink: #fafafa; --button: #09090b; --button-ink: #fafafa; --button-hover: #27272a;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #090e1c; --ink: #e8ebf5; --ink-2: #c3c9dc; --fog: #929bb5; --rule-2: #2b3453; --control: #5f6a8d; --wash: #161f44;
-    --intaglio: #93a2ff; --intaglio-ink: #0a0f1e; --button: #e8ebf5; --button-ink: #090e1c; --button-hover: #c3c9dc;
+    --paper: #09090b; --ink: #fafafa; --ink-2: #a1a1aa; --fog: #a1a1aa; --rule-2: #27272a; --control: #71717a; --wash: #18181b;
+    --intaglio: #fafafa; --intaglio-ink: #09090b; --button: #fafafa; --button-ink: #09090b; --button-hover: #d4d4d8;
   }
 }
 * { box-sizing: border-box; }
@@ -89,37 +89,37 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px 20px 72px;
   background: var(--paper); color: var(--ink);
-  font: 16px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  font: 15px/1.6 "Geist", ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; overflow-wrap: break-word;
 }
 main { width: 100%; max-width: 460px; text-align: center; }
 .brand {
   display: inline-flex; align-items: center; gap: 9px; margin: 0;
-  font-size: 16px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink);
+  font-size: 15px; font-weight: 500; letter-spacing: -0.02em; color: var(--ink);
 }
 .mark { display: block; flex: none; }
 .mark .disc { fill: var(--intaglio); }
 .mark .knock { stroke: var(--intaglio-ink); }
 .mark .dot { fill: var(--intaglio-ink); }
 .code {
-  margin: 40px 0 0; font-size: 104px; font-weight: 800; line-height: 1; letter-spacing: -0.055em;
+  margin: 40px 0 0; font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 88px; font-weight: 500; line-height: 1; letter-spacing: -0.06em;
   color: var(--control); font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none;
 }
-h1 { margin: 22px 0 0; font-size: 30px; font-weight: 700; line-height: 1.1; letter-spacing: -0.026em; text-wrap: balance; }
+h1 { margin: 22px 0 0; font-size: 30px; font-weight: 500; line-height: 1.12; letter-spacing: -0.035em; text-wrap: balance; }
 h1.spaced { margin-top: 36px; }
 .lead { margin: 12px auto 0; max-width: 400px; font-size: 15.5px; color: var(--ink-2); text-wrap: balance; }
 .hint { margin: 8px auto 0; max-width: 360px; font-size: 14px; line-height: 1.55; color: var(--fog); text-wrap: balance; }
 .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin: 32px 0 0; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .button {
-  display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 20px;
-  border-radius: 10px; background: var(--button); color: var(--button-ink);
+  display: inline-flex; align-items: center; justify-content: center; height: 40px; padding: 0 16px;
+  border-radius: 8px; background: var(--button); color: var(--button-ink);
   font-size: 15px; font-weight: 500; text-decoration: none; white-space: nowrap; touch-action: manipulation;
 }
 .button:focus-visible { outline: 2px solid var(--intaglio); outline-offset: 3px; }
 .button.line { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1px var(--rule-2); }
 @media (hover: hover) { .button:hover { background: var(--button-hover); } .button.line:hover { background: var(--wash); } }
-@media (min-width: 640px) { .code { font-size: 128px; } }
+@media (min-width: 640px) { .code { font-size: 112px; } }
 </style>
 </head>
 <body>${body}</body>

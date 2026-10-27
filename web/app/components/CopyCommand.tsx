@@ -2,10 +2,9 @@ import { useRef } from "react";
 import { cx } from "../lib/cx";
 import { CopyButton, useCopy } from "./Copy";
 
-// A shell command with a Copy button, set like a form field. The command
-// wraps at spaces rather than hiding the part that matters. `oneLine` (a
-// short command with room around it, like the hero's) keeps it on one line
-// from 640px up, and the field never shrinks below it.
+// A shell command in a field, with a Copy control. The command breaks only
+// between words (never inside a flag or an invite code), so nothing that
+// matters is hidden. `oneLine` keeps a short command on one line from 640px.
 export function CopyCommand({
   command,
   className,
@@ -25,19 +24,19 @@ export function CopyCommand({
   return (
     <div
       className={cx(
-        "flex max-w-full items-center rounded-control border font-mono",
+        "flex max-w-full items-center gap-3 rounded-control border font-mono",
+        ink ? "border-white/12 bg-white/[0.04] text-term-ink" : "border-border bg-card text-foreground",
+        size === "lg" ? "min-h-12 py-1 pl-4 pr-1.5 text-[14px]" : "min-h-10 py-0.5 pl-3.5 pr-1 text-[13px]",
         oneLine && "sm:shrink-0",
-        ink ? "border-white/15 bg-white/[0.06] text-term-ink" : "border-rule-2 bg-paper-2 text-ink",
-        size === "lg" ? "min-h-14 py-1.5 pl-5 pr-1.5 text-[14.5px] sm:text-[15.5px]" : "min-h-11 py-1 pl-4 pr-1 text-[13px]",
         className
       )}
     >
-      <span className={cx("flex min-w-0 flex-1 items-baseline gap-2.5 leading-snug", oneLine && "sm:whitespace-nowrap", size === "lg" ? "py-2" : "py-1.5")}>
-        <span aria-hidden className={cx("select-none", ink ? "text-term-fog" : "text-fog")}>
+      <span className={cx("flex min-w-0 flex-1 items-baseline gap-2.5 leading-snug", oneLine && "sm:whitespace-nowrap", "py-1.5")}>
+        <span aria-hidden className={cx("select-none", ink ? "text-term-fog" : "text-faint")}>
           $
         </span>
         <span ref={text} className="min-w-0">
-          {command}
+          <Words text={command} />
         </span>
       </span>
       <CopyButton
@@ -48,8 +47,14 @@ export function CopyCommand({
         compact
         size={size}
         tone={ink ? "ink" : "paper"}
-        className="ml-3"
       />
     </div>
+  );
+}
+
+// Words that wrap only at their spaces; one longer than the line still breaks.
+export function Words({ text }: { text: string }) {
+  return text.split(/(\s+)/).map((part, i) =>
+    i % 2 ? part : part ? <span key={i} className="inline-block max-w-full [overflow-wrap:anywhere]">{part}</span> : null
   );
 }

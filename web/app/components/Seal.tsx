@@ -17,7 +17,7 @@ export function Seal(props: SealProps & { deferred?: boolean }) {
   return (
     <span
       aria-hidden
-      className={cx("block shrink-0 rounded-full border border-rule", rest.className)}
+      className={cx("block shrink-0 rounded-full border border-line", rest.className)}
       style={{ width: size, height: size, ...rest.style }}
     />
   );
@@ -43,7 +43,7 @@ function SealArt({ id, size = 40, label, className, style, wrapLayer }: SealProp
   return (
     <span
       className={cx("seal relative block shrink-0", className)}
-      style={{ width: size, height: size, color: `var(--seal-${seal.ink})`, ...style }}
+      style={{ width: size, height: size, color: "var(--seal-ink)", ...style }}
       {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true })}
     >
       {seal.layers.map((layer, i) => {

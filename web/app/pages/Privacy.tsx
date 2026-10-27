@@ -22,9 +22,9 @@ export function Privacy({ session }: { session: Session | null }) {
       intro="What the hosted service at htmlartifact.pages.dev stores, why, for how long, and who processes it. If you run your own copy, you are responsible for that deployment's data."
       sections={SECTIONS}
     >
-      <div className="mt-8 rounded-card border border-rule bg-paper-2 px-5 py-4">
-        <p className="mt-0 text-[13px] font-medium text-ink">In short</p>
-        <ul className="mt-2 list-disc space-y-1.5 pl-5 marker:text-fog">
+      <div className="mt-8 rounded-card border border-line bg-card px-5 py-4">
+        <p className="mt-0 text-[13px] font-medium text-foreground">In short</p>
+        <ul className="mt-2 list-disc space-y-1.5 pl-5 marker:text-muted">
           <li>Only members of your workspace can open what you publish.</li>
           <li>No analytics, ads or third-party trackers. Cookies are used only for signing in.</li>
           <li>What you delete is gone for good after 7 days. There are no other backups.</li>
@@ -70,7 +70,7 @@ export function Privacy({ session }: { session: Session | null }) {
       </Section>
 
       <Section toc={SECTIONS} id="retention">
-        <ul className="list-disc space-y-2 pl-5 marker:text-fog">
+        <ul className="list-disc space-y-2 pl-5 marker:text-muted">
           <li>Upload IP addresses and user agents are erased after 30 days.</li>
           <li>
             Deleting an artifact makes it unreadable at once and deletes every version of its HTML in the same request. A step that

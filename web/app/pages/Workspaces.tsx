@@ -3,6 +3,7 @@ import { AppShell, PageHead } from "../components/AppShell";
 import { Field } from "../components/Field";
 import { LockIcon } from "../components/icons";
 import { Seal } from "../components/Seal";
+import { Gutter, Rule } from "../components/Sheet";
 import { Submit } from "../components/Submit";
 import type { JoinFailure, Session, WorkspaceChoice } from "../page";
 
@@ -58,7 +59,7 @@ export function Workspaces({
           inputClassName="font-mono tracking-[0.02em]"
           hint={
             <>
-              The code, like <span className="whitespace-nowrap font-mono text-[12px] text-ink-2">HA-7KQ2-MX9P-4TRA</span>, or the whole
+              The code, like <span className="whitespace-nowrap font-mono text-[12px] text-foreground">HA-7KQ2-MX9P-4TRA</span>, or the whole
               invite link.
             </>
           }
@@ -82,82 +83,94 @@ export function Workspaces({
 
   return (
     <AppShell session={session} section="workspaces">
-      <div className="mx-auto w-full max-w-[1120px] px-4 pb-24 pt-9 sm:px-6 sm:pt-12">
-        <PageHead title="Workspaces">
-          {workspaces.length
-            ? "Switch workspaces, create a new one, or join one with an invite code."
-            : "You're not in a workspace yet. Join your team's with an invite code, or create one."}
-        </PageHead>
+      <PageHead title="Workspaces" count={workspaces.length || undefined}>
+        {workspaces.length
+          ? "Switch workspaces, create a new one, or join one with an invite code."
+          : "You're not in a workspace yet. Join your team's with an invite code, or create one."}
+      </PageHead>
 
-        {followedLink && (
-          <div className="mt-8 flex gap-3.5 rounded-card border border-rule bg-wash px-4 py-4 sm:px-5">
-            <LockIcon className="mt-[3px] size-[18px] shrink-0 text-intaglio" />
-            <div className="min-w-0 text-[14.5px] leading-relaxed">
-              <p className="font-medium text-ink">Your link opens inside its workspace</p>
-              <p className="mt-0.5 text-ink-2">
-                {canSwitch
-                  ? "If you're a member, switch to that workspace below. If not, ask whoever shared it for an invite code. Either way, you'll go straight back to the link."
-                  : "Ask whoever shared it for an invite code and enter it below. You'll go straight back to the link."}
-              </p>
-            </div>
+      {followedLink && (
+        <Rule width="app" inner="flex gap-3.5 bg-surface/70 px-4 py-4 sm:px-5">
+          <LockIcon className="mt-[3px] size-[17px] shrink-0 text-foreground" />
+          <div className="min-w-0 text-[14px] leading-relaxed">
+            <p className="font-medium text-foreground">Your link opens inside its workspace</p>
+            <p className="mt-0.5 text-muted">
+              {canSwitch
+                ? "If you're a member, switch to that workspace below. If not, ask whoever shared it for an invite code. Either way, you'll go straight back to the link."
+                : "Ask whoever shared it for an invite code and enter it below. You'll go straight back to the link."}
+            </p>
           </div>
-        )}
+        </Rule>
+      )}
 
-        {workspaces.length > 0 && (
-          <section aria-labelledby="yours" className="mt-10">
-            <h2 id="yours" className="font-wide text-[19px] font-[700] tracking-[-0.015em] text-ink">
+      {workspaces.length > 0 && (
+        <section aria-labelledby="yours">
+          <Rule width="app" inner="px-4 py-3 sm:px-5">
+            <h2 id="yours" className="font-mono text-[12.5px] text-muted">
               Your workspaces
             </h2>
-            <ul className="mt-3 divide-y divide-rule overflow-hidden rounded-card border border-rule bg-paper-2">
+          </Rule>
+          <Rule width="app" inner="">
+            <ul className="divide-y divide-line">
               {workspaces.map((w) => (
-                <li key={w.id} className="flex min-h-14 items-center gap-3.5 px-4 py-2.5 sm:px-5">
-                  <Seal id={w.id} size={28} deferred />
-                  <span className="min-w-0 flex-1 text-[15px] font-medium leading-snug text-ink [overflow-wrap:anywhere]">{w.name}</span>
-                  {w.current ? (
-                    <span className="shrink-0 rounded-chip bg-wash px-2 py-1 text-[12px] font-medium leading-none text-intaglio">Current</span>
-                  ) : (
-                    <form method="post" action="/workspaces/switch" className="shrink-0">
-                      <input type="hidden" name="id" value={w.id} />
-                      {next && <input type="hidden" name="next" value={next} />}
-                      <Submit tone="line" size="sm" pending="Switching…">
-                        Switch<span className="sr-only"> to {w.name}</span>
-                      </Submit>
-                    </form>
-                  )}
+                <li key={w.id} className="grid grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center">
+                  <span className="grid h-full place-items-center border-r border-line py-3">
+                    <Seal id={w.id} size={22} deferred />
+                  </span>
+                  <span className="min-w-0 px-4 py-3 text-[14.5px] font-medium leading-snug text-foreground [overflow-wrap:anywhere]">{w.name}</span>
+                  <span className="px-4">
+                    {w.current ? (
+                      <span className="rounded-[5px] border border-border px-1.5 font-mono text-[11.5px] leading-[18px] text-foreground">current</span>
+                    ) : (
+                      <form method="post" action="/workspaces/switch">
+                        <input type="hidden" name="id" value={w.id} />
+                        {next && <input type="hidden" name="next" value={next} />}
+                        <Submit tone="line" size="sm" pending="Switching…">
+                          Switch<span className="sr-only"> to {w.name}</span>
+                        </Submit>
+                      </form>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>
-          </section>
+          </Rule>
+        </section>
+      )}
+
+      <Gutter width="app" />
+      <Rule width="app" inner="grid md:grid-cols-2">
+        {joinFirst ? (
+          <>
+            {joinPanel}
+            {createPanel}
+          </>
+        ) : (
+          <>
+            {createPanel}
+            {joinPanel}
+          </>
         )}
+      </Rule>
 
-        <div className="mt-10 grid gap-4 *:min-w-0 sm:gap-5 md:grid-cols-2">
-          {joinFirst ? (
-            <>
-              {joinPanel}
-              {createPanel}
-            </>
-          ) : (
-            <>
-              {createPanel}
-              {joinPanel}
-            </>
-          )}
-        </div>
-
-        <section aria-labelledby="terminal" className="mt-10 border-t border-rule pt-6">
-          <h2 id="terminal" className="text-[13.5px] font-medium text-ink">
+      <section aria-labelledby="terminal">
+        <Rule width="app" inner="px-4 py-3 sm:px-5">
+          <h2 id="terminal" className="font-mono text-[12.5px] text-muted">
             From a terminal or an agent
           </h2>
-          <dl className="mt-3 space-y-2.5 sm:space-y-1.5">
+        </Rule>
+        <Rule width="app" inner="">
+          <dl className="divide-y divide-line">
             {COMMANDS.filter(([what]) => canSwitch || what !== "Switch").map(([what, command]) => (
-              <div key={what} className="grid gap-0.5 sm:grid-cols-[5rem_minmax(0,1fr)] sm:items-baseline sm:gap-4">
-                <dt className="text-[13.5px] text-fog">{what}</dt>
-                <dd className="font-mono text-[12.5px] leading-[1.9] text-ink-2 [overflow-wrap:anywhere]">{command}</dd>
+              <div key={what} className="grid gap-0.5 px-4 py-2.5 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-baseline sm:gap-4 sm:px-5">
+                <dt className="text-[13.5px] text-muted">{what}</dt>
+                <dd className="font-mono text-[12.5px] leading-[1.8] text-foreground [overflow-wrap:anywhere]">{command}</dd>
               </div>
             ))}
           </dl>
-        </section>
-      </div>
+        </Rule>
+      </section>
+      <div aria-hidden className="mx-auto w-full max-w-[1040px] flex-1 border-x border-line" />
     </AppShell>
   );
 }
@@ -183,11 +196,11 @@ function FormPanel({
   children: ReactNode;
 }) {
   return (
-    <section ref={ref} aria-labelledby={id} className="rounded-card border border-rule bg-paper-2 p-5 sm:p-6">
-      <h2 id={id} className="font-wide text-[17px] font-[680] tracking-[-0.015em] text-ink">
+    <section ref={ref} aria-labelledby={id} className="min-w-0 border-line px-4 py-7 max-md:[&:first-child]:border-b sm:px-5 md:[&:first-child]:border-r">
+      <h2 id={id} className="text-[16px] font-medium tracking-[-0.015em] text-foreground">
         {title}
       </h2>
-      <p className="mt-1 text-[14px] leading-relaxed text-fog">{description}</p>
+      <p className="mt-1 text-[14px] leading-relaxed text-muted">{description}</p>
       <div className="mt-5">{children}</div>
     </section>
   );

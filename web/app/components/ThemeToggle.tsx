@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { MoonIcon, SunIcon, SystemIcon } from "./icons";
 
 const ORDER = ["system", "light", "dark"] as const;
-const NAME = { system: "system", light: "light", dark: "dark" } as const;
 
 // Cycles system → light → dark. Renders a neutral icon until mounted, since
 // the server can't know the theme.
@@ -18,11 +17,11 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={() => setTheme(next)}
-      className="press grid size-9 place-items-center rounded-control text-fog hover:bg-wash hover:text-ink"
-      aria-label={`Theme: ${NAME[current]}. Switch to ${NAME[next]}.`}
-      title={`Theme: ${NAME[current]} (switch to ${NAME[next]})`}
+      className="press grid size-8 place-items-center rounded-control text-muted hover:bg-surface hover:text-foreground"
+      aria-label={`Theme: ${current}. Switch to ${next}.`}
+      title={`Theme: ${current} (switch to ${next})`}
     >
-      <Icon />
+      <Icon className="size-4" />
     </button>
   );
 }
