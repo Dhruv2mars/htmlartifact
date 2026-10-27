@@ -42,7 +42,7 @@ export function ArtifactList({
     <>
       {filterable && (
         <Rule width="app" inner="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-5">
-          <label className="flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-control border border-control bg-card px-3 text-muted transition-[border-color,box-shadow] duration-150 focus-within:border-foreground focus-within:shadow-[0_0_0_3px_var(--surface)] sm:max-w-[20rem]">
+          <label className="flex h-9 min-w-0 flex-1 basis-full items-center gap-2.5 rounded-control border border-control bg-card px-3 text-muted transition-[border-color,box-shadow] duration-150 focus-within:border-foreground focus-within:shadow-[0_0_0_3px_var(--line)] sm:max-w-[20rem] sm:basis-auto">
             <SearchIcon className="size-4 shrink-0" />
             <span className="sr-only">Filter artifacts by title, author or repository</span>
             <input

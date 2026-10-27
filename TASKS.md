@@ -19,7 +19,11 @@ PR merged with before/after screenshots.
 - [x] Critic round 3: 8.5 (7 categories at 9; D32-D34 P2). Sol round 3: S3 blocker (docs YAML copy) fixed in 6759d92
 - [x] Dhruv: "still looks really bad, redo from scratch with a design philosophy". Calibrated on his portfolio (chanhdai.com idiom) and Gunmetal; new contract web/DESIGN.md "Under seal"; full redesign c6c45f7 + 078cc6c (Geist, zinc, ruled sheet, foil seal, cycling install, new demo); axe 57/57 clean; auth/deletion/workspaces 79/79
 - [ ] BLOCKED: GitHub rejects pushes, "Your account is suspended" (gh token invalid); 078cc6c is local only. Needs Dhruv
-- [ ] Critic round 4 + Sol round 4 on the redesign (running)
+- [x] Critic round 4: 7.5 (D1-D11). Sol round 4: S4-S7 fixed in 00d08f6. Round-4 fixes d391d0c: hero becomes one working story (command, sealed link, the artifact, access switching in place)
+- [x] Critic round 5: 8.0 (identity 8.5, typography 8.5, layout 8, responsive 7.5, color 8.5, consistency 8.5, interaction 7.5, ux 8, copy 8, a11y 8.5); D12 P1 (older viewer bar at 320), D3/D5/D13-D15 P2, D16 P3. Sol round 5: S8 blocker (expired link bypassed membership) + S9/S10 fixed in 31864c5 with a test
+- [x] Round-6 fixes 2ff4ee3: story tabs are roles with the result under the switch, Replay keeps focus at every width, phone first screen shows the document at 320x700, sign-in demo is a real link, older-version bar gets its own row under 640px, "Older version" spacing, DESIGN.md owns the foil exception. Typecheck/lint/build OK, D1 250/250, axe 57/57 clean, e2e no page errors
+- [x] Sol round 6: APPROVE (S8-S10 resolved, no new findings; sandbox tests 14/14)
+- [ ] Critic round 6 (running)
 - [ ] Repeat until every category >= 9
 - [ ] PR with before/after screenshots, bots/CI green, merged
 Out-of-scope issues found (spawned as separate full-send threads):

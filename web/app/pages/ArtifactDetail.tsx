@@ -44,7 +44,7 @@ export function ArtifactDetail({ session, artifact, versions }: { session: Sessi
             <ButtonLink href={artifact.url} className="shrink-0">
               Open latest version
             </ButtonLink>
-            <CopyLink url={artifact.url} className="min-w-0 sm:max-w-[28rem] sm:flex-1" />
+            <CopyLink url={artifact.url} className="min-w-0 sm:max-w-[36rem] sm:flex-1" />
           </div>
         </div>
         <div className="lock hidden flex-col items-center justify-center gap-4 border-l border-line px-5 py-8 md:flex" style={{ "--d": "80ms" } as React.CSSProperties}>

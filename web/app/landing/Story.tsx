@@ -18,9 +18,9 @@ const COMMAND = "npx htmlartifact upload plan.html";
 
 // Roles first (what decides access); the person is the example.
 const PEOPLE = [
-  { key: "member", label: "Member", who: "Priya, in Northwind", code: 200, result: "opens the plan, and every earlier version.", tone: "text-open" },
+  { key: "member", label: "Member", who: "Priya in Northwind", code: 200, result: "can open the plan and every earlier version.", tone: "text-open" },
   { key: "signed-out", label: "Signed out", who: "Anyone signed out", code: 302, result: "is asked to sign in, then brought straight back.", tone: "text-ask" },
-  { key: "outsider", label: "Non-member", who: "Sam, in Globex", code: 404, result: "gets the same 404 as a link that never existed.", tone: "text-deny" }
+  { key: "outsider", label: "Non-member", who: "Sam in Globex", code: 404, result: "gets the same 404 as a link that never existed.", tone: "text-deny" }
 ] as const;
 type Person = (typeof PEOPLE)[number]["key"];
 
@@ -81,7 +81,7 @@ export function Story() {
         <figure className="relative">
           <div className="overflow-hidden rounded-card border border-border bg-card">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-3 py-2">
-              <div className="flex min-w-0 flex-1 basis-56 items-center gap-2 rounded-[6px] bg-surface px-2.5 py-1 font-mono text-[12px] text-muted">
+              <div className="mr-11 flex min-w-0 flex-1 basis-56 items-center gap-2 rounded-[6px] bg-surface px-2.5 py-1 font-mono text-[12px] text-muted sm:mr-0">
                 <LockIcon className="size-3.5 shrink-0" />
                 <span className="truncate">
                   {HOST}/d/<span className="text-foreground">{STORY_ID}</span>
@@ -143,7 +143,7 @@ export function Story() {
             </div>
           </div>
           {/* The seal stamped on the document: sealed to Northwind. */}
-          <div key={`s${run}`} className="s-stamp pointer-events-none absolute -right-2 -top-7 hidden origin-top-right scale-[0.78] sm:block lg:-right-5 lg:-top-8 lg:scale-100" style={at(1350)} aria-hidden>
+          <div key={`s${run}`} className="s-stamp pointer-events-none absolute -right-1 -top-3 origin-top-right scale-[0.6] sm:-right-2 sm:-top-7 sm:scale-[0.78] lg:-right-5 lg:-top-8 lg:scale-100" style={at(1350)} aria-hidden>
             <div className="rounded-full bg-background p-1 shadow-[0_0_0_1px_var(--line)]">
               <FoilSeal id={STORY_ID} size={84} />
             </div>
