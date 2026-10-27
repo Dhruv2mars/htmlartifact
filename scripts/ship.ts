@@ -27,6 +27,6 @@ const live = (JSON.parse(listing.stdout.toString()) as { Branch: string; Source:
 console.log(`${branch}: live ${live?.Source ?? "nothing"}, shipping ${sha.slice(0, 7)}`);
 
 await ensureChecked(sha);
-await $`bun run deploy:all -- --branch ${branch}`.cwd(root);
-await $`bun run smoke ${staging ? ["--", "--staging"] : []}`.cwd(root);
+await $`bun ${root}scripts/deploy.ts --branch ${branch}`.cwd(root); // bun run deploy:all
+await $`bun ${root}scripts/smoke.ts ${staging ? ["--staging"] : []}`.cwd(root); // bun run smoke
 console.log(`\n✓ shipped ${sha.slice(0, 7)} to ${staging ? "staging" : "production"}`);
