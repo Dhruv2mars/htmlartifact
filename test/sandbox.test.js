@@ -223,6 +223,15 @@ describe("sandbox origin", () => {
     assert.equal(expired.status, 410);
     assert.match(expired.text, /Reload the page/);
     assert.doesNotMatch(expired.text, new RegExp(MARKER));
+    // A viewer who still has access gets a way back to the same, pinned version.
+    assert.match(expired.text, new RegExp(`href="[^"]*/d/${single.draftId}/v/1"`));
+
+    // Someone who no longer has access gets the plain page: an old token says
+    // nothing about the artifact since (updated, deleted).
+    const outsider = await get(onSandbox(`/t/${signCapability({ ...claims, u: "user_no_longer_a_member", exp: now - 1 })}/`));
+    assert.equal(outsider.status, 410);
+    assert.match(outsider.text, /Reload the page/);
+    assert.doesNotMatch(outsider.text, new RegExp(`/d/${single.draftId}`));
   });
 
   test("the sandbox serves nothing but capability URLs", async () => {

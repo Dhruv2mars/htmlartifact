@@ -28,20 +28,21 @@ export function registerSandbox(app: Hono<AppEnv>): void {
   app.get("/t/:token", (c) => serveCapability(c, c.req.param("token")));
 }
 
-// Where an expired view's reader picks up again: the same artifact version on
-// the app (which checks access afresh), or null when it is gone. The token is
-// genuine (signature checked), so its ids are the ones the app minted.
+// Where an expired view's reader picks up again: the same artifact version
+// on the app, pinned so it is the version they were reading. Only for a
+// viewer who still has access (the checks a live token gets: membership and
+// revocation); anyone else gets the plain expired page, so an old token says
+// nothing about later updates or deletion. The token is signature-checked.
 async function reopenUrl(c: Context<AppEnv>, claims: Capability): Promise<string | null> {
   const app = c.get("config").publicBaseUrl;
-  if (!app) return null;
+  if (!app || !(await userStillMember(c, claims.u, claims.o, claims.s))) return null;
   const row = await c.env.DB.prepare(
-    `SELECT v.version_number, d.current_version_id FROM draft_versions v JOIN drafts d ON d.id = v.draft_id
+    `SELECT v.version_number FROM draft_versions v JOIN drafts d ON d.id = v.draft_id
      WHERE v.id = ? AND d.id = ? AND d.organization_id = ? AND d.deleted_at IS NULL`
   )
     .bind(claims.v, claims.d, claims.o)
-    .first<{ version_number: number; current_version_id: string }>();
-  if (!row) return null;
-  return `${app}/d/${claims.d}${row.current_version_id === claims.v ? "" : `/v/${Number(row.version_number)}`}`;
+    .first<{ version_number: number }>();
+  return row ? `${app}/d/${claims.d}/v/${Number(row.version_number)}` : null;
 }
 
 // Every failure is the same 404: a token URL never says why it stopped working.

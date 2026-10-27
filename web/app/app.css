@@ -214,13 +214,6 @@
     filter: blur(2px);
   }
 }
-.seq .type {
-  display: inline-block;
-  overflow: hidden;
-  white-space: nowrap;
-  vertical-align: bottom;
-  animation: type calc(var(--n) * 28ms) steps(var(--n), end) var(--d, 0ms) both;
-}
 @keyframes type {
   from {
     clip-path: inset(0 100% 0 0);
@@ -229,21 +222,10 @@
     clip-path: inset(0 0 0 0);
   }
 }
-.seq .appear {
-  animation: appear 220ms var(--ease-out) var(--d, 0ms) both;
-}
 @keyframes appear {
   from {
     opacity: 0;
     transform: translateY(3px);
-  }
-}
-.seq .caret {
-  animation: caret 1s steps(1) infinite;
-}
-@keyframes caret {
-  50% {
-    opacity: 0;
   }
 }
 /* A ring of a seal settling into place, like a dial locking. */
@@ -270,13 +252,8 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .rise,
-  .seq .type,
-  .seq .appear,
   .lock .seal [data-layer] {
     animation: fade 240ms ease both;
-  }
-  .seq .caret {
-    animation: none;
   }
   @keyframes fade {
     from {
