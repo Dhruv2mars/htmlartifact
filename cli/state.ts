@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Effect } from "effect";
 
-import { CREDENTIALS_PATH, DRAFT_BINDINGS_DIR, HTMLARTIFACT_DIR } from "./env.ts";
+import { CREDENTIALS_PATH, DRAFT_BINDINGS_DIR, HTMLARTIFACT_DIR, PENDING_LOGIN_PATH } from "./env.ts";
 import { attempt, reason, type FileError, type CliError } from "./errors.ts";
 
 // Loosely typed JSON from disk or the server.
@@ -102,7 +102,33 @@ export const saveSession = (apiUrl: string, tokens: Json): Effect.Effect<Session
   );
 };
 
-export const removeCredentials = attempt(() => fs.rmSync(CREDENTIALS_PATH, { force: true }));
+export const removeCredentials = attempt(() => {
+  fs.rmSync(CREDENTIALS_PATH, { force: true });
+  fs.rmSync(PENDING_LOGIN_PATH, { force: true });
+});
+
+// A browser sign-in that finished while the user is in several workspaces:
+// WorkOS's pending token, which signs them in once a workspace is named. As
+// sensitive as credentials.json (same mode), and short-lived: WorkOS expires
+// it, and it is not used past PENDING_LOGIN_MS.
+export interface PendingLogin {
+  apiUrl: string;
+  token: string;
+  workspaces: Array<{ id: string; name: string }>;
+  savedAt: number;
+}
+
+const PENDING_LOGIN_MS = 30 * 60_000;
+
+export const savePendingLogin = (pending: PendingLogin) => writeJson(PENDING_LOGIN_PATH, pending, 0o600);
+
+export function readPendingLogin(apiUrl: string): PendingLogin | null {
+  const pending = readJson<PendingLogin | null>(PENDING_LOGIN_PATH, null);
+  if (!pending?.token || pending.apiUrl !== apiUrl || !(Date.now() - pending.savedAt < PENDING_LOGIN_MS)) return null;
+  return pending;
+}
+
+export const removePendingLogin = attempt(() => fs.rmSync(PENDING_LOGIN_PATH, { force: true }));
 
 // Refresh tokens are single-use: concurrent CLI runs (parallel agent
 // commands) take turns refreshing through this lock file, and each re-reads

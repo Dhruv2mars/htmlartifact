@@ -29,7 +29,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 
 | Command | What it does |
 |---|---|
-| `login` / `logout` / `whoami` | Sign in or create an account; show who you are and your current workspace |
+| `login [--workspace <name>]` / `logout` / `whoami` | Sign in or create an account; show who you are and your current workspace. In several workspaces, `login` asks which one at a terminal; elsewhere it keeps the finished sign-in, and `login --workspace <name>` completes it without the browser |
 | `workspace create <name>` | New workspace; you are its admin |
 | `workspace invite` | Invite code + join link (admins). `--max-uses` (1 to 50), `--days` (1 to 30) |
 | `workspace invites [--all] [--revoke <code\|all>]` | List live invite codes (`--all`: every code, its status and who joined), or revoke one or all (admins) |

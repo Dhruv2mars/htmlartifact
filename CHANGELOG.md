@@ -19,6 +19,11 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   one left, and a browser session whose workspace is gone (left, removed or
   deleted) moves into the only one left; with several, you still pick.
 
+- `login` in several workspaces, without `--workspace`, threw away the
+  finished browser sign-in and saved nothing. At a terminal it now asks which
+  workspace; elsewhere (and under `--json`, which lists them) it keeps the
+  sign-in, and `login --workspace <name>` completes it without the browser.
+
 ### Changed
 
 - `workspace leave` asks before leaving at a terminal, and needs `--yes`

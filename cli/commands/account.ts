@@ -1,13 +1,23 @@
 import { Console, Duration, Effect, Option } from "effect";
 import { Command } from "effect/cli";
 
-import { getAuth, refreshSession, resolveApiUrl, selectWorkspace, switchSession, tokenExpiresAt } from "../auth.ts";
+import {
+  finishPendingLogin,
+  getAuth,
+  pickWorkspaceError,
+  refreshSession,
+  resolveApiUrl,
+  selectWorkspace,
+  switchSession,
+  tokenExpiresAt
+} from "../auth.ts";
 import { CMD, CREDENTIALS_PATH } from "../env.ts";
 import { CliError, reason } from "../errors.ts";
 import { apiUrlFlag, jsonFlag, stringFlag } from "../flags.ts";
 import { printJson, shellQuote } from "../format.ts";
 import { api, postJson, requestJson } from "../http.ts";
-import { readJson, removeCredentials, saveSession, type Json, type Session } from "../state.ts";
+import { isInteractive } from "../prompt.ts";
+import { readJson, readPendingLogin, removeCredentials, removePendingLogin, saveSession, type Json, type Session } from "../state.ts";
 
 const MAX_POLL_INTERVAL_MS = 60_000;
 
@@ -22,37 +32,13 @@ export const login = Command.make(
     // Under --json, stdout is the result alone; the link and progress go to stderr.
     const say = options.json ? Console.error : Console.log;
     const apiUrl = yield* resolveApiUrl(Option.getOrUndefined(options.apiUrl));
-    const start = yield* postJson(`${apiUrl}/api/cli/device`, {});
-    if (!start.ok || !start.body.device_code) {
-      return yield* new CliError({
-        message: `Could not start sign-in at ${apiUrl}: ${start.body.error || `HTTP ${start.status}`}`
-      });
-    }
-    const device = start.body;
+    const wanted = Option.getOrUndefined(options.workspace);
 
-    yield* say("Open this link, sign in (or create an account), and confirm the code:\n");
-    yield* say(`  ${device.verification_uri_complete || device.verification_uri}\n`);
-    yield* say(`  Code: ${device.user_code}\n`);
-    yield* say("Waiting for you to finish in the browser...");
-
-    let interval = Number(device.interval || 5) * 1000;
-    const deadline = Date.now() + Number(device.expires_in || 300) * 1000;
-    while (Date.now() < deadline) {
-      yield* Effect.sleep(Duration.millis(interval));
-      let poll = yield* postJson(`${apiUrl}/api/cli/token`, { device_code: device.device_code });
-      // Rate-limited (by htmlartifact or WorkOS): back off like slow_down and
-      // keep polling; the device code stays valid until the deadline.
-      if (poll.status === 429) {
-        interval = Math.min(MAX_POLL_INTERVAL_MS, interval + 5000);
-        const extra = (poll.retryAfter ?? 0) * 1000 - interval;
-        if (extra > 0) yield* Effect.sleep(Duration.millis(Math.min(extra, MAX_POLL_INTERVAL_MS)));
-        continue;
-      }
-      if (poll.body.code === "organization_selection_required") {
-        poll = yield* selectWorkspace(apiUrl, poll.body, Option.getOrUndefined(options.workspace));
-      }
-      if (poll.ok) {
-        const session = yield* saveSession(apiUrl, poll.body);
+    // Signed in, with tokens: save them, then say where the user is.
+    const finish = (tokens: Json) =>
+      Effect.gen(function* () {
+        const session = yield* saveSession(apiUrl, tokens);
+        yield* removePendingLogin;
         const me = yield* api(apiUrl, "/api/me", { apiKey: session.accessToken });
         if (!options.json) yield* Console.log(`\nSigned in as ${me.email || me.name}.`);
         // Signed in without a current workspace, but already in some (e.g.
@@ -64,9 +50,9 @@ export const login = Command.make(
           const { workspaces } = (yield* api(apiUrl, "/api/workspaces", { apiKey: session.accessToken })) as {
             workspaces: Json[];
           };
-          const wanted = Option.getOrUndefined(options.workspace)?.toLowerCase();
+          const lower = wanted?.toLowerCase();
           const match =
-            workspaces.find((w) => wanted !== undefined && (w.id === wanted || w.handle === wanted || w.name?.toLowerCase() === wanted)) ||
+            workspaces.find((w) => lower !== undefined && (w.id === lower || w.handle === lower || w.name?.toLowerCase() === lower)) ||
             (workspaces.length === 1 ? workspaces[0] : undefined);
           if (match) {
             yield* switchSession(match.id);
@@ -96,8 +82,52 @@ export const login = Command.make(
           yield* Console.log(`  ${CMD} workspace create "<name>"   start one and invite people`);
           yield* Console.log(`  ${CMD} workspace join <code>       join with an invite code`);
         }
-        return;
+      });
+
+    // A sign-in that finished in the browser but still needs its workspace:
+    // naming one finishes it here, with no second trip to the browser.
+    const pending = wanted ? readPendingLogin(apiUrl) : null;
+    if (wanted && pending) {
+      const org = pending.workspaces.find((w) => w.id === wanted || w.name.toLowerCase() === wanted.toLowerCase());
+      if (!org) return yield* new CliError(pickWorkspaceError(pending.workspaces, wanted));
+      const result = yield* finishPendingLogin(apiUrl, pending.token, org.id);
+      if (result.ok) return yield* finish(result.body);
+      if (result.status >= 500 || result.status === 429) {
+        return yield* new CliError({ message: `Could not finish signing in (${result.body.error || `HTTP ${result.status}`}). Try again shortly.` });
       }
+      yield* say("That sign-in has expired: sign in again.\n");
+    }
+
+    const start = yield* postJson(`${apiUrl}/api/cli/device`, {});
+    if (!start.ok || !start.body.device_code) {
+      return yield* new CliError({
+        message: `Could not start sign-in at ${apiUrl}: ${start.body.error || `HTTP ${start.status}`}`
+      });
+    }
+    const device = start.body;
+
+    yield* say("Open this link, sign in (or create an account), and confirm the code:\n");
+    yield* say(`  ${device.verification_uri_complete || device.verification_uri}\n`);
+    yield* say(`  Code: ${device.user_code}\n`);
+    yield* say("Waiting for you to finish in the browser...");
+
+    let interval = Number(device.interval || 5) * 1000;
+    const deadline = Date.now() + Number(device.expires_in || 300) * 1000;
+    while (Date.now() < deadline) {
+      yield* Effect.sleep(Duration.millis(interval));
+      let poll = yield* postJson(`${apiUrl}/api/cli/token`, { device_code: device.device_code });
+      // Rate-limited (by htmlartifact or WorkOS): back off like slow_down and
+      // keep polling; the device code stays valid until the deadline.
+      if (poll.status === 429) {
+        interval = Math.min(MAX_POLL_INTERVAL_MS, interval + 5000);
+        const extra = (poll.retryAfter ?? 0) * 1000 - interval;
+        if (extra > 0) yield* Effect.sleep(Duration.millis(Math.min(extra, MAX_POLL_INTERVAL_MS)));
+        continue;
+      }
+      if (poll.body.code === "organization_selection_required") {
+        poll = yield* selectWorkspace(apiUrl, poll.body, wanted, !options.json && isInteractive());
+      }
+      if (poll.ok) return yield* finish(poll.body);
       const error = poll.body.error || poll.body.code;
       if (error === "authorization_pending") continue;
       if (error === "slow_down") {

@@ -1,9 +1,20 @@
-import { Duration, Effect } from "effect";
+import { Console, Duration, Effect } from "effect";
 
 import { CONFIG_PATH, CREDENTIALS_PATH, DEFAULT_API_URL, envToken } from "./env.ts";
 import { CliError } from "./errors.ts";
+import { shellQuote } from "./format.ts";
 import { postJson, type JsonResult } from "./http.ts";
-import { readJson, saveSession, withCredentialsLock, type Json, type Session } from "./state.ts";
+import { ask } from "./prompt.ts";
+import {
+  readJson,
+  removePendingLogin,
+  savePendingLogin,
+  saveSession,
+  withCredentialsLock,
+  type Json,
+  type PendingLogin,
+  type Session
+} from "./state.ts";
 
 interface Auth {
   apiUrl: string;
@@ -127,20 +138,56 @@ export const getAuth = (apiUrlOverride?: string) =>
     return { apiUrl, apiKey: fresh.accessToken } satisfies Auth;
   });
 
-// Several workspaces and no --workspace: list them and stop, not guess.
-export const selectWorkspace = (apiUrl: string, pending: Json, name: string | undefined) =>
+// One of a sign-in's workspaces, by name or ID.
+const pickFrom = (workspaces: PendingLogin["workspaces"], name: string) =>
+  workspaces.find((w) => w.id === name || w.name.toLowerCase() === name.toLowerCase());
+
+// Finishes a pending sign-in in `organizationId`. Spent either way, unless the
+// server could not answer.
+export const finishPendingLogin = (apiUrl: string, token: string, organizationId: string) =>
   Effect.gen(function* () {
-    const choices: Array<{ id: string; name: string }> = pending.organizations || [];
-    const wanted = name?.toLowerCase();
-    const org = wanted ? choices.find((o) => o.id === name || o.name.toLowerCase() === wanted) : undefined;
-    if (!org) {
-      const names = choices.map((o) => `  ${o.name}`).join("\n");
-      return yield* new CliError({ kind: "usage", message: `You are in several workspaces. Run again with --workspace <name>:\n${names}` });
+    const result = yield* postJson(`${apiUrl}/api/cli/token`, { pending_authentication_token: token, organization_id: organizationId });
+    if (result.ok || (result.status < 500 && result.status !== 429)) yield* removePendingLogin;
+    return result;
+  });
+
+// Signed in, but in several workspaces and none named (or not one of them):
+// the sign-in is kept, so it is never thrown away. At a terminal the user
+// picks; otherwise they finish with `login --workspace <name>`, no browser.
+export const selectWorkspace = (apiUrl: string, pending: Json, name: string | undefined, interactive: boolean) =>
+  Effect.gen(function* () {
+    const workspaces: PendingLogin["workspaces"] = (pending.organizations || []).map((o: Json) => ({ id: o.id, name: o.name }));
+    const token: string = pending.pending_authentication_token;
+    yield* savePendingLogin({ apiUrl, token, workspaces, savedAt: Date.now() });
+    let org = name ? pickFrom(workspaces, name) : undefined;
+    if (!org && interactive) org = yield* askWorkspace(workspaces, name);
+    if (!org) return yield* new CliError(pickWorkspaceError(workspaces, name));
+    return yield* finishPendingLogin(apiUrl, token, org.id);
+  });
+
+export const pickWorkspaceError = (workspaces: PendingLogin["workspaces"], name: string | undefined) => ({
+  kind: "usage" as const,
+  message: [
+    name ? `You are not in a workspace named "${name}".` : "You are in several workspaces.",
+    "You are signed in: pick one to finish (no need to open the link again):",
+    ...workspaces.map((w) => `  htmlartifact login --workspace ${shellQuote(w.name)}`)
+  ].join("\n"),
+  details: { workspaces: workspaces.map((w) => w.name) }
+});
+
+// Numbered choices on stderr; a number or a name picks. Undefined if input ends.
+const askWorkspace = (workspaces: PendingLogin["workspaces"], name: string | undefined) =>
+  Effect.gen(function* () {
+    yield* Console.error(`\n${name ? `You are not in a workspace named "${name}". ` : ""}You are in several workspaces:`);
+    for (const [i, w] of workspaces.entries()) yield* Console.error(`  ${i + 1}) ${w.name}`);
+    for (;;) {
+      const answer = yield* ask(`Workspace [1-${workspaces.length}]: `);
+      if (answer === null) return undefined;
+      const number = Number(answer);
+      const org = Number.isInteger(number) && number >= 1 ? workspaces[number - 1] : pickFrom(workspaces, answer);
+      if (org) return org;
+      yield* Console.error(`Type a number from 1 to ${workspaces.length}, or a name.`);
     }
-    return yield* postJson(`${apiUrl}/api/cli/token`, {
-      pending_authentication_token: pending.pending_authentication_token,
-      organization_id: org.id
-    });
   });
 
 // Moves the saved CLI sign-in into another workspace (token refresh).

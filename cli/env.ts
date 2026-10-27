@@ -12,6 +12,8 @@ export const DEFAULT_API_URL: string | null = "https://htmlartifact.pages.dev";
 export const HTMLARTIFACT_DIR = process.env.HTMLARTIFACT_HOME || path.join(os.homedir(), ".htmlartifact");
 export const CONFIG_PATH = path.join(HTMLARTIFACT_DIR, "config.json");
 export const CREDENTIALS_PATH = path.join(HTMLARTIFACT_DIR, "credentials.json");
+// A finished browser sign-in still waiting for its workspace to be picked.
+export const PENDING_LOGIN_PATH = path.join(HTMLARTIFACT_DIR, "pending-login.json");
 export const DRAFT_BINDINGS_DIR = path.join(HTMLARTIFACT_DIR, "drafts");
 
 export const USER_AGENT = `htmlartifact/${VERSION}`;
