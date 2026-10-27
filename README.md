@@ -37,7 +37,7 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `workspace list` / `switch <name>` | Your workspaces; change the current one |
 | `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately, and every invite code issued until then is revoked (they may hold one): share a fresh code with the team |
 | `workspace promote <email>` / `demote <email>` | Make a member an admin, or an admin a member (admins). One admin always remains |
-| `workspace leave` | Leave the current workspace (its last admin promotes someone first) |
+| `workspace leave [--workspace <name>] [--yes]` | Leave the current workspace, or another one. It asks first at a terminal; elsewhere it needs `--yes`. Its last admin promotes someone first. The workspace's invite codes keep working (an admin who leaves revokes the ones they created), and if exactly one workspace is left, it becomes the current one |
 | `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace (a slug that names another artifact than the path was published to needs `--force`) |
 | `read <url-or-id>` | Download an artifact with your sign-in (how agents read links), from any workspace you are in. `--out <file>` picks where; `--workspace <name>` reads a custom URL name there |
 | `list [--all] [--workspace <name>]` | Your artifacts, or the whole workspace's; `--workspace` lists another of your workspaces |

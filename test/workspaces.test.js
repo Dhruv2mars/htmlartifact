@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
-import { OTHER_CI_KEY, accessToken, callApi, findOrganization, page, refreshInto, signInTokens, startStack } from "./helpers.js";
+import { Browser, OTHER_CI_KEY, accessToken, atTerminal, callApi, findOrganization, page, refreshInto, signInTokens, startStack } from "./helpers.js";
 
 // Workspace membership from both sides: joining (links, already a member),
 // invite options and history, promote/demote/leave, removal (what the admin
@@ -32,11 +32,10 @@ after(async () => {
   await stack?.stop();
 });
 
+const cliEnv = () => ({ ...process.env, HTMLARTIFACT_HOME: home, HTMLARTIFACT_TOKEN: "", HTMLARTIFACT_API_URL: stack.baseUrl });
+
 function cli(args) {
-  return run(process.execPath, [CLI, ...args], {
-    env: { ...process.env, HTMLARTIFACT_HOME: home, HTMLARTIFACT_TOKEN: "", HTMLARTIFACT_API_URL: stack.baseUrl },
-    timeout: 60_000
-  });
+  return run(process.execPath, [CLI, ...args], { env: cliEnv(), timeout: 60_000 });
 }
 
 const cliFails = (args) =>
@@ -189,10 +188,14 @@ test("promote, demote and leave keep at least one admin", async () => {
   await cli(["workspace", "switch", "Team"]);
   assert.match((await cliFails(["workspace", "promote", "alice@acme.test"])).stderr, /Only workspace admins/);
   sam = await refreshInto(stack, sam, team.id);
-  const out = await cli(["workspace", "leave"]);
-  assert.match(out.stdout, /Left "Team"/);
+  // Not at a terminal, leaving needs --yes; it then continues in the only workspace left.
+  const unconfirmed = await cliFails(["workspace", "leave"]);
+  assert.equal(unconfirmed.code, 2);
+  assert.match(unconfirmed.stderr, /Leaving "Team" ends your access to its artifacts\. To confirm, run: (npx )?htmlartifact workspace leave --yes/);
+  const out = await cli(["workspace", "leave", "--yes"]);
+  assert.match(out.stdout, /Left "Team"\.\nNow in "Acme"\./);
   assert.equal((await callApi(stack, sam.accessToken, "GET", "/api/workspaces/members")).body.members.length, 1);
-  await cli(["workspace", "switch", "Acme"]);
+  assert.match((await cli(["whoami"])).stdout, /Workspace: Acme \(admin\)/);
 });
 
 test("removal: the admin is told every earlier code was revoked; the removed member is told what they lost", async () => {
@@ -295,4 +298,61 @@ test("--workspace lists (and reads by custom URL) another of your workspaces wit
   assert.match(bySlug.stdout, /File: /);
   assert.match((await cli(["read", plan.publicUrl])).stdout, /File: /, "a URL in another of your workspaces opens too");
   assert.match((await cliFails(["list", "--workspace", "Nowhere"])).stderr, /not in a workspace named "Nowhere"/);
+});
+
+test("`workspace leave --workspace` leaves another workspace and keeps the current one; at a terminal it asks first", async () => {
+  const nora = await signInTokens(stack, "nora@new.test");
+  const side = (await callApi(stack, nora.accessToken, "POST", "/api/workspaces", { name: "Side Project" })).body.workspace;
+  const noraAdmin = (await refreshInto(stack, nora, side.id)).accessToken;
+  const code = (await callApi(stack, noraAdmin, "POST", "/api/workspaces/invites", {})).body.code;
+  assert.match((await cli(["workspace", "join", code])).stdout, /Joined "Side Project"/);
+  await cli(["workspace", "switch", "Acme"]);
+
+  const leaveSide = (answer) =>
+    atTerminal(process.execPath, [CLI, "workspace", "leave", "--workspace", "side project"], {
+      env: cliEnv(),
+      answers: [{ when: /\[y\/N\] /, type: answer }]
+    });
+  const declined = await leaveSide("n");
+  assert.match(declined.output, /Leave "Side Project"\? You lose access to its artifacts\. \[y\/N\]/);
+  assert.match(declined.output, /Not left: you are still in "Side Project"\./);
+  assert.equal(declined.code, 1);
+  assert.ok((await callApi(stack, noraAdmin, "GET", "/api/workspaces/members")).body.members.some((m) => m.email === "alice@acme.test"));
+
+  const confirmed = await leaveSide("y");
+  assert.equal(confirmed.code, 0, confirmed.output);
+  assert.match(confirmed.output, /Left "Side Project"\.\nStill in "Acme"\./);
+  assert.ok(!(await callApi(stack, noraAdmin, "GET", "/api/workspaces/members")).body.members.some((m) => m.email === "alice@acme.test"));
+  assert.match((await cli(["whoami"])).stdout, /Workspace: Acme \(admin\)/);
+  assert.equal((await cliFails(["workspace", "leave", "--workspace", "Side Project", "--yes"])).code, 4, "not in it any more");
+});
+
+test("after leaving, the web continues in the only workspace left; with several left, the user picks", async () => {
+  const nora = await signInTokens(stack, "nora@new.test", "Side Project");
+  const alpha = (await callApi(stack, nora.accessToken, "POST", "/api/workspaces", { name: "Web Alpha" })).body.workspace;
+  const noraAdmin = (await refreshInto(stack, nora, alpha.id)).accessToken;
+  const code = (await callApi(stack, noraAdmin, "POST", "/api/workspaces/invites", {})).body.code;
+
+  // sam: Team and Web Alpha, browsing Web Alpha; then leaves it (from the CLI or anywhere).
+  const sam = await signInTokens(stack, "sam@new.test", "Team");
+  assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code })).status, 200);
+  const samWorkspaces = (await callApi(stack, sam.accessToken, "GET", "/api/workspaces")).body.workspaces.map((w) => w.name).sort();
+  assert.deepEqual(samWorkspaces, ["Team", "Web Alpha"]);
+  const browser = new Browser(stack);
+  assert.equal((await browser.signIn("sam@new.test", { workspace: "Web Alpha" })).status, 200);
+  const samInAlpha = await refreshInto(stack, sam, alpha.id);
+  assert.equal((await callApi(stack, samInAlpha.accessToken, "POST", "/api/workspaces/leave")).status, 200);
+  const home = await browser.get("/");
+  assert.equal(home.status, 200);
+  assert.equal(new URL(home.finalUrl).pathname, "/", "not sent to /workspaces");
+  assert.match(home.text_, /Team/);
+
+  // max: Acme, Other and Web Alpha; leaving Web Alpha leaves two, so the web asks.
+  const max = await signInTokens(stack, "max@both.test", "Acme");
+  assert.equal((await callApi(stack, max.accessToken, "POST", "/api/workspaces/join", { code })).status, 200);
+  const maxBrowser = new Browser(stack);
+  await maxBrowser.signIn("max@both.test", { workspace: "Web Alpha" });
+  const maxInAlpha = await refreshInto(stack, max, alpha.id);
+  assert.equal((await callApi(stack, maxInAlpha.accessToken, "POST", "/api/workspaces/leave")).status, 200);
+  assert.equal(new URL((await maxBrowser.get("/")).finalUrl).pathname, "/workspaces");
 });

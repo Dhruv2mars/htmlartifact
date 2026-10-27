@@ -121,11 +121,40 @@ export async function sessionViewer<E extends AppEnv>(
   ) {
     await saveAccount(c.env.DB, profile);
   }
-  return buildViewer(c, {
+  const viewer = await buildViewer(c, {
     accountId: user.id,
     organizationId: auth.organizationId || null,
     credentialId: auth.sessionId
   });
+  // The session names a workspace the user is no longer in (they left it, were
+  // removed, or it was deleted). With exactly one other left, continue there,
+  // as `htmlartifact login` does; with several, they pick on /workspaces.
+  // removed_from still names the lost one, for this response.
+  if (viewer && auth.organizationId && !viewer.organization_id) {
+    const only = await onlyWorkspace(c, user.id, auth.sessionId);
+    const moved = only ? await refresh(current, { organizationId: only }) : null;
+    if (moved?.organizationId === only) {
+      const next = await buildViewer(c, { accountId: user.id, organizationId: only, credentialId: moved.sessionId });
+      if (next?.organization_id) return { ...next, removed_from: viewer.removed_from };
+    }
+  }
+  return viewer;
+}
+
+// The one workspace userId can still use, or null when there are none or
+// several. One WorkOS page: past 100 memberships there are several.
+async function onlyWorkspace<E extends AppEnv>(c: Context<E>, userId: string, credentialId: string): Promise<string | null> {
+  const page = await workos(c.get("config")).client.userManagement.listOrganizationMemberships({
+    userId,
+    statuses: ["active"],
+    limit: 100
+  });
+  const usable: string[] = [];
+  for (const membership of page.data) {
+    if (await userStillMember(c, userId, membership.organizationId, credentialId)) usable.push(membership.organizationId);
+    if (usable.length > 1) return null;
+  }
+  return usable.length === 1 && !page.listMetadata?.after ? (usable[0] ?? null) : null;
 }
 
 // "member" | "anonymous" | "denied" for reading `draft` (may be null), plus

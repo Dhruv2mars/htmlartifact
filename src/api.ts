@@ -483,8 +483,8 @@ export function registerApi(app: Hono<AppEnv>): void {
           422
         );
       }
-      await endMembership(c, viewer.account_id, viewer.organization_id, membership.id, hold, { leaving: true });
-      return c.json({ ok: true, workspace: workspaceJson(viewer.workspace) });
+      const yourInvitesRevoked = await endMembership(c, viewer.account_id, viewer.organization_id, membership.id, hold, { leaving: true });
+      return c.json({ ok: true, workspace: workspaceJson(viewer.workspace), yourInvitesRevoked });
     });
   });
 
@@ -959,7 +959,8 @@ async function withAdminLock<E extends AppEnv>(
 // is removed may hold one. Leaving is the member's own choice, so the
 // workspace's codes keep working (one contributor leaving must not break an
 // open project's pinned invite link); an admin who leaves loses the codes they
-// issued, as on demotion. `hold` is withAdminLock's.
+// issued, as on demotion (returns how many of theirs were live). `hold` is
+// withAdminLock's.
 async function endMembership<E extends AppEnv>(
   c: Context<E>,
   userId: string,
@@ -967,9 +968,13 @@ async function endMembership<E extends AppEnv>(
   membershipId: string,
   hold: () => Promise<void>,
   { leaving = false }: { leaving?: boolean } = {}
-): Promise<void> {
+): Promise<number> {
   const db = c.env.DB;
-  const revokeCodes = () => (leaving ? revokeInvitesBy(db, userId, organizationId) : revokeInvitesUpTo(db, organizationId, now()));
+  let theirs = 0;
+  const revokeCodes = async () => {
+    if (leaving) theirs += await revokeInvitesBy(db, userId, organizationId);
+    else await revokeInvitesUpTo(db, organizationId, now());
+  };
   // Portal sessions outlive AuthKit sessions: end them first (a failure
   // here changes nothing, so the request can simply be retried).
   await revokePortalLinks(c.get("config"), organizationId, userId);
@@ -991,6 +996,7 @@ async function endMembership<E extends AppEnv>(
   await setRevokedAtEpoch(db, userId, organizationId, true, epoch);
   // Again, for a code an in-flight request of theirs created meanwhile.
   await revokeCodes();
+  return theirs;
 }
 
 // Who may publish a new version of an artifact: its author, a workspace

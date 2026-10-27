@@ -368,7 +368,8 @@ export async function retryLocked(run) {
 }
 
 // Runs a command at a terminal (a pty, through `script`), as a person would:
-// each answer is typed once the output so far matches its `when`, and input
+// each answer is typed once the output so far matches its `when` (output
+// holds terminal escapes, e.g. cursor moves after a prompt), and input
 // ends after the last one. Resolves with the exit code and everything printed
 // (stdout and stderr together, \r\n turned into \n).
 export function atTerminal(command, args, { env = process.env, answers = [], timeout = 60_000 } = {}) {
@@ -379,11 +380,12 @@ export function atTerminal(command, args, { env = process.env, answers = [], tim
         ["sh", ["-c", 'cat | script -q /dev/null "$@"', "sh", command, ...args]]
       : ["script", ["-qec", quoted, "/dev/null"]];
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, scriptArgs, { env, stdio: ["pipe", "pipe", "pipe"] });
+    // Its own process group, so a timeout kills the command and `script` with it.
+    const child = spawn(bin, scriptArgs, { env, stdio: ["pipe", "pipe", "pipe"], detached: true });
     const pending = [...answers];
     let output = "";
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      process.kill(-child.pid, "SIGKILL");
       reject(new Error(`timed out at a terminal; output so far:\n${output}`));
     }, timeout);
     const onData = (chunk) => {

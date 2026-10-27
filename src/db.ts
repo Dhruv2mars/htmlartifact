@@ -445,11 +445,13 @@ export async function isDeparture(db: D1Database, membershipId: string, at: numb
 }
 
 // The live invite codes createdBy issued in organizationId (on demotion, or when an admin leaves).
-export async function revokeInvitesBy(db: D1Database, createdBy: string, organizationId: string): Promise<void> {
-  await db
+// Returns how many were live.
+export async function revokeInvitesBy(db: D1Database, createdBy: string, organizationId: string): Promise<number> {
+  const result = await db
     .prepare("UPDATE invites SET revoked_at = unixepoch() WHERE created_by = ? AND organization_id = ? AND revoked_at IS NULL")
     .bind(createdBy, organizationId)
     .run();
+  return result.meta.changes ?? 0;
 }
 
 export async function revokeAllInvites(db: D1Database, organizationId: string): Promise<void> {

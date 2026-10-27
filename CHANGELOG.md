@@ -14,6 +14,16 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   without telling anyone. Leaving now revokes only the codes the person
   issued as an admin (as demotion does); removing someone still revokes every
   code issued until then.
+- After leaving a workspace, the CLI and the web had no current workspace
+  even when exactly one was left. `workspace leave` now continues in the only
+  one left, and a browser session whose workspace is gone (left, removed or
+  deleted) moves into the only one left; with several, you still pick.
+
+### Changed
+
+- `workspace leave` asks before leaving at a terminal, and needs `--yes`
+  elsewhere (scripts, agents, `--json`). `--workspace <name>` leaves another
+  of your workspaces without changing the current one.
 
 ## [0.2.2] - 2026-10-21
 
