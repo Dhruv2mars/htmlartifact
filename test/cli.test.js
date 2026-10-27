@@ -681,13 +681,15 @@ test("login in several workspaces keeps the finished sign-in: pick at a terminal
     // Not at a terminal: nothing is guessed, but the sign-in is kept...
     const dir = path.join(stack.tmp, "several-home");
     const env = { HTMLARTIFACT_HOME: dir };
-    const refused = await fails(["login"], env);
+    // (Signed in with --api-url: the hints repeat it.)
+    const server = ["--api-url", stack.baseUrl];
+    const refused = await fails(["login", ...server], { ...env, HTMLARTIFACT_API_URL: "" });
     assert.equal(refused.code, 2);
     assert.match(refused.stderr, /You are in several workspaces\.\nYou are signed in: pick one to finish \(no need to open the link again\):/);
-    assert.match(refused.stderr, /^ {2}htmlartifact login --workspace '?Other'?$/m);
+    assert.match(refused.stderr, /^ {2}htmlartifact login --api-url '?http:\/\/127\.0\.0\.1:\d+'? --workspace '?Other'?$/m);
     assert.equal(fs.statSync(path.join(dir, "pending-login.json")).mode & 0o777, 0o600);
     // ...so naming a workspace finishes it here, without the browser.
-    const finished = await cli(["login", "--workspace", "other"], env);
+    const finished = await cli(["login", ...server, "--workspace", "other"], { ...env, HTMLARTIFACT_API_URL: "" });
     assert.doesNotMatch(finished.stdout, /Open this link/);
     assert.match(finished.stdout, /Signed in as alice@acme\.test\.\nWorkspace: Other\n/);
     assert.equal(fs.existsSync(path.join(dir, "pending-login.json")), false, "spent");
@@ -696,7 +698,10 @@ test("login in several workspaces keeps the finished sign-in: pick at a terminal
     await cli(["logout"], env);
     const wrong = await fails(["login", "--workspace", "Nope"], env);
     assert.match(wrong.stderr, /You are not in a workspace named "Nope"\./);
-    assert.match((await cli(["login", "--workspace", "Acme"], env)).stdout, /Workspace: Acme\n/);
+    assert.ok(fs.existsSync(path.join(dir, "pending-login.json")), "still kept");
+    const acme = await cli(["login", "--workspace", "Acme"], env);
+    assert.doesNotMatch(acme.stdout, /Open this link/);
+    assert.match(acme.stdout, /Workspace: Acme\n/);
 
     // At a terminal: pick by number (after a wrong answer), as the same run.
     const tty = await atTerminal(process.execPath, [CLI, "login"], {

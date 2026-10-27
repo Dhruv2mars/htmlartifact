@@ -1069,34 +1069,54 @@ describe("leaving a workspace", () => {
     assert.equal((await callApi(stack, arjun.accessToken, "POST", "/api/workspaces/join", { code: pinned })).status, 200, "the leaver can come back");
     assert.equal((await callApi(stack, admin, "DELETE", `/api/workspaces/members/${arjunUser.id}`)).status, 200);
     assert.ok(!(await codeLive(pinned)), "removal revokes the codes");
+    await webhookHandled(arjunUser, org);
   });
 
-  test("a membership.deleted webhook names a left membership only near the time it was left", async () => {
-    // A leave whose WorkOS delete failed leaves no lasting exemption: the same
-    // membership deleted later (outside our app) revokes codes as any removal does.
+  test("a membership.deleted webhook names a left membership only near the time it was left, and only if the leave got that far", async () => {
     const lee = await signInTokens(stack, "lee@oss.test");
     const org = await findOrganization(stack.emulator, "Openpipe OSS");
     const admin = (await refreshInto(stack, lee, org.id)).accessToken;
-    const code = (await callApi(stack, admin, "POST", "/api/workspaces/invites", {})).body.code;
-    const arjun = await signInTokens(stack, "arjun@oss.test", "Openpipe OSS");
-    assert.equal((await callApi(stack, arjun.accessToken, "POST", "/api/workspaces/join", { code })).status, 200);
-    const arjunIn = await refreshInto(stack, arjun, org.id);
-    const { user: arjunUser, membership } = await membershipOf("arjun@oss.test", org);
-    const restore = await breakWorkos(stack.emulator, "DELETE", `/user_management/organization_memberships/${membership.id}`);
-    try {
-      assert.notEqual((await callApi(stack, arjunIn.accessToken, "POST", "/api/workspaces/leave")).status, 200, "WorkOS refused the delete");
-    } finally {
-      await restore();
-    }
-    assert.ok(await codeLive(code));
-    const later = await sendWebhook(stack, {
-      id: "event_arjun_removed_later",
-      event: "organization_membership.deleted",
-      created_at: new Date(Date.now() + 3600_000).toISOString(),
-      data: { object: "organization_membership", id: membership.id, user_id: arjunUser.id, organization_id: org.id }
-    });
-    assert.equal(later.status, 200);
-    assert.ok(!(await codeLive(code)), "a removal an hour later is a removal");
+    // Codes issued after the last removal (event times are whole seconds).
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const joinAndLeave = async (code, { breakDelete = false } = {}) => {
+      const arjun = await signInTokens(stack, "arjun@oss.test", "Openpipe OSS");
+      assert.equal((await callApi(stack, arjun.accessToken, "POST", "/api/workspaces/join", { code })).status, 200);
+      const arjunIn = await refreshInto(stack, arjun, org.id);
+      const { user, membership } = await membershipOf("arjun@oss.test", org);
+      const restore = breakDelete ? await breakWorkos(stack.emulator, "DELETE", `/user_management/organization_memberships/${membership.id}`) : null;
+      try {
+        return { user, membership, left: await callApi(stack, arjunIn.accessToken, "POST", "/api/workspaces/leave") };
+      } finally {
+        await restore?.();
+      }
+    };
+    const deletedAt = (id, user, membership, at) =>
+      sendWebhook(stack, {
+        id,
+        event: "organization_membership.deleted",
+        created_at: new Date(at).toISOString(),
+        data: { object: "organization_membership", id: membership.id, user_id: user.id, organization_id: org.id }
+      }).then((r) => assert.equal(r.status, 200));
+
+    // The leave's WorkOS delete failed: its marker is gone, so a removal right after is a removal.
+    const first = (await callApi(stack, admin, "POST", "/api/workspaces/invites", {})).body.code;
+    const failed = await joinAndLeave(first, { breakDelete: true });
+    assert.notEqual(failed.left.status, 200, "WorkOS refused the delete");
+    assert.ok(await codeLive(first));
+    await deletedAt("event_arjun_removed_right_after", failed.user, failed.membership, Date.now());
+    assert.ok(!(await codeLive(first)), "removed in WorkOS just after a failed leave: codes revoked");
+    await workosApi(stack.emulator, "DELETE", `/user_management/organization_memberships/${failed.membership.id}`).catch(() => undefined);
+    await webhookHandled(failed.user, org);
+
+    // A real leave: a deletion of that membership dated an hour later is not the leave.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const second = (await callApi(stack, admin, "POST", "/api/workspaces/invites", {})).body.code;
+    const left = await joinAndLeave(second);
+    assert.equal(left.left.status, 200, JSON.stringify(left.left.body));
+    await webhookHandled(left.user, org);
+    assert.ok(await codeLive(second));
+    await deletedAt("event_arjun_removed_later", left.user, left.membership, Date.now() + 3600_000);
+    assert.ok(!(await codeLive(second)), "a deletion an hour after the leave is a removal");
   });
 });
 

@@ -35,7 +35,7 @@ const emulator = await createEmulator({
 });
 
 // The Worker talks to the emulator through this, so each CLI sign-in picks its user.
-const picker = await deviceLoginPicker(emulator, { port: Number(process.env.DEVICE_LOGIN_PORT || 4101) });
+const picker = await deviceLoginPicker(emulator, { port: Number(process.env.DEVICE_LOGIN_PORT || 0) });
 
 const vars = {
   WORKOS_API_URL: picker.url,

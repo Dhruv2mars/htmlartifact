@@ -38,8 +38,8 @@ export async function deviceLoginPicker(emulator, { port = 0, hostname = "127.0.
     const users = ws.users.all().filter((u) => u.email);
     const options = users
       .map(
-        (u, i) =>
-          `<label><input type="radio" name="email" value="${escape(u.email)}"${i === 0 ? " checked" : ""}> ${escape(u.email)}${u.first_name ? ` (${escape(u.first_name)})` : ""}</label>`
+        (u) =>
+          `<label><input type="radio" name="email" value="${escape(u.email)}" required> ${escape(u.email)}${u.first_name ? ` (${escape(u.first_name)})` : ""}</label>`
       )
       .join("");
     return page(
@@ -68,7 +68,8 @@ export async function deviceLoginPicker(emulator, { port = 0, hostname = "127.0.
         const form = new URLSearchParams((await readBody(req)).toString("utf8"));
         const auth = pendingCode(form.get("user_code"));
         if (!auth) return send(400, choose(form.get("user_code"), "That code is not waiting for approval (wrong, used or expired)."));
-        const user = ws.users.findOneBy("email", String(form.get("email") || "").toLowerCase());
+        const email = String(form.get("email") || "").toLowerCase();
+        const user = email ? ws.users.all().find((u) => u.email?.toLowerCase() === email) : undefined;
         if (!user) return send(400, choose(form.get("user_code"), "Pick one of the users below."));
         ws.deviceAuthorizations.update(auth.id, { user_id: user.id });
         return send(200, page("CLI approved", `<p>The CLI signs in as <strong>${escape(user.email)}</strong>. Go back to your terminal.</p>`));

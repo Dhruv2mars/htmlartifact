@@ -129,17 +129,24 @@ export async function sessionViewer<E extends AppEnv>(
   // The session names a workspace the user is no longer in (they left it, were
   // removed, or it was deleted). With exactly one other left, continue there,
   // as `htmlartifact login` does; with several, they pick on /workspaces.
-  // removed_from still names the lost one, for this response.
-  if (viewer && auth.organizationId && !viewer.organization_id) {
-    const only = await onlyWorkspace(c, user.id, auth.sessionId);
-    const moved = only ? await refresh(current, { organizationId: only }) : null;
-    if (moved?.organizationId === only) {
-      const next = await buildViewer(c, { accountId: user.id, organizationId: only, credentialId: moved.sessionId });
-      if (next?.organization_id) return { ...next, removed_from: viewer.removed_from };
+  // removed_from still names the lost one, for this response. Best effort, and
+  // a WorkOS call: tried a couple of times a minute per user at most.
+  if (viewer && auth.organizationId && !viewer.organization_id && (await checkLimit(c, LOST_WORKSPACE_MOVES, user.id)).ok) {
+    try {
+      const only = await onlyWorkspace(c, user.id, auth.sessionId);
+      const moved = only ? await refresh(current, { organizationId: only }) : null;
+      if (moved?.organizationId === only) {
+        const next = await buildViewer(c, { accountId: user.id, organizationId: only, credentialId: moved.sessionId });
+        if (next?.organization_id) return { ...next, removed_from: viewer.removed_from };
+      }
+    } catch (error) {
+      console.error("Could not move a session out of a lost workspace:", error instanceof Error ? error.message : error);
     }
   }
   return viewer;
 }
+
+const LOST_WORKSPACE_MOVES = { windowMs: 60_000, max: 2, keyPrefix: "lost-workspace", kind: "upload" } as const;
 
 // The one workspace userId can still use, or null when there are none or
 // several. One WorkOS page: past 100 memberships there are several.

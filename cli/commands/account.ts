@@ -33,6 +33,8 @@ export const login = Command.make(
     const say = options.json ? Console.error : Console.log;
     const apiUrl = yield* resolveApiUrl(Option.getOrUndefined(options.apiUrl));
     const wanted = Option.getOrUndefined(options.workspace);
+    // Repeated in the hints, so they finish this sign-in on the same server.
+    const flags = Option.isSome(options.apiUrl) ? ` --api-url ${shellQuote(apiUrl)}` : "";
 
     // Signed in, with tokens: save them, then say where the user is.
     const finish = (tokens: Json) =>
@@ -89,7 +91,7 @@ export const login = Command.make(
     const pending = wanted ? readPendingLogin(apiUrl) : null;
     if (wanted && pending) {
       const org = pending.workspaces.find((w) => w.id === wanted || w.name.toLowerCase() === wanted.toLowerCase());
-      if (!org) return yield* new CliError(pickWorkspaceError(pending.workspaces, wanted));
+      if (!org) return yield* new CliError(pickWorkspaceError(pending.workspaces, wanted, flags));
       const result = yield* finishPendingLogin(apiUrl, pending.token, org.id);
       if (result.ok) return yield* finish(result.body);
       if (result.status >= 500 || result.status === 429) {
@@ -125,7 +127,7 @@ export const login = Command.make(
         continue;
       }
       if (poll.body.code === "organization_selection_required") {
-        poll = yield* selectWorkspace(apiUrl, poll.body, wanted, !options.json && isInteractive());
+        poll = yield* selectWorkspace(apiUrl, poll.body, { name: wanted, interactive: !options.json && isInteractive(), flags });
       }
       if (poll.ok) return yield* finish(poll.body);
       const error = poll.body.error || poll.body.code;

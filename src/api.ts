@@ -979,10 +979,11 @@ async function endMembership<E extends AppEnv>(
   // here changes nothing, so the request can simply be retried).
   await revokePortalLinks(c.get("config"), organizationId, userId);
   await revokeCodes();
-  if (leaving) await recordDeparture(db, membershipId, organizationId);
   const epoch = await bumpMembershipEpoch(db, userId, organizationId);
   await hold();
   try {
+    // Right before the delete, so a leave that fails earlier leaves no marker.
+    if (leaving) await recordDeparture(db, membershipId, organizationId);
     await workos(c.get("config")).client.userManagement.deleteOrganizationMembership(membershipId);
   } catch (error) {
     if (leaving) {

@@ -325,6 +325,12 @@ test("`workspace leave --workspace` leaves another workspace and keeps the curre
   assert.ok(!(await callApi(stack, noraAdmin, "GET", "/api/workspaces/members")).body.members.some((m) => m.email === "alice@acme.test"));
   assert.match((await cli(["whoami"])).stdout, /Workspace: Acme \(admin\)/);
   assert.equal((await cliFails(["workspace", "leave", "--workspace", "Side Project", "--yes"])).code, 4, "not in it any more");
+  const withKey = await run(process.execPath, [CLI, "workspace", "leave", "--yes"], { env: { ...cliEnv(), HTMLARTIFACT_TOKEN: OTHER_CI_KEY } }).then(
+    (r) => assert.fail(`expected failure, got: ${r.stdout}`),
+    (error) => error
+  );
+  assert.equal(withKey.code, 3);
+  assert.match(withKey.stderr, /Leaving needs your own sign-in, not HTMLARTIFACT_TOKEN/);
 });
 
 test("after leaving, the web continues in the only workspace left; with several left, the user picks", async () => {

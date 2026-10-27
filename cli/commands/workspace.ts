@@ -1,8 +1,8 @@
 import { Console, Effect, Option } from "effect";
 import { Argument, Command } from "effect/cli";
 
-import { getAuth, leaveWorkspaceSession, switchSession } from "../auth.ts";
-import { CMD } from "../env.ts";
+import { getAuth, leaveWorkspaceSession, switchSession, tokenOrganization } from "../auth.ts";
+import { CMD, envToken } from "../env.ts";
 import { CliError, reason } from "../errors.ts";
 import { jsonFlag, numberFlag, stringFlag, switchFlag } from "../flags.ts";
 import { printJson, shellQuote } from "../format.ts";
@@ -206,6 +206,12 @@ const leave = Command.make(
     json: jsonFlag()
   },
   Effect.fn(function* (options) {
+    if (envToken()) {
+      return yield* new CliError({
+        kind: "auth",
+        message: "Leaving needs your own sign-in, not HTMLARTIFACT_TOKEN: unset it, then run htmlartifact workspace leave."
+      });
+    }
     const { apiUrl, apiKey } = yield* getAuth();
     const workspaces = yield* listWorkspaces(apiUrl, apiKey);
     const current = workspaces.find((w) => w.current);
@@ -233,11 +239,16 @@ const leave = Command.make(
     // The server leaves the sign-in's current workspace: move into another first, and back after.
     const away = current && current.id !== target.id ? current : undefined;
     let leaveKey = apiKey;
+    const goBack = away ? switchSession(away.id) : Effect.void;
     if (!target.current) {
       yield* switchSession(target.id);
       leaveKey = (yield* getAuth()).apiKey;
+      // Another CLI run may have moved the shared sign-in meanwhile: never leave the wrong one.
+      if (tokenOrganization(leaveKey) !== target.id) {
+        yield* goBack.pipe(Effect.ignore);
+        return yield* new CliError({ message: `Could not move your sign-in into "${target.name}"; nothing was left. Try again.` });
+      }
     }
-    const goBack = away ? switchSession(away.id) : Effect.void;
     const result = yield* api(apiUrl, "/api/workspaces/leave", { apiKey: leaveKey, method: "POST", body: {} }).pipe(
       Effect.tapError(() => goBack.pipe(Effect.ignore))
     );

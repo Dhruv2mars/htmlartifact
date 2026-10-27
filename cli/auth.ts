@@ -35,6 +35,16 @@ export const resolveApiUrl = (override?: string): Effect.Effect<string, CliError
     return Effect.succeed(apiUrl.replace(/\/+$/, ""));
   });
 
+// The workspace an access token is for (its org_id claim), or null.
+export function tokenOrganization(token: unknown): string | null {
+  try {
+    const payload = JSON.parse(Buffer.from(String(token).split(".")[1] ?? "", "base64url").toString("utf8"));
+    return typeof payload.org_id === "string" ? payload.org_id : null;
+  } catch {
+    return null;
+  }
+}
+
 export function tokenExpiresAt(token: unknown): number {
   try {
     const payload = JSON.parse(Buffer.from(String(token).split(".")[1] ?? "", "base64url").toString("utf8"));
@@ -154,23 +164,28 @@ export const finishPendingLogin = (apiUrl: string, token: string, organizationId
 // Signed in, but in several workspaces and none named (or not one of them):
 // the sign-in is kept, so it is never thrown away. At a terminal the user
 // picks; otherwise they finish with `login --workspace <name>`, no browser.
-export const selectWorkspace = (apiUrl: string, pending: Json, name: string | undefined, interactive: boolean) =>
+// `flags` is what `login --workspace` needs besides the name (--api-url, when given).
+export const selectWorkspace = (
+  apiUrl: string,
+  pending: Json,
+  { name, interactive, flags = "" }: { name: string | undefined; interactive: boolean; flags?: string }
+) =>
   Effect.gen(function* () {
     const workspaces: PendingLogin["workspaces"] = (pending.organizations || []).map((o: Json) => ({ id: o.id, name: o.name }));
     const token: string = pending.pending_authentication_token;
     yield* savePendingLogin({ apiUrl, token, workspaces, savedAt: Date.now() });
     let org = name ? pickFrom(workspaces, name) : undefined;
     if (!org && interactive) org = yield* askWorkspace(workspaces, name);
-    if (!org) return yield* new CliError(pickWorkspaceError(workspaces, name));
+    if (!org) return yield* new CliError(pickWorkspaceError(workspaces, name, flags));
     return yield* finishPendingLogin(apiUrl, token, org.id);
   });
 
-export const pickWorkspaceError = (workspaces: PendingLogin["workspaces"], name: string | undefined) => ({
+export const pickWorkspaceError = (workspaces: PendingLogin["workspaces"], name: string | undefined, flags = "") => ({
   kind: "usage" as const,
   message: [
     name ? `You are not in a workspace named "${name}".` : "You are in several workspaces.",
     "You are signed in: pick one to finish (no need to open the link again):",
-    ...workspaces.map((w) => `  htmlartifact login --workspace ${shellQuote(w.name)}`)
+    ...workspaces.map((w) => `  htmlartifact login${flags} --workspace ${shellQuote(w.name)}`)
   ].join("\n"),
   details: { workspaces: workspaces.map((w) => w.name) }
 });

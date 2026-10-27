@@ -56,8 +56,10 @@ test("a local CLI sign-in waits for its link, where the user picks who they are"
   assert.match(form, new RegExp(`value="${device.user_code}"`));
   assert.match(form, /alice@example\.com/);
   assert.match(form, /bob@example\.com/);
+  assert.doesNotMatch(form, /checked/, "nobody is picked for you");
+  assert.equal((await approve(device.user_code, "")).status, 400, "a user must be picked");
 
-  const approved = await approve(device.user_code.toLowerCase(), "bob@example.com");
+  const approved = await approve(device.user_code.toLowerCase(), "Bob@Example.com");
   assert.equal(approved.status, 200);
   assert.match(approved.text, /signs in as <strong>bob@example\.com<\/strong>/);
   const signedIn = await poll(device.device_code);
