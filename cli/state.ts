@@ -24,6 +24,8 @@ export interface DraftMapping {
   publicUrl: string;
   rawUrl: string;
   latestVersionNumber: number;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
   apiUrl?: string;
   file?: string;
   updatedAt?: string;
@@ -181,18 +183,40 @@ const releaseLock = (held: boolean) =>
 export const withCredentialsLock = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.acquireUseRelease(acquireLock, () => effect, releaseLock);
 
-// Each (API URL, path) binding is its own file, so concurrent uploads and
-// uploads to different APIs never rewrite each other's mappings.
-function draftBindingPath(apiUrl: string, file: string): string {
+// Each (API URL, workspace, path) binding is its own file, so concurrent
+// uploads, and uploads to other APIs or workspaces, never rewrite each
+// other's mappings: a file published in two workspaces is two artifacts.
+function draftBindingPath(apiUrl: string, workspaceKey: string, file: string): string {
+  return path.join(DRAFT_BINDINGS_DIR, `${sha256(`${apiUrl}\n${workspaceKey}\n${file}`)}.json`);
+}
+
+// Bindings saved before 0.2.3: one per (API URL, path), workspace unknown.
+function legacyBindingPath(apiUrl: string, file: string): string {
   return path.join(DRAFT_BINDINGS_DIR, `${sha256(`${apiUrl}\n${file}`)}.json`);
 }
 
-// Finds the draft a path was last published to on this API.
-export const findDraftMapping = (apiUrl: string, file: string) =>
-  readStateJson<DraftMapping>(draftBindingPath(apiUrl, file));
+// Finds the draft a path was last published to in this workspace on this
+// API; failing that, an older CLI's binding for the path (`legacy`: it may
+// name an artifact in another workspace).
+export const findDraftMapping = (apiUrl: string, workspaceKey: string, file: string) =>
+  Effect.gen(function* () {
+    const own = yield* readStateJson<DraftMapping>(draftBindingPath(apiUrl, workspaceKey, file));
+    if (own) return { ...own, legacy: false };
+    const legacy = yield* readStateJson<DraftMapping>(legacyBindingPath(apiUrl, file));
+    return legacy ? { ...legacy, legacy: true } : null;
+  });
 
-export const saveDraftMapping = (apiUrl: string, file: string, entry: DraftMapping) =>
-  writeJson(draftBindingPath(apiUrl, file), { ...entry, apiUrl, file, updatedAt: new Date().toISOString() });
+// Saves the binding, and drops an older CLI's binding for the path once it
+// is known to name this artifact, so it can't stand in for another workspace.
+export const saveDraftMapping = (apiUrl: string, workspaceKey: string, file: string, entry: DraftMapping) =>
+  writeJson(draftBindingPath(apiUrl, workspaceKey, file), { ...entry, apiUrl, file, updatedAt: new Date().toISOString() }).pipe(
+    Effect.andThen(
+      attempt(() => {
+        const legacy = legacyBindingPath(apiUrl, file);
+        if (readJson<Partial<DraftMapping> | null>(legacy, null)?.draftId === entry.draftId) fs.rmSync(legacy, { force: true });
+      })
+    )
+  );
 
 // Forgets every local path that was published to `draftId` on this API.
 // Returns how many mappings were removed.

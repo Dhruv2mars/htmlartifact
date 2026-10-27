@@ -10,6 +10,7 @@ import {
   removePendingLogin,
   savePendingLogin,
   saveSession,
+  sha256,
   withCredentialsLock,
   type Json,
   type PendingLogin,
@@ -19,6 +20,10 @@ import {
 interface Auth {
   apiUrl: string;
   apiKey: string;
+  // Which workspace the credential acts in, as a key for local state: the
+  // saved sign-in's workspace, or HTMLARTIFACT_TOKEN itself (a workspace API
+  // key belongs to one workspace).
+  workspaceKey: string;
 }
 
 export const resolveApiUrl = (override?: string): Effect.Effect<string, CliError> =>
@@ -134,7 +139,7 @@ export const getAuth = (apiUrlOverride?: string) =>
   Effect.gen(function* () {
     const apiUrl = yield* resolveApiUrl(apiUrlOverride);
     const token = envToken();
-    if (token) return { apiUrl, apiKey: token } satisfies Auth;
+    if (token) return { apiUrl, apiKey: token, workspaceKey: `token:${sha256(token)}` } satisfies Auth;
 
     const session = readJson<Session | null>(CREDENTIALS_PATH, null);
     if (!session?.refreshToken) return yield* new CliError({ kind: "auth", message: "Not signed in. Run: htmlartifact login" });
@@ -145,7 +150,7 @@ export const getAuth = (apiUrlOverride?: string) =>
       });
     }
     const fresh = isFresh(session) ? session : yield* refreshSession(session);
-    return { apiUrl, apiKey: fresh.accessToken } satisfies Auth;
+    return { apiUrl, apiKey: fresh.accessToken, workspaceKey: `workspace:${fresh.organizationId ?? ""}` } satisfies Auth;
   });
 
 // One of a sign-in's workspaces, by name or ID.

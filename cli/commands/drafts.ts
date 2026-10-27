@@ -24,7 +24,7 @@ import { api, httpError, rejectedEnvToken, requestJson } from "../http.ts";
 import { resolveWorkspace } from "./workspace.ts";
 import { collectCiMetadata, collectGitMetadata } from "../metadata.ts";
 import { readUploadSource, type UploadSource } from "../source.ts";
-import { findDraftMapping, removeDraftMappings, saveDraftMapping, sha256, type Json } from "../state.ts";
+import { findDraftMapping, removeDraftMappings, saveDraftMapping, sha256, type DraftMapping, type Json } from "../state.ts";
 
 const DRAFT_ID_PATTERN = /^[a-z0-9]{12}$/;
 
@@ -75,8 +75,10 @@ export const read = Command.make(
     });
     if (!response.ok) {
       if (response.status === 401 && envToken()) return yield* rejectedEnvToken();
+      // The server says why a version you can see is missing (pruned).
+      const why = response.headers.get("x-htmlartifact-latest-version") ? ` ${bytes.toString("utf8").trim()}` : "";
       const hint =
-        response.status === 404 ? " Not found in any workspace you are in (see: htmlartifact workspace list)." : "";
+        why || (response.status === 404 ? " Not found in any workspace you are in (see: htmlartifact workspace list)." : "");
       return yield* new CliError({ message: `HTTP ${response.status} for ${target}.${hint}`, kind: kindForStatus(response.status) });
     }
     const out = yield* attempt(() => {
@@ -109,7 +111,10 @@ export const upload = Command.make(
     ),
     draft: stringFlag("draft", "draft-id", "Update a specific artifact (by ID)"),
     new: switchFlag("new", "Always create a new artifact"),
-    force: switchFlag("force", "With --slug: update the artifact it names even if this path was published to another"),
+    force: switchFlag(
+      "force",
+      "With --slug: update the artifact it names even if this path was published to another, or publish a separate artifact at a free slug"
+    ),
     description: stringFlag("description", "text", "Set a short description for the artifact"),
     json: jsonFlag("Print the publication receipt as JSON"),
     apiUrl: apiUrlFlag()
@@ -124,7 +129,7 @@ export const upload = Command.make(
           "--new cannot be combined with --draft or --slug: those name an existing draft. Use an unused slug to create a new draft at a custom URL."
       });
     }
-    const { apiUrl, apiKey } = yield* getAuth(Option.getOrUndefined(options.apiUrl));
+    const { apiUrl, apiKey, workspaceKey } = yield* getAuth(Option.getOrUndefined(options.apiUrl));
     const source = yield* readUploadSource(options.target);
     // Check the markup locally first: parse5 reports each problem with its
     // line and column (the server reports none), and a page that fails here
@@ -146,13 +151,15 @@ export const upload = Command.make(
     }
     // A slug names the draft by itself, so the saved mapping for this path is
     // only used without one. `--draft <id> --slug <name>` renames a draft.
-    const mapping = options.new || draft ? null : yield* findDraftMapping(apiUrl, source.resolved);
+    const mapping = options.new || draft ? null : yield* findDraftMapping(apiUrl, workspaceKey, source.resolved);
     const mappedDraftId = slug === undefined ? mapping?.draftId || null : null;
     const draftId = draft || mappedDraftId;
     // `--slug` updates whichever artifact the slug names. Name the one this
     // path was published to: if the slug now names another (renamed, then
     // reused), the server refuses in the same request that would write, so no
-    // stale mapping or race can replace that one's content. `--force` skips it.
+    // stale mapping or race can replace that one's content. A slug that names
+    // nothing yet goes to that artifact, unless it has another slug (refused
+    // too). `--force` skips both.
     const expectedDraftId = slug !== undefined && mapping?.draftId && !options.force ? mapping.draftId : undefined;
 
     const ci = collectCiMetadata();
@@ -164,7 +171,7 @@ export const upload = Command.make(
       expectedDraftId,
       description: Option.getOrUndefined(options.description),
       metadata: {
-        ...collectGitMetadata(source.dir),
+        ...collectGitMetadata(source.dir, source.body.files ? source.body.files.map((file) => file.path) : [source.filename]),
         ...ci,
         cliVersion: VERSION,
         ...(source.body.html ? { fileSha256: sha256(source.body.html) } : {})
@@ -194,22 +201,34 @@ export const upload = Command.make(
           `--slug ${wanted} names artifact ${body.draftId} ("${body.title || "Untitled"}"), but ${displayPath(source.resolved)} was published to ${expectedDraftId}.`,
           `Uploading would replace ${body.draftId}'s content with this file. Pick another slug, or re-run with --force to replace it.`
         ].join("\n"),
-        details: { status, error: body.error, errors: [], issues: [] }
+        details: { status, code: body.code, error: body.error, errors: [], issues: [] }
+      });
+    }
+    if (!ok && body.code === "artifact_has_another_slug") {
+      const wanted = slug!.trim().toLowerCase();
+      return yield* new CliError({
+        kind: "usage",
+        message: [
+          `${displayPath(source.resolved)} was published to artifact ${body.draftId} ("${body.title || "Untitled"}"), whose custom URL is ${body.slug}.`,
+          `To move it to ${wanted}: ${CMD} upload ${shellQuote(displayPath(source.resolved))} --draft ${body.draftId} --slug ${wanted}`,
+          `To publish a separate artifact at ${wanted}, re-run with --force.`
+        ].join("\n"),
+        details: { status, code: body.code, draftId: body.draftId, slug: body.slug, error: body.error, errors: [], issues: [] }
       });
     }
     if (!ok) {
-      const staleMapping = status === 404 && mappedDraftId;
-      const hint = staleMapping
-        ? "\nThe saved artifact for this path is in another workspace or was deleted. Re-run with --new to publish a new one."
-        : "";
+      // The artifact this path's mapping names is gone from this workspace.
+      const staleMapping = status === 404 && mappedDraftId ? mapping! : null;
+      const hint = staleMapping ? yield* staleMappingHint(apiUrl, apiKey, staleMapping, displayPath(source.resolved)) : "";
       const error = httpError(result, `Upload rejected (HTTP ${status}): `);
       return yield* new CliError({
         kind: error.kind,
-        message: `${error.message}${hint}`,
+        message: `${error.message}${hint ? `\n${hint}` : ""}`,
         // The server's own message, unless it was about HTMLARTIFACT_TOKEN.
         details: {
           status,
-          error: status === 401 && envToken() ? error.message : body.error || null,
+          ...(staleMapping ? { code: "mapped_artifact_not_found", draftId: staleMapping.draftId } : {}),
+          error: staleMapping ? `${body.error || "Artifact not found."} ${hint}` : status === 401 && envToken() ? error.message : body.error || null,
           errors: body.errors || [],
           issues: body.issues || []
         }
@@ -259,12 +278,14 @@ export const upload = Command.make(
     yield* options.json ? printJson(receipt) : printReceipt(receipt);
     if (keepMapping) return;
 
-    yield* saveDraftMapping(apiUrl, source.resolved, {
+    yield* saveDraftMapping(apiUrl, workspaceKey, source.resolved, {
       draftId: receipt.draftId,
       slug: receipt.slug,
       publicUrl: receipt.url,
       rawUrl: receipt.rawUrl,
-      latestVersionNumber: receipt.versionNumber
+      latestVersionNumber: receipt.versionNumber,
+      workspaceId: body.workspace?.id ?? null,
+      workspaceName: receipt.workspace
     }).pipe(
       Effect.catch((error) =>
         Console.error(`Warning: published, but could not save the local path mapping: ${error.message}`)
@@ -272,6 +293,34 @@ export const upload = Command.make(
     );
   })
 ).pipe(Command.withDescription("Publish an artifact, or a new version of one."));
+
+// What to do when the artifact a path was published to is not in the current
+// workspace. A mapping saved by this CLI is per workspace, so it was deleted;
+// an older CLI's mapping may name an artifact in another workspace, where
+// --new would make a copy: one read (bearer reads cover every workspace you
+// are in) tells which.
+const staleMappingHint = (apiUrl: string, apiKey: string, mapping: DraftMapping & { legacy: boolean }, shown: string) =>
+  Effect.gen(function* () {
+    const elsewhere = mapping.legacy
+      ? yield* Effect.tryPromise(async () => {
+          const response = await fetch(`${apiUrl}/d/${mapping.draftId}`, {
+            headers: { Authorization: `Bearer ${apiKey}`, "User-Agent": USER_AGENT, Accept: "*/*" },
+            signal: AbortSignal.timeout(30_000)
+          });
+          await response.body?.cancel();
+          return response.ok;
+        }).pipe(Effect.orElseSucceed(() => false))
+      : false;
+    if (elsewhere) {
+      return [
+        `${shown} was published to artifact ${mapping.draftId}, which is in another of your workspaces.`,
+        `To update it, switch there first (${CMD} workspace list, then ${CMD} workspace switch <name>).`,
+        `To publish to this workspace instead: --draft <id> updates an artifact already here (see ${CMD} list), and --new publishes a new one.`
+      ].join(" ");
+    }
+    const where = mapping.workspaceName ? ` from "${mapping.workspaceName}"` : "";
+    return `Artifact ${mapping.draftId}, which ${shown} was published to, was deleted${where}. Re-run with --new to publish it again.`;
+  });
 
 export const check = Command.make(
   "check",
@@ -442,6 +491,7 @@ export const deleteDraft = Command.make(
     target: Argument.String("draft-id-or-url").pipe(
       Argument.withDescription("Artifact ID, or its /d/<id> or /w/<workspace>/<slug> URL")
     ),
+    yes: switchFlag("yes", "Confirm deleting an artifact someone else published (admins)"),
     json: jsonFlag(),
     apiUrl: apiUrlFlag()
   },
@@ -452,7 +502,24 @@ export const deleteDraft = Command.make(
     const draftId =
       "draftId" in parsed ? parsed.draftId : yield* findDraftBySlugPath(apiUrl, apiKey, parsed.slugPath, options.target);
 
-    yield* api(apiUrl, `/api/drafts/${draftId}`, { apiKey, method: "DELETE" });
+    // The server asks an admin deleting a teammate's artifact to confirm.
+    const result = yield* requestJson(`${apiUrl}/api/drafts/${draftId}`, {
+      apiKey,
+      method: "DELETE",
+      ...(options.yes ? { body: { confirm: draftId } } : {})
+    });
+    if (!result.ok && result.body.code === "confirm_teammate_artifact") {
+      const { title, author, versionCount } = result.body;
+      return yield* new CliError({
+        kind: "usage",
+        message: [
+          `${draftId} ("${title}") was published by ${author}, and has ${versionCount} version${versionCount === 1 ? "" : "s"}. Deleting it erases every one, for everyone.`,
+          `To delete it, run: ${CMD} delete ${shellQuote(options.target)} --yes`
+        ].join("\n"),
+        details: { status: result.status, code: result.body.code, draftId, title, author, versionCount, error: result.body.error }
+      });
+    }
+    if (!result.ok) return yield* httpError(result);
     const removedMappings = yield* removeDraftMappings(apiUrl, draftId).pipe(
       Effect.catch((error) =>
         Console.error(`Warning: deleted, but could not remove the local path mapping: ${error.message}`).pipe(Effect.as(0))

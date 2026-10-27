@@ -607,6 +607,13 @@ export function registerApi(app: Hono<AppEnv>): void {
         403
       );
     }
+    // An admin deleting someone else's artifact erases their work for
+    // everyone at once: it takes the artifact's ID back as confirmation (the
+    // CLI's --yes), like deleting a workspace takes its name.
+    if (draft.account_id !== viewer.account_id) {
+      const body = await readJson(c, 16 * 1024);
+      if (body.confirm !== draft.id) return confirmTeammateDelete(c, draft);
+    }
     // R2 is purged before responding; if it fails, the queued prefix is retried by the cron.
     await purgeDraft(c.env, viewer.organization_id, draft.id);
     return c.json({ ok: true, draftId: draft.id });
@@ -1078,6 +1085,30 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       409
     );
   }
+  // `--slug` on a file published without one: the slug names nothing yet, so
+  // it goes to the artifact the file was published to, rather than making a
+  // second one; if that has another custom URL already, the caller chooses.
+  let adopted: DraftRow | null = null;
+  if (slug && !slugDraft && expected && !draftId) {
+    const target = await db
+      .prepare("SELECT * FROM drafts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL")
+      .bind(expected, viewer.organization_id)
+      .first<DraftRow>();
+    if (target?.slug && canUpdateDraft(viewer, target)) {
+      return c.json(
+        {
+          ok: false,
+          code: "artifact_has_another_slug",
+          draftId: target.id,
+          slug: target.slug,
+          title: target.title,
+          error: `This file was published to artifact ${target.id} ("${target.title || "Untitled"}"), whose custom URL is "${target.slug}". To move it to "${slug}", upload with --draft ${target.id} --slug ${slug}. To publish a separate artifact at "${slug}", re-run with --force.`
+        },
+        409
+      );
+    }
+    if (target && canUpdateDraft(viewer, target)) adopted = target;
+  }
   if (slugDraft && draftId && slugDraft.id !== draftId) {
     return c.json(
       { ok: false, error: `The custom URL "${slug}" already names artifact ${slugDraft.id}. Upload with --slug alone to update it.` },
@@ -1086,6 +1117,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   }
   const existing =
     slugDraft ||
+    adopted ||
     (draftId
       ? await db
           .prepare("SELECT * FROM drafts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL")
@@ -1369,6 +1401,32 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       warnings
     },
     existing ? 200 : 201
+  );
+}
+
+// The refusal for deleting someone else's artifact unconfirmed: whose it
+// is and how much would go, so the caller can decide.
+async function confirmTeammateDelete(c: Context<MemberEnv>, draft: Pick<DraftRow, "id" | "account_id">): Promise<Response> {
+  const about = await c.env.DB.prepare(
+    `SELECT d.title, a.name AS author, (SELECT COUNT(*) FROM draft_versions v WHERE v.draft_id = d.id) AS versions
+     FROM drafts d LEFT JOIN accounts a ON a.id = d.account_id WHERE d.id = ?`
+  )
+    .bind(draft.id)
+    .first<{ title: string; author: string | null; versions: number }>();
+  const author = about?.author || (draft.account_id.startsWith("api_key_") ? "a workspace API key" : "a teammate");
+  const versions = Number(about?.versions ?? 0);
+  const title = about?.title || "Untitled";
+  return c.json(
+    {
+      ok: false,
+      code: "confirm_teammate_artifact",
+      draftId: draft.id,
+      title,
+      author,
+      versionCount: versions,
+      error: `Artifact ${draft.id} ("${title}", ${versions} version${versions === 1 ? "" : "s"}) was published by ${author}. Deleting it erases every version for everyone. To delete it, run: htmlartifact delete ${draft.id} --yes`
+    },
+    409
   );
 }
 

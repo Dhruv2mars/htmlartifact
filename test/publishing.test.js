@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
-import { accessToken, callApi, page, startStack, writeHtml } from "./helpers.js";
+import { Browser, accessToken, callApi, page, startStack, writeHtml } from "./helpers.js";
 
 // Publishing as agents do it, through the built CLI (dist/htmlartifact.js),
 // against a local Worker with a sandbox origin and the WorkOS emulator. Each
@@ -173,4 +177,281 @@ test("a new version whose title changed says so (an unrelated page at a reused p
   writeHtml(stack.tmp, "bare.html", page("Now titled"));
   const titled = await json(["upload", bare]);
   assert.ok(!titled.warnings.some((w) => /title changed/i.test(w)), JSON.stringify(titled.warnings));
+});
+
+test("--slug on a file that is already published gives that artifact the slug, not a second artifact", async () => {
+  const file = writeHtml(stack.tmp, "perf-report.html", page("Perf report: p95 latency"));
+  const first = await json(["upload", file, "--new"]);
+  const slugged = await json(["upload", file, "--slug", "perf-report"]);
+  assert.equal(slugged.draftId, first.draftId, "the same artifact");
+  assert.equal(slugged.slug, "perf-report");
+  assert.equal(slugged.action, "unchanged");
+  assert.deepEqual(slugged.changedFields, ["slug"]);
+  assert.ok(!slugged.warnings.some((w) => /still updates/.test(w)), JSON.stringify(slugged.warnings));
+  const feed = (await json(["list", "--all"])).drafts.filter((d) => d.title === "Perf report: p95 latency");
+  assert.equal(feed.length, 1);
+  // The path keeps updating it, now at its custom URL.
+  const again = await json(["upload", writeHtml(stack.tmp, "perf-report.html", page("Perf report: p95 latency", "<p>v2</p>"))]);
+  assert.equal(again.draftId, first.draftId);
+  assert.match(again.url, /\/perf-report$/);
+
+  // Already at another custom URL: say how to move it or make a separate one, don't guess.
+  const other = writeHtml(stack.tmp, "weekly.html", page("Weekly"));
+  const named = await json(["upload", other, "--slug", "weekly-old"]);
+  const refused = await fails(["upload", other, "--slug", "weekly-new"]);
+  assert.equal(refused.exit, 2);
+  assert.equal(refused.code, "artifact_has_another_slug");
+  assert.equal(refused.draftId, named.draftId);
+  assert.equal(refused.slug, "weekly-old");
+  assert.match(refused.error, new RegExp(`--draft ${named.draftId} --slug weekly-new`));
+  assert.match(refused.error, /--force/);
+  // --force: a separate artifact at the new slug, as before.
+  const separate = await json(["upload", other, "--slug", "weekly-new", "--force"]);
+  assert.notEqual(separate.draftId, named.draftId);
+  assert.equal(separate.slug, "weekly-new");
+});
+
+test("a deleted artifact: the path's upload says it was deleted and that --new publishes it again", async () => {
+  const file = writeHtml(stack.tmp, "gone.html", page("Gone soon"));
+  const first = await json(["upload", file, "--new"]);
+  // Deleted elsewhere (the web, another machine): this machine's mapping stays.
+  const alice = await accessToken(stack, "alice@acme.test");
+  assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${first.draftId}`)).status, 200);
+  const failed = await fails(["upload", file]);
+  assert.equal(failed.exit, 4);
+  assert.equal(failed.code, "mapped_artifact_not_found");
+  assert.equal(failed.draftId, first.draftId);
+  assert.match(failed.error, /deleted/);
+  assert.match(failed.error, /--new/);
+  assert.doesNotMatch(failed.error, /another workspace/);
+});
+
+test("a file published in two workspaces stays two artifacts: plain uploads in each update their own", async () => {
+  const file = writeHtml(stack.tmp, "bench.html", page("Bench", "<p>acme 1</p>"));
+  const acme = await json(["upload", file, "--new"]);
+  assert.equal(acme.workspace, "Acme");
+
+  await cli(["workspace", "create", "Kestrel"]);
+  try {
+    // A plain upload in Kestrel publishes there; it no longer trips over Acme's artifact.
+    const kestrel = await json(["upload", file]);
+    assert.equal(kestrel.action, "created");
+    assert.equal(kestrel.workspace, "Kestrel");
+    assert.notEqual(kestrel.draftId, acme.draftId);
+
+    await cli(["workspace", "switch", "Acme"]);
+    writeHtml(stack.tmp, "bench.html", page("Bench", "<p>acme 2</p>"));
+    const back = await json(["upload", file]);
+    assert.equal(back.draftId, acme.draftId, "Acme's artifact, not a duplicate");
+    assert.equal(back.action, "updated");
+
+    await cli(["workspace", "switch", "Kestrel"]);
+    writeHtml(stack.tmp, "bench.html", page("Bench", "<p>kestrel 2</p>"));
+    assert.equal((await json(["upload", file])).draftId, kestrel.draftId);
+
+    // A mapping saved by an older CLI (one per path, workspace unknown) that
+    // names an artifact in another workspace: say where it is; --new would be a copy.
+    const legacyFile = writeHtml(stack.tmp, "legacy.html", page("Legacy"));
+    const legacyHtml = writeHtml(stack.tmp, "legacy-acme.html", page("Legacy in Acme"));
+    await cli(["workspace", "switch", "Acme"]);
+    const inAcme = await json(["upload", legacyHtml, "--new"]);
+    await cli(["workspace", "switch", "Kestrel"]);
+    const binding = path.join(home, "drafts", `${createHash("sha256").update(`${stack.baseUrl}\n${legacyFile}`).digest("hex")}.json`);
+    fs.writeFileSync(binding, JSON.stringify({ draftId: inAcme.draftId, slug: null, publicUrl: inAcme.url, rawUrl: inAcme.rawUrl, latestVersionNumber: 1, apiUrl: stack.baseUrl, file: legacyFile }));
+    const elsewhere = await fails(["upload", legacyFile]);
+    assert.equal(elsewhere.exit, 4);
+    assert.equal(elsewhere.code, "mapped_artifact_not_found");
+    assert.equal(elsewhere.draftId, inAcme.draftId);
+    assert.match(elsewhere.error, /another of your workspaces/);
+    assert.match(elsewhere.error, /workspace switch/);
+    assert.match(elsewhere.error, /--draft/);
+  } finally {
+    await cli(["workspace", "switch", "Acme"]);
+  }
+});
+
+test("the receipt's Raw HTML URL shows a signed-in browser the page's source", async () => {
+  const html = page("Raw me", "<p>source &amp; all</p><script>document.title = 'ran'</script>");
+  const receipt = await json(["upload", writeHtml(stack.tmp, "raw.html", html), "--new"]);
+  const bob = new Browser(stack);
+  await bob.signIn("bob@acme.test", { workspace: "Acme" });
+
+  for (const url of [receipt.rawUrl, `${stack.baseUrl}/d/${receipt.draftId}/v/1/raw`]) {
+    const shown = await bob.get(url);
+    assert.equal(shown.status, 200, url);
+    assert.equal(shown.headers.get("content-type"), "text/plain; charset=utf-8", url);
+    assert.equal(shown.headers.get("x-content-type-options"), "nosniff");
+    assert.match(shown.headers.get("content-security-policy"), /default-src 'none'.*sandbox/);
+    assert.equal(shown.text_, html, "the stored bytes, not the viewer");
+  }
+  // The artifact URL itself still opens the viewer.
+  assert.match((await bob.get(receipt.url)).text_, /<iframe/);
+  // Agents with a token get the HTML as before.
+  const token = await accessToken(stack, "bob@acme.test");
+  const agent = await fetch(receipt.rawUrl, { headers: { Authorization: `Bearer ${token}` } });
+  assert.match(agent.headers.get("content-type"), /^text\/html/);
+  assert.equal(await agent.text(), html);
+  // Outsiders: the same as before (sign in; a 404 for another workspace's member).
+  const signedOut = await fetch(receipt.rawUrl, { headers: { Accept: "text/html" }, redirect: "manual" });
+  assert.equal(signedOut.status, 302);
+  const olivia = new Browser(stack);
+  await olivia.signIn("olivia@other.test", { workspace: "Other" });
+  const outsider = await olivia.get(receipt.rawUrl);
+  assert.equal(outsider.status, 404);
+  assert.equal(outsider.text_, (await olivia.get(`${stack.baseUrl}/d/zzzzzzzzzzzz/raw`)).text_);
+});
+
+test("a pruned version's link tells a member it was pruned, not to ask for an invite", async () => {
+  const file = writeHtml(stack.tmp, "pruned.html", page("Auth refactor plan", "<p>1</p>"));
+  const receipt = await json(["upload", file, "--new"]);
+  for (const n of [2, 3]) await json(["upload", writeHtml(stack.tmp, "pruned.html", page("Auth refactor plan", `<p>${n}</p>`))]);
+  assert.equal((await json(["prune", receipt.draftId, "--keep", "2"])).deleted, 1);
+  const v1 = `${stack.baseUrl}/d/${receipt.draftId}/v/1`;
+
+  // A member's browser goes to the history page, which lists what is left.
+  const bob = new Browser(stack);
+  await bob.signIn("bob@acme.test", { workspace: "Acme" });
+  const opened = await bob.get(v1);
+  assert.equal(new URL(opened.finalUrl).pathname, `/history/${receipt.draftId}`);
+  assert.equal(new URL(opened.finalUrl).searchParams.get("missing"), "1");
+  assert.equal(opened.status, 200);
+
+  // Agents: a 404 that says why, and where the latest is.
+  const token = await accessToken(stack, "bob@acme.test");
+  const agent = await fetch(v1, { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(agent.status, 404);
+  assert.equal(agent.headers.get("x-htmlartifact-latest-version"), "3");
+  assert.match(await agent.text(), new RegExp(`Version 1 of ${receipt.draftId} was deleted \\(pruned\\)\\. The latest is version 3: .*/d/${receipt.draftId}/v/3`));
+  const never = await fetch(`${stack.baseUrl}/d/${receipt.draftId}/v/9`, { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(never.status, 404);
+  assert.match(await never.text(), new RegExp(`${receipt.draftId} has no version 9\\. The latest is version 3`));
+  const read = await fails(["read", v1]);
+  assert.equal(read.exit, 4);
+  assert.match(read.error, /was deleted \(pruned\)/);
+  assert.doesNotMatch(read.error, /Not found in any workspace/);
+
+  // Someone outside the workspace learns nothing: the usual 404.
+  const olivia = new Browser(stack);
+  await olivia.signIn("olivia@other.test", { workspace: "Other" });
+  const outsider = await olivia.get(v1);
+  assert.equal(outsider.status, 404);
+  assert.equal(outsider.text_, (await olivia.get(`${stack.baseUrl}/d/zzzzzzzzzzzz/v/1`)).text_);
+  const outsiderToken = await accessToken(stack, "olivia@other.test");
+  const outsiderAgent = await fetch(v1, { headers: { Authorization: `Bearer ${outsiderToken}` } });
+  assert.equal(outsiderAgent.status, 404);
+  assert.equal(outsiderAgent.headers.get("x-htmlartifact-latest-version"), null);
+});
+
+// What the CLI says about git, recorded by a stand-in server: the version's
+// label on the history page comes from it.
+test("git metadata describes the uploaded file: an uncommitted file gets no commit subject", async () => {
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    let data = "";
+    req.on("data", (chunk) => (data += chunk));
+    req.on("end", () => {
+      bodies.push(JSON.parse(data));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, created: true, draftId: "abcdefghijkl", versionNumber: 1, publicUrl: "http://x.test/d/abcdefghijkl", rawUrl: "http://x.test/d/abcdefghijkl/raw", versionUrl: "", contentHash: "h", totalBytes: 1, warnings: [] }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ha-git-"));
+  const env = { HTMLARTIFACT_HOME: path.join(tmp, "home"), HTMLARTIFACT_TOKEN: "token", HTMLARTIFACT_API_URL: `http://127.0.0.1:${server.address().port}` };
+  const sent = async (target) => {
+    await cli(["upload", target, "--new", "--json"], env);
+    return bodies.at(-1).metadata;
+  };
+  // The test's own commits: no user config, signing or hooks from this machine.
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: path.join(tmp, "no-gitconfig"), GIT_CONFIG_NOSYSTEM: "1" };
+  const repo = path.join(tmp, "repo");
+  fs.mkdirSync(path.join(repo, "site"), { recursive: true });
+  const git = (...args) => execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@t.test", ...args], { cwd: repo, env: gitEnv, encoding: "utf8" }).trim();
+  try {
+    git("init", "-q");
+    fs.writeFileSync(path.join(repo, "perf.html"), page("Perf"));
+    fs.writeFileSync(path.join(repo, "site", "index.html"), page("Site"));
+    fs.writeFileSync(path.join(repo, ".gitignore"), "out/\n");
+    git("add", ".");
+    git("commit", "-qm", "Add perf report");
+    const added = git("rev-parse", "HEAD");
+    fs.writeFileSync(path.join(repo, "notes.txt"), "later\n");
+    git("add", "notes.txt");
+    git("commit", "-qm", "Unrelated later change");
+    const head = git("rev-parse", "HEAD");
+
+    // Committed as uploaded: the commit that last changed it, not HEAD.
+    let meta = await sent(path.join(repo, "perf.html"));
+    assert.equal(meta.gitCommitSubject, "Add perf report");
+    assert.equal(meta.gitCommitSha, added);
+    assert.equal(meta.gitDirty, false);
+    // Other uncommitted work in the repo is not this file's.
+    fs.writeFileSync(path.join(repo, "notes.txt"), "dirty\n");
+    assert.equal((await sent(path.join(repo, "perf.html"))).gitDirty, false);
+    // A folder: the last commit that changed any of its pages.
+    assert.equal((await sent(path.join(repo, "site"))).gitCommitSubject, "Add perf report");
+
+    // Modified, untracked, or ignored: HEAD is only the base; its message is someone else's.
+    fs.writeFileSync(path.join(repo, "perf.html"), page("Perf", "<p>edited</p>"));
+    const untracked = path.join(repo, "new report.html");
+    fs.writeFileSync(untracked, page("New"));
+    fs.mkdirSync(path.join(repo, "out"));
+    const ignored = path.join(repo, "out", "out.html");
+    fs.writeFileSync(ignored, page("Out"));
+    for (const target of [path.join(repo, "perf.html"), untracked, ignored]) {
+      meta = await sent(target);
+      assert.equal(meta.gitCommitSubject, null, target);
+      assert.equal(meta.gitCommitSha, head, target);
+      assert.equal(meta.gitDirty, true, target);
+      assert.equal(meta.gitBranch, git("rev-parse", "--abbrev-ref", "HEAD"));
+    }
+
+    // Outside any repository: nothing.
+    const loose = path.join(tmp, "loose.html");
+    fs.writeFileSync(loose, page("Loose"));
+    meta = await sent(loose);
+    assert.equal(meta.gitCommitSubject, null);
+    assert.equal(meta.gitCommitSha, null);
+    assert.equal(meta.gitDirty, null);
+  } finally {
+    server.close();
+  }
+});
+
+test("an admin deleting a teammate's artifact must confirm with --yes; deleting your own needs nothing", async () => {
+  const bob = await accessToken(stack, "bob@acme.test");
+  const uploaded = await callApi(stack, bob, "POST", "/api/uploads", { html: page("Bob's rollout plan"), filename: "rollout.html" });
+  assert.equal(uploaded.status, 201);
+  await callApi(stack, bob, "POST", "/api/uploads", { html: page("Bob's rollout plan", "<p>v2</p>"), draftId: uploaded.body.draftId });
+  const id = uploaded.body.draftId;
+
+  // alice (an admin) without --yes: refused, nothing erased, and told whose work it is.
+  const refused = await fails(["delete", id]);
+  assert.equal(refused.exit, 2);
+  assert.equal(refused.code, "confirm_teammate_artifact");
+  assert.equal(refused.draftId, id);
+  assert.equal(refused.title, "Bob's rollout plan");
+  assert.equal(refused.versionCount, 2);
+  assert.match(refused.author, /Bob/);
+  assert.match(refused.error, new RegExp(`delete ${id} --yes`));
+  assert.equal((await fetch(`${stack.baseUrl}/d/${id}`, { headers: { Authorization: `Bearer ${bob}` } })).status, 200);
+  const human = await cli(["delete", id]).catch((error) => error);
+  assert.match(human.stderr, /Bob's rollout plan/);
+  assert.match(human.stderr, /2 versions/);
+
+  // The API asks for the artifact's ID as confirmation, like `workspace delete`.
+  const alice = await accessToken(stack, "alice@acme.test");
+  assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${id}`)).status, 409);
+  assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${id}`, { confirm: "aaaaaaaaaaaa" })).status, 409);
+
+  const deleted = await json(["delete", id, "--yes"]);
+  assert.equal(deleted.ok, true);
+  assert.equal((await fetch(`${stack.baseUrl}/d/${id}`, { headers: { Authorization: `Bearer ${bob}` } })).status, 404);
+
+  // Your own: as before, no flag.
+  const mine = await json(["upload", writeHtml(stack.tmp, "mine.html", page("Mine to delete")), "--new"]);
+  assert.equal((await json(["delete", mine.draftId])).ok, true);
+  // A member who isn't an admin still can't delete someone else's (403, as before).
+  const alices = await json(["upload", writeHtml(stack.tmp, "alices.html", page("Alice's")), "--new"]);
+  assert.equal((await callApi(stack, bob, "DELETE", `/api/drafts/${alices.draftId}`, { confirm: alices.draftId })).status, 403);
 });

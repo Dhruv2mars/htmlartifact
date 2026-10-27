@@ -1,21 +1,32 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-export function collectGitMetadata(cwd: string) {
+// `files`: the uploaded pages, relative to `cwd`. The commit fields describe
+// them, not the repository: a version's label on the history page is its
+// commit subject, and HEAD's message says nothing about a file it doesn't
+// contain. Committed as uploaded: the last commit that changed them.
+// Otherwise (changed, untracked or ignored): HEAD as the base they were made
+// on, no subject, and dirty.
+export function collectGitMetadata(cwd: string, files: string[]) {
   const repoRoot = git(["rev-parse", "--show-toplevel"], cwd);
   const remote = git(["config", "--get", "remote.origin.url"], cwd);
   const parsedRemote = parseRemote(remote);
-  const status = git(["status", "--porcelain"], cwd);
+  const head = git(["rev-parse", "HEAD"], cwd);
+  // Paths are literal (a page named ":x.html" is not pathspec magic).
+  const tracked = repoRoot !== null && git(["--literal-pathspecs", "ls-files", "--error-unmatch", "--", ...files], cwd) !== null;
+  const changed = tracked ? git(["--literal-pathspecs", "status", "--porcelain", "--", ...files], cwd) : null;
+  const clean = head !== null && changed === "";
+  const last = clean ? git(["--literal-pathspecs", "log", "-1", "--format=%H%n%s", "--", ...files], cwd)?.split("\n") : undefined;
 
   return {
     repoOrg: parsedRemote.org || inferOrgFromRoot(repoRoot),
     repoName: parsedRemote.name || (repoRoot ? path.basename(repoRoot) : null),
     repoHost: parsedRemote.host || null,
     gitBranch: git(["rev-parse", "--abbrev-ref", "HEAD"], cwd),
-    gitCommitSha: git(["rev-parse", "HEAD"], cwd),
-    gitCommitSubject: git(["log", "-1", "--format=%s"], cwd),
-    // null when not a git repo; true/false when a working tree is present.
-    gitDirty: status === null ? null : status.length > 0
+    gitCommitSha: last?.[0] || head,
+    gitCommitSubject: last?.[1] ?? null,
+    // null when not a git repo; otherwise whether the uploaded files differ from what is committed.
+    gitDirty: repoRoot === null ? null : !clean
   };
 }
 
