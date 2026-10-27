@@ -37,26 +37,26 @@ the CLI and web app loops.
 ## The merge gate
 
 Changes land on `main` through an Entire trail (a branch plus
-`entire trail create`). Nothing runs CI for this repository, so
-`bun run check` is the merge gate. It runs everything the old GitHub Actions
-CI ran, in order, and stops at the first failure:
+`entire trail create`). `bun run check` is the merge gate. It runs everything
+the old GitHub Actions CI ran, in order, and stops at the first failure.
+Buildkite runs the same command on every push (`.buildkite/pipeline.yml`, the
+free hosted `linux-small` queue) and reports it on the trail as a gate:
 
 | Step | What |
 |---|---|
 | install | `bun install --frozen-lockfile` |
 | typecheck | `bun run typecheck`, `typecheck:cli`, `typecheck:web` |
-| lint | `bun run lint` (knip: unused files, exports, dependencies) |
+| lint | `bun run lint` under Bun (knip: unused files, exports, dependencies) |
 | changelog | `bun scripts/changelog.ts check` (CHANGELOG.md documents the package version) |
 | test | `bun run test`: builds the CLI and web app, then the full suite on D1, then on R2 (local only) |
 | cli | the built CLI (`--version`, `--help`, `check` on a two-page site) on your Node and on Node 20.10, the `engines` minimum (downloaded once from nodejs.org and checked against its SHASUMS256.txt) |
 
-It runs on the machine you run it on (macOS or Linux); Windows is no longer
+Buildkite covers Linux; run it locally for macOS. Windows is no longer
 tested. A trail merges only when, on its latest commit, rebased on `main`:
 
-- `bun run check` passed. Put its last line (`✓ check passed: … on <commit>`)
-  in the trail description.
-- `entire trail merge --dry-run` passes, and every finding from the trail's
-  review agents is fixed or dismissed with a reason.
+- Buildkite's `bun run check` passed, so `entire trail merge --dry-run`
+  passes, and every finding from the trail's review agents is fixed or
+  dismissed with a reason.
 - Bug fixes come with a test that fails without the fix.
 - New routes are in the isolation route table (`test/isolation.test.js`).
 - `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) has a line for anything a

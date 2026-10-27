@@ -1,4 +1,5 @@
 // The merge gate: everything CI on GitHub Actions used to run, in one command.
+// Buildkite runs it on every push (.buildkite/pipeline.yml).
 //   bun run check
 // Stops at the first failure. Then the built CLI runs on this machine's Node and
 // on the oldest Node package.json supports (engines), downloaded once from
@@ -67,7 +68,8 @@ const steps: [string, () => Promise<void>][] = [
   ["typecheck", () => run("bun", "run", "typecheck")],
   ["typecheck:cli", () => run("bun", "run", "typecheck:cli")],
   ["typecheck:web", () => run("bun", "run", "typecheck:web")],
-  ["lint", () => run("bun", "run", "lint")],
+  // knip under Node runs out of memory in Buildkite's container (oxc-parser), not under Bun.
+  ["lint", () => run("bun", "--bun", "run", "lint")],
   ["changelog", () => run("bun", "scripts/changelog.ts", "check")],
   // pretest builds the CLI and the web app; the suite runs on D1, then on R2 (local only).
   ["test", () => run("bun", "run", "test")],
@@ -75,8 +77,9 @@ const steps: [string, () => Promise<void>][] = [
   [`cli on node ${oldest}`, async () => cli(await oldestNode())],
 ];
 
-const sha = await head();
-const wasClean = await clean();
+// A CI container may have no usable git checkout; then there is nothing to record.
+const sha = await head().catch(() => "");
+const wasClean = sha !== "" && (await clean());
 const started = performance.now();
 const seconds = (since: number) => `${Math.round((performance.now() - since) / 1000)}s`;
 for (const [name, step] of steps) {
@@ -93,5 +96,5 @@ for (const [name, step] of steps) {
 const recorded = wasClean && (await clean()) && (await head()) === sha;
 if (recorded) await recordPass(sha);
 console.log(
-  `\n✓ check passed: ${steps.length} steps in ${seconds(started)} on ${sha.slice(0, 7)}${recorded ? "" : " plus uncommitted changes"}`
+  `\n✓ check passed: ${steps.length} steps in ${seconds(started)} on ${sha.slice(0, 7) || "this tree"}${recorded || !sha ? "" : " plus uncommitted changes"}`
 );

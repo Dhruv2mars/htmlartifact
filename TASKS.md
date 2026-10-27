@@ -4,8 +4,8 @@
 GitHub suspended the account; the repo lives on Entire (`origin` = entire://aws-ap-south-1.entire.io/et/dhruv2mars/htmlartifact, public at https://entire.com/et/dhruv2mars/htmlartifact). Nothing GitHub Actions did runs anymore.
 Done = each item proven by command output in this session.
 - [ ] S1 `bun run check` runs every gate ci.yml ran (install, typechecks, lint, changelog, test d1+r2, built CLI on current and oldest Node); documented as the trail merge gate
-- [ ] S2 Entire runner for the gate, if runners can run commands (else say why not)
-- [ ] S3 live vs main: what's deployed (Pages + ops Worker) compared with main
+- [x] S2 Entire runner for the gate: runners are `prompt_runner` only (an AI agent in a sandbox; the CLI knows no other runtime kind, docs.entire.com: Agents, runner, Glossary). Commands run through Entire's CI plugin instead: Buildkite (free hosted `linux-small`) was connected on main (e5c0422), so `.buildkite/pipeline.yml` now runs `bun run check`; the prompt-runner "Check" draft was dropped
+- [x] S3 live vs main: both Pages projects run 4391b5e (deployed 2026-10-21, `wrangler pages deployment list`), ops Worker last deployed 2026-10-21 15:51 UTC right after it; main has only non-runtime commits since (Entire config, Buildkite). Staging was never deployed
 - [ ] S4 `bun run ship` deploys main from a local checkout (guards, check, deploy:all, smoke); staging first, then production
 - [ ] S5 `bun run release` publishes the CLI without GitHub provenance; `npm publish --dry-run` verified; real publish only if main has CLI changes newer than npm latest
 - [ ] S6 GitHub references users/tooling depend on point at Entire (package.json, README, CONTRIBUTING, SECURITY, CHANGELOG, CLI output, deploy scripts, dependabot); web/app/** untouched
