@@ -38,10 +38,10 @@ npx htmlartifact read https://…/d/k3j9x0a1b2c4
 | `workspace members` / `remove <email>` | See members; remove one (admins). Access ends immediately, and every invite code issued until then is revoked (they may hold one): share a fresh code with the team |
 | `workspace promote <email>` / `demote <email>` | Make a member an admin, or an admin a member (admins). One admin always remains |
 | `workspace leave [--workspace <name>] [--yes]` | Leave the current workspace, or another one. It asks first at a terminal; elsewhere it needs `--yes`. Its last admin promotes someone first. The workspace's invite codes keep working (an admin who leaves revokes the ones they created), and if exactly one workspace is left, it becomes the current one |
-| `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL. `--slug <name>` gives a stable URL within the workspace (a slug that names another artifact than the path was published to needs `--force`) |
+| `upload <file-or-folder>` | Publish. Re-uploading the same path publishes a new version at the same URL (the CLI remembers the artifact per workspace and path, so a file published in two workspaces is two artifacts). `--slug <name>` gives a stable URL within the workspace; on a path already published, the slug goes to that artifact. A slug that names another artifact than the path was published to needs `--force`, and so does a new slug for a path whose artifact already has one (else rename it with `--draft <id> --slug <name>`). `--description <text>` sets the description; `--description ""` clears it |
 | `read <url-or-id>` | Download an artifact with your sign-in (how agents read links), from any workspace you are in. `--out <file>` picks where; `--workspace <name>` reads a custom URL name there |
 | `list [--all] [--workspace <name>]` | Your artifacts, or the whole workspace's; `--workspace` lists another of your workspaces |
-| `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased |
+| `delete <id-or-url>` | Delete an artifact; its HTML (every version) is erased. An admin deleting someone else's artifact confirms with `--yes` |
 | `prune <id-or-url> --keep <n>` | Delete an artifact's old versions, keeping the latest `n`, to free workspace storage (`check` and `list` show what's used and left) |
 | `workspace api-key create [--name <label>]` / `list` / `revoke <id>` | API keys for CI (admins). The key is shown once; it stops working when revoked, when the admin who created it leaves the workspace or stops being an admin, or when the workspace is deleted |
 | `workspace delete --confirm <name>` | Delete the current workspace and everything in it (admins) |
@@ -63,6 +63,44 @@ goes to stderr.
 | 6 | Network: htmlartifact could not be reached |
 | 7 | Rate-limited: still refused after waiting out `Retry-After` once |
 | 130 | Interrupted (Ctrl-C) |
+
+Some refusals also carry a stable `code` in the `--json` error, with the
+fields named here:
+
+| `code` | Command | Exit | Meaning |
+|---|---|---|---|
+| `slug_names_another_artifact` | `upload --slug` | 2 | The slug names another artifact than the path was published to (`--force` replaces it) |
+| `artifact_has_another_slug` | `upload --slug` | 2 | The path's artifact (`draftId`) already has another custom URL (`slug`): rename it with `--draft <id> --slug <name>`, or `--force` for a separate artifact |
+| `mapped_artifact_not_found` | `upload` | 4 | The artifact this path was published to (`draftId`) is not in the current workspace: deleted, or (a mapping saved by CLI 0.2.2 or older) in another of your workspaces |
+| `confirm_teammate_artifact` | `delete` | 2 | Someone else published it (`author`, `title`, `versionCount`): re-run with `--yes` |
+
+`upload --json` prints a receipt:
+
+```jsonc
+{
+  "ok": true,
+  "action": "updated",          // "created" (new artifact), "updated" (new version), "unchanged" (same content: no new version)
+  "draftId": "k3j9x0a1b2c4",    // never changes; `--draft <id>` always updates this artifact
+  "slug": "weekly-report",      // or null
+  "versionNumber": 4,
+  "url": "https://…/w/acme/weekly-report",
+  "rawUrl": "https://…/w/acme/weekly-report/raw",   // the HTML with a token (`read`); its source in a browser
+  "versionUrl": "https://…/d/k3j9x0a1b2c4/v/4",     // this version, pinned
+  "contentHash": "…",
+  "totalBytes": 18213,
+  "account": "Alice",
+  "workspace": "Acme",
+  "pages": null,                // multi-page uploads: [{ "path", "url" }]
+  "changedFields": ["description"], // what else this upload changed: "title", "description", "slug"
+  "updateCommand": "htmlartifact upload report.html --draft k3j9x0a1b2c4",
+  "warnings": []                // e.g. the title changed (another document at a reused path?), CI without --slug
+}
+```
+
+A page with no `<title>` is named after its first `<h1>`, else its file name.
+A pruned version's URL answers agents with a 404 that says so and gives the
+latest version (`X-Htmlartifact-Latest-Version`); members' browsers go to the
+artifact's history.
 
 ### Publishing from CI
 

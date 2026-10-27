@@ -190,7 +190,7 @@ function draftBindingPath(apiUrl: string, workspaceKey: string, file: string): s
   return path.join(DRAFT_BINDINGS_DIR, `${sha256(`${apiUrl}\n${workspaceKey}\n${file}`)}.json`);
 }
 
-// Bindings saved before 0.2.3: one per (API URL, path), workspace unknown.
+// Bindings saved by CLIs up to 0.2.2: one per (API URL, path), workspace unknown.
 function legacyBindingPath(apiUrl: string, file: string): string {
   return path.join(DRAFT_BINDINGS_DIR, `${sha256(`${apiUrl}\n${file}`)}.json`);
 }
