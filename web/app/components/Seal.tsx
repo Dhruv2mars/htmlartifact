@@ -29,12 +29,9 @@ interface SealProps {
   label?: string;
   className?: string;
   style?: React.CSSProperties;
-  // Wrap each ring (e.g. in a motion.div) without touching the ring itself,
-  // which CSS may already be animating.
-  wrapLayer?: (index: number, ring: React.ReactNode) => React.ReactNode;
 }
 
-function SealArt({ id, size = 40, label, className, style, wrapLayer }: SealProps) {
+function SealArt({ id, size = 40, label, className, style }: SealProps) {
   const seal = useMemo(() => makeSeal(id, size), [id, size]);
   const uid = `s${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
   // Hairlines in screen pixels whatever the size (<use> ignores
@@ -46,8 +43,7 @@ function SealArt({ id, size = 40, label, className, style, wrapLayer }: SealProp
       style={{ width: size, height: size, color: "var(--seal-ink)", ...style }}
       {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true })}
     >
-      {seal.layers.map((layer, i) => {
-        const ring = (
+      {seal.layers.map((layer, i) => (
           <svg key={i} data-layer={i} viewBox="0 0 100 100" className="absolute inset-0 size-full overflow-visible" aria-hidden>
             <defs>
               {layer.paths.map((p, j) => (
@@ -63,15 +59,7 @@ function SealArt({ id, size = 40, label, className, style, wrapLayer }: SealProp
             ))}
             {i === 2 && <circle cx="50" cy="50" r="1.8" fill="currentColor" />}
           </svg>
-        );
-        return wrapLayer ? (
-          <span key={i} className="absolute inset-0">
-            {wrapLayer(i, ring)}
-          </span>
-        ) : (
-          ring
-        );
-      })}
+      ))}
       <svg data-layer="frame" viewBox="0 0 100 100" className="absolute inset-0 size-full overflow-visible" aria-hidden>
         {seal.frame.rings.map((ring) => (
           <circle key={ring.r} cx="50" cy="50" r={ring.r} fill="none" stroke="currentColor" strokeOpacity={ring.opacity} strokeWidth={units(ring.weight)} />

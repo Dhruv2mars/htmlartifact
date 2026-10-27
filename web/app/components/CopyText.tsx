@@ -5,5 +5,5 @@ import { CopyButton, useCopy } from "./Copy";
 // showing the text: on a clipboard failure it is selected for copying by hand.
 export function CopyText({ text, what = "Text", target, className }: { text: string; what?: string; target?: RefObject<HTMLElement | null>; className?: string }) {
   const [state, copy] = useCopy(text, target);
-  return <CopyButton state={state} onCopy={copy} what={what} tone="ghost" className={className} />;
+  return <CopyButton state={state} onCopy={copy} what={what} className={className} />;
 }

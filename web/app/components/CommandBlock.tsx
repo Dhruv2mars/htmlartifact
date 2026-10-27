@@ -26,7 +26,7 @@ export function CommandBlock({ commands, note }: { commands: string[]; note?: st
           accessibleLabel={commands.length > 1 ? "Copy commands" : `Copy command: ${commands[0]}`}
           compact
           feedback="left"
-          tone="ghost"
+         
         />
       </div>
       {note && <p className="border-t border-line bg-surface/60 px-4 py-2.5 text-[13px] leading-relaxed text-muted">{note}</p>}

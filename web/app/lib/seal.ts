@@ -7,8 +7,6 @@
 // a ring of microprint carrying the id at large ones. Every curve is one path
 // plus rotated <use> copies, so a seal stays a few KB however dense it looks.
 
-const SEAL_INKS = 5;
-
 interface SealPath {
   d: string;
   copies: number;
@@ -23,7 +21,6 @@ export interface SealLayer {
 }
 
 export interface Seal {
-  ink: number; // 0..4, the --seal-<n> colour
   layers: SealLayer[]; // 0 rope, 1 rosette, 2 core
   frame: { rings: Array<{ r: number; opacity: number; weight: number }>; text: string | null };
 }
@@ -92,7 +89,6 @@ export function makeSeal(id: string, size = 40): Seal {
   if (tier >= 2) rings.push({ r: tier === 3 ? 45.6 : 46, opacity: 0.55, weight: 0.6 });
 
   return {
-    ink: int(r, 0, SEAL_INKS - 1),
     layers: [
       { paths: [{ d: rope, copies: ropeCopies, step: 180 / n1 / ropeCopies, opacity: 0.55, weight: tier === 3 ? 0.55 : 0.7 }] },
       {

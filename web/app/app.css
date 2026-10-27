@@ -33,9 +33,6 @@
   --color-ask-wash: var(--ask-wash);
   --color-deny-wash: var(--deny-wash);
 
-  --color-term: var(--term);
-  --color-term-ink: var(--term-ink);
-  --color-term-fog: var(--term-fog);
 
   --radius-chip: 6px;
   --radius-control: 8px;
@@ -73,9 +70,6 @@
   --open-wash: #f0fdf4;
   --ask-wash: #fffbeb;
   --deny-wash: #fef2f2;
-  --term: #09090b;
-  --term-ink: #e4e4e7;
-  --term-fog: #a1a1aa;
   --hatch: color-mix(in oklab, var(--line) 100%, transparent);
   --foil: linear-gradient(105deg, #a1a1aa, #c4b5fd 30%, #99f6e4 50%, #fde68a 70%, #a1a1aa);
   --seal-ink: #52525b;
@@ -98,9 +92,6 @@
   --open-wash: rgb(74 222 128 / 0.08);
   --ask-wash: rgb(251 191 36 / 0.08);
   --deny-wash: rgb(248 113 113 / 0.08);
-  --term: #0c0c0e;
-  --term-ink: #e4e4e7;
-  --term-fog: #a1a1aa;
   --seal-ink: #a1a1aa;
   --shadow-pop: 0 0 0 1px var(--border), 0 16px 40px -12px rgb(0 0 0 / 0.7);
   color-scheme: dark;

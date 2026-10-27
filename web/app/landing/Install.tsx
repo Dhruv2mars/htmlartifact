@@ -10,7 +10,11 @@ const RUNNERS = ["npx", "bunx", "pnpm dlx"] as const;
 export function Install({ command = "htmlartifact login", className }: { command?: string; className?: string }) {
   const reduce = useReducedMotion();
   const [i, setI] = useState(0);
-  const [paused, setPaused] = useState(false);
+  // Paused while pointed at or focused, tracked apart so leaving one keeps
+  // the other's pause.
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const paused = hovered || focused;
   const text = useRef<HTMLSpanElement>(null);
   const full = `${RUNNERS[i]} ${command}`;
   const [state, copy] = useCopy(full, text);
@@ -21,10 +25,10 @@ export function Install({ command = "htmlartifact login", className }: { command
   }, [i, reduce, paused, state]);
   return (
     <div
-      onPointerEnter={() => setPaused(true)}
-      onPointerLeave={() => setPaused(false)}
-      onFocus={() => setPaused(true)}
-      onBlur={() => setPaused(false)}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
       className={`flex h-12 max-w-full items-center gap-3 rounded-control border border-border bg-card pl-4 pr-1.5 font-mono text-[14px] ${className ?? ""}`}
     >
       <span aria-hidden className="select-none text-faint">

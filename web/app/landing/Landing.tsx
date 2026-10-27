@@ -93,10 +93,14 @@ function Hero() {
 }
 
 const STEPS = [
-  { title: "Sign in", body: "A browser opens once. Works over SSH.", cmd: "npx htmlartifact login" },
-  { title: "Start a workspace", body: "You're its admin. Invite codes expire in 7 days.", cmd: "npx htmlartifact workspace invite" },
-  { title: "Your team joins", body: "With the code, or the /join link it prints.", cmd: "npx htmlartifact workspace join HA-7KQ2-MX9P-4TRA" },
-  { title: "Anyone publishes", body: "Same file again: a new version, same link.", cmd: "npx htmlartifact upload plan.html" }
+  { title: "Sign in", body: "A browser opens once. Works over SSH.", cmds: ["npx htmlartifact login"] },
+  {
+    title: "Start a workspace",
+    body: "You're its admin. Invite codes expire in 7 days.",
+    cmds: ['npx htmlartifact workspace create "Northwind"', "npx htmlartifact workspace invite"]
+  },
+  { title: "Your team joins", body: "With the code, or the /join link it prints.", cmds: ["npx htmlartifact workspace join HA-7KQ2-MX9P-4TRA"] },
+  { title: "Anyone publishes", body: "Same file again: a new version, same link.", cmds: ["npx htmlartifact upload plan.html"] }
 ];
 
 function Steps() {
@@ -115,7 +119,11 @@ function Steps() {
             </p>
             <p className="mt-1 pl-[2.1rem] text-[14px] text-muted">{s.body}</p>
             <p className="mt-4 ml-[2.1rem] rounded-[6px] border border-line bg-surface px-2.5 py-1.5 font-mono text-[12px] leading-relaxed text-foreground">
-              <Words text={s.cmd} />
+              {s.cmds.map((c) => (
+                <span key={c} className="block">
+                  <Words text={c} />
+                </span>
+              ))}
             </p>
           </div>
         ))}

@@ -22,7 +22,7 @@ export function CopyLink({ url, className }: { url: string; className?: string }
           onFocus={(e) => e.currentTarget.select()}
           className="min-w-0 flex-1 bg-transparent font-mono text-[12px] text-muted outline-none focus:text-foreground"
         />
-        <CopyButton state={state} onCopy={copy} what="Link" label="Copy link" tone="ghost" />
+        <CopyButton state={state} onCopy={copy} what="Link" label="Copy link" />
       </div>
       <p aria-hidden className={cx("mt-1.5 text-[13px] text-deny", state !== "failed" && "hidden")}>
         Couldn't copy automatically. The link is selected in the field: copy it from there.

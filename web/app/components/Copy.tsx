@@ -50,8 +50,6 @@ export function CopyButton({
   accessibleLabel,
   compact = false,
   feedback = "above",
-  tone = "paper",
-  size = "md",
   className
 }: {
   state: CopyState;
@@ -63,8 +61,6 @@ export function CopyButton({
   // Where a compact button's result label floats: above it, or to its left
   // (inside a clipped card, where there is no room above).
   feedback?: "above" | "left";
-  tone?: "paper" | "ink" | "ghost";
-  size?: "md" | "lg";
   className?: string;
 }) {
   const Icon = state === "copied" ? CheckIcon : state === "failed" ? AlertIcon : CopyIcon;
@@ -77,14 +73,10 @@ export function CopyButton({
         aria-label={accessibleLabel}
         className={cx(
           "press inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[6px] font-sans font-medium whitespace-nowrap",
-          size === "lg" ? "h-10 text-[13.5px]" : "h-8 text-[12.5px]",
+          "h-8 text-[12.5px]",
           // Wide enough for the longest state, so nothing around it moves.
-          compact ? (size === "lg" ? "w-10" : "w-8") : size === "lg" ? "min-w-[7.25rem] px-3" : "min-w-[6.5rem] px-2.5",
-          tone === "ink"
-            ? "text-term-fog hover:bg-white/10 hover:text-term-ink"
-            : tone === "ghost"
-              ? "text-muted hover:bg-surface hover:text-foreground"
-              : "text-muted hover:bg-surface hover:text-foreground"
+          compact ? "w-8" : "min-w-[6.5rem] px-2.5",
+          "text-muted hover:bg-surface hover:text-foreground"
         )}
       >
         <Icon className={cx(compact ? "size-[15px]" : "size-3.5", state === "copied" && "text-open", state === "failed" && "text-deny")} />
