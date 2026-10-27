@@ -28,6 +28,22 @@ Done = each item proven by command output in this session.
 - [x] S8 Buildkite's 2 vCPU / 4 GB agents failed "a dense ~4 MB table page passes, in bounded memory" (heapUsed delta 78–129 MB vs 64 MB) on this branch 3× and on main (rebuild #19). The test now validates in a child with a 64 MB heap: 20/20 local passes; a full parse5 tree there fails with "heap out of memory"
 - [x] S9 ship/release count a Buildkite build of the exact commit as the gate (`bk` CLI, org dhruv2mars) when its `check` job ran `bun run check` and passed outright (exit 0, not soft-failed); otherwise they run it locally. Proof: with the local record removed, `ensureChecked(a7407c9)` printed "passed … in Buildkite build #21" without running the suite. Rejected: e5c0422's passed build #3 (old pipeline, no `check` job), an unknown commit, and no `bk` on PATH
 - [ ] Follow-up, left alone: on a heavily loaded machine the local suite takes 20–80 min and some tests time out or miss timing asserts (proxy "Network connection lost", "D1 write budget on admin routes" 240 s, sub-second validator timing). Buildkite runs it in ~10 min
+## Publishing bugs from the simulated-user pass (2026-10-27, branch fix/cli-publishing)
+Source: /tmp/ha-design/product/bugs-publishing.md (+ journey-*/ screenshots and logs).
+Done = each bug below is reproduced by a test that fails on main and passes with the fix (test name next to it), or rejected with the reason written here; agent-facing output (exit codes, `--json` fields) stays backward compatible and README documents every new field and error code; full `bun run test` (d1 + r2), typecheck, typecheck:cli, typecheck:web and lint pass locally; Sol (sol-loop) agrees; the Trail's Buildkite gate is green; the Trail is merged. No edits to web/app/**, src/render-web.ts, src/render.ts, src/web.ts (frontend thread); anything they need is written in the Trail for that thread.
+- [ ] P1 `--description` on unchanged content prints "Unchanged" yet changes it; `--description ""` cannot clear
+- [ ] P2 "saved artifact is in another workspace" hint says `--new`, which makes a duplicate (fixed with P10)
+- [ ] P3 `upload --slug` on an already-published file creates a second artifact instead of giving that one the slug
+- [ ] P4 the "Raw HTML" URL shows the viewer in a browser
+- [ ] P5 a pruned version link shows a member the "not in this workspace, ask for an invite" 404
+- [ ] P6 version title is the HEAD commit message for an uncommitted file
+- [ ] P7 an unrelated new document at the same path silently becomes a new version
+- [ ] P8 validation fix text points to "file-upload", which htmlartifact doesn't have
+- [ ] P9 title falls back to the file name and ignores the page's `<h1>`
+- [ ] P10 the CLI remembers one artifact per file path, not per workspace
+- [ ] P11 admin `delete` erases a teammate's artifact with no confirmation
+- [ ] P12 README: upload receipt and new error codes documented; CHANGELOG Unreleased
+- [ ] P13 Trail + Buildkite green + sol-loop + merge
 
 ## GA launch gates (2026-10-21, branch fix/ga-launch-gates)
 Done = every box below has its proof named next to it (test name, command output, or live URL check). Nothing is ticked on reasoning alone.
