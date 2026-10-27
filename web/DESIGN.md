@@ -29,9 +29,14 @@ inside it is the loud thing.
 3. **The seal is the only ornament.** A fine guilloche medallion drawn in
    hairline ink, generated from the artifact's id: same id, same seal,
    everywhere. Monochrome. At most one large seal per screen (the hero link, an
-   artifact's history, an invite); in lists it shrinks to a 20px glyph. Under a
-   fine pointer the hero seal catches light like foil: the one decorative
-   motion on the site.
+   artifact's history, an invite); in lists it shrinks to a 20px glyph.
+   **The foil exception.** The stamped seal (the landing story, an invite
+   ticket) carries a thin iridescent sheen, the way foil on a real seal does.
+   It is the only colour that means nothing, and it is allowed because it is
+   light on the seal, not paint: it lives only inside the seal's own strokes,
+   it is faint at rest, it turns with a fine pointer, and it is the one
+   decorative motion on the site. It never spreads to text, rules or
+   backgrounds, and no second ornament may borrow it.
 4. **Small, exact type.** Geist for everything, Geist Mono for what you could
    type or compare: commands, ids, codes, counts, dates in tables. Body 15px,
    UI 14px, metadata 13px mono. Headings medium weight with tight tracking,
@@ -76,6 +81,6 @@ code). Rows inside the ruled sheet are square.
 
 ## Avoided (checked)
 
-No brand gradient, no glow, no coloured seals, no card grids, no drop shadows
+No brand gradient, no glow, no coloured seals (the foil sheen above is the one exception), no card grids, no drop shadows
 on page content, no all-caps eyebrows, no heavy display weights, no "→" glued
 to link text, no fade-up on every section.

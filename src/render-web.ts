@@ -28,8 +28,7 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
   const version = escapeHtml(frame.version);
   const state = frame.latest
     ? `<span class="chip now">Latest</span>`
-    : `<span class="chip old">Older<span class="long"> version</span></span><a class="latest" href="${escapeHtml(frame.latestUrl)}">` +
-      `<span class="wide">Go to latest</span><span class="narrow">Open latest</span></a>`;
+    : `<span class="chip old">Older version</span><a class="latest" href="${escapeHtml(frame.latestUrl)}">Go to latest</a>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -42,7 +41,7 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
 <style>${FRAME_CSS}</style>
 </head>
 <body>
-<header class="bar">
+<header class="bar${frame.latest ? "" : " is-old"}">
 <div class="where">
 <span class="seal">${sealSvg(frame.id, 20, "currentColor")}</span>
 <div class="path">
@@ -145,7 +144,6 @@ a { color: inherit; text-decoration: none; touch-action: manipulation; }
   color: var(--intaglio); font-size: 13px; font-weight: 600; white-space: nowrap;
 }
 .latest .i { width: 14px; height: 14px; }
-.latest .narrow { display: none; }
 
 .tools { flex: none; display: flex; align-items: center; gap: 2px; }
 .access {
@@ -193,10 +191,12 @@ iframe.artifact { flex: 1 1 auto; display: block; width: 100%; min-height: 0; bo
   .title { max-width: 100%; margin: 0; line-height: 18px; }
   .version { margin-left: 8px; gap: 2px; }
   .chip.now { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .chip.old:not(.num) .long { display: none; }
-  .latest .wide { display: none; }
-  .latest .narrow { display: inline; }
-  .latest { margin-left: 0; }
+  /* An older version gets a second row of its own: which version, and the
+     way to the latest, never squeezed against the title. */
+  .is-old { height: auto; min-height: 44px; padding-top: 6px; padding-bottom: 4px; align-items: flex-start; }
+  .is-old .where { flex-wrap: wrap; row-gap: 2px; }
+  .is-old .version { flex-basis: 100%; margin-left: 30px; gap: 6px; }
+  .is-old .tools { margin-top: 2px; }
   .tool { width: 36px; height: 36px; padding: 0; }
   .tool .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }

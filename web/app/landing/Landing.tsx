@@ -39,18 +39,18 @@ const rise = (ms: number) => ({ "--d": `${ms}ms` }) as React.CSSProperties;
 
 function Hero() {
   return (
-    <Rule as="section" inner="grid gap-x-10 gap-y-7 px-4 pb-9 pt-12 sm:px-6 sm:pb-10 sm:pt-16 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+    <Rule as="section" inner="grid gap-x-10 gap-y-5 px-4 pb-6 pt-8 sm:gap-y-7 sm:px-6 sm:pb-10 sm:pt-16 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
       <div className="min-w-0">
         <h1 className="rise text-display font-medium tracking-[-0.045em] text-foreground" style={rise(0)}>
           Members only.
         </h1>
-        <p className="rise mt-4 max-w-[30ch] text-[17px] leading-snug text-muted sm:text-[18px]" style={rise(80)}>
+        <p className="rise mt-3 max-w-[30ch] text-[16px] leading-snug text-muted sm:mt-4 sm:text-[18px]" style={rise(80)}>
           The HTML your coding agents write, as a link only your workspace can open.
         </p>
       </div>
       <div className="rise relative min-w-0 md:w-[20.5rem]" style={rise(160)}>
         <CopyCommand command="npx htmlartifact login" large />
-        <p className="mt-3 flex gap-x-5 text-[14px]">
+        <p className="mt-3 hidden gap-x-5 text-[14px] sm:flex">
           <a href="/docs" className="text-muted underline decoration-control underline-offset-4 transition-colors duration-150 hover:text-foreground hover:decoration-foreground">
             Read the docs
           </a>
