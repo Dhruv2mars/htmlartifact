@@ -15,7 +15,7 @@ steps:
       npm i -g --silent bun@1.3.13
       bun install --frozen-lockfile
       bun run typecheck && bun run typecheck:cli && bun run typecheck:web
-      bun run lint
+      bun --bun run lint
       bun scripts/changelog.ts check
       bun run test
   - label: ":package: build + CLI smoke"
