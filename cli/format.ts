@@ -29,6 +29,9 @@ export interface Receipt {
   account: string | null;
   workspace: string | null;
   pages: Array<{ path: string; url?: string }> | null;
+  // Artifact fields this upload changed besides its content ("title",
+  // "description", "slug"); `action` alone says whether a version was published.
+  changedFields: string[];
   updateCommand: string;
   warnings: string[];
 }
@@ -44,7 +47,9 @@ export const printReceipt = (receipt: Receipt) =>
     const headline = {
       created: "Published",
       updated: "Published a new version",
-      unchanged: `Unchanged: this content is already version ${receipt.versionNumber}`
+      unchanged: receipt.changedFields.length
+        ? `Unchanged content (still version ${receipt.versionNumber}); updated the ${listWords(receipt.changedFields)}.`
+        : `Unchanged: this content is already version ${receipt.versionNumber}`
     }[receipt.action];
     yield* Console.log(headline);
     yield* Console.log(`URL: ${receipt.url}`);
@@ -59,6 +64,11 @@ export const printReceipt = (receipt: Receipt) =>
       yield* Console.warn(`Warning: ${warning}`);
     }
   });
+
+// "title", "title and slug", "title, description and slug".
+function listWords(words: string[]): string {
+  return words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words.at(-1)}` : words.join("");
+}
 
 // The markup rules, checked locally with parse5: exact line and column for
 // every issue. The server checks again (with the account's limits) on upload.

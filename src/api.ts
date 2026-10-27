@@ -1030,6 +1030,9 @@ async function requireAdmin(c: Context<MemberEnv>, next: Next): Promise<Response
   return next();
 }
 
+// The artifact fields an upload can change besides publishing a version.
+const CHANGEABLE_FIELDS = ["title", "description", "slug"] as const;
+
 async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const viewer = c.get("viewer");
   const db = c.env.DB;
@@ -1105,6 +1108,9 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const id = existing?.id || newDraftId();
   const observedVersionId = existing?.current_version_id ?? null;
   const title = validation.title || existing?.title || filename || "Untitled";
+  // A description string sets it, and an empty one clears it; without one
+  // (no --description) the artifact keeps the description it has.
+  const setDescription = typeof description === "string";
   const cleanDescription = cleanText(description, 1000);
   let versionId = current?.id;
   // Prefix of the R2 objects this upload writes; deleted again if its rows are
@@ -1266,7 +1272,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   statements.push(
     db
       .prepare(
-        `UPDATE drafts SET current_version_id = ?, title = ?, description = COALESCE(?, description),
+        `UPDATE drafts SET current_version_id = ?, title = ?, description = CASE WHEN ? THEN ? ELSE description END,
            repo_org = COALESCE(?, repo_org), repo_name = COALESCE(?, repo_name), repo_host = COALESCE(?, repo_host),
            slug = COALESCE(?, slug), updated_at = CASE WHEN ? THEN updated_at ELSE unixepoch() END
          WHERE id = ? AND current_version_id IS ? AND EXISTS (SELECT 1 FROM draft_versions WHERE id = ?)`
@@ -1274,6 +1280,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       .bind(
         versionId,
         title,
+        setDescription ? 1 : 0,
         cleanDescription,
         cleanText(metadata.repoOrg),
         cleanText(metadata.repoName),
@@ -1321,6 +1328,9 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const publicUrl = draftUrl(origin, draft, viewer.workspace.handle);
   const multiPage = validation.pages.length > 1;
   const warnings = [...validation.warnings];
+  // What else this upload changed on an existing artifact: identical content
+  // publishes no version, but can still set its description or slug.
+  const changedFields = existing ? CHANGEABLE_FIELDS.filter((field) => existing[field] !== draft[field]) : [];
   // An admin (or a CI key) publishing over a teammate's artifact: say so,
   // since the artifact keeps its author.
   if (existing && !unchanged && existing.account_id !== viewer.account_id) {
@@ -1333,6 +1343,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       ok: true,
       created: !existing,
       unchanged,
+      changedFields,
       draftId: id,
       slug: draft.slug,
       versionId,

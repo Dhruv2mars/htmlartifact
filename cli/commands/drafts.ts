@@ -246,6 +246,8 @@ export const upload = Command.make(
       account: body.account?.name || null,
       workspace: body.workspace?.name || null,
       pages: body.pages || null,
+      // Servers before changedFields sent none.
+      changedFields: Array.isArray(body.changedFields) ? body.changedFields : [],
       // The draft ID never moves; a slug can be renamed and reused by
       // another draft, so it would not reliably name this one.
       updateCommand: [`${CMD} upload`, shellQuote(displayPath(source.resolved)), `--draft ${body.draftId}`].join(" "),
