@@ -7,11 +7,10 @@ something goes wrong.
 
 ## Reporting a vulnerability
 
-Open a private advisory at
-<https://github.com/Dhruv2mars/htmlartifact/security/advisories/new>
-(Security tab → "Report a vulnerability"). Please do not open a public issue,
-discussion or pull request. We acknowledge within 2 business days and aim to fix
-critical issues within 7 days. We will credit you unless you ask us not to.
+Email Dhruv2mars@gmail.com (the maintainer) with "htmlartifact security" in
+the subject. Please do not report it anywhere public. We acknowledge within 2
+business days and aim to fix critical issues within 7 days. We will credit you
+unless you ask us not to.
 
 Supported versions: the hosted service at https://htmlartifact.pages.dev runs
 `main`, and only the latest release of the `htmlartifact` CLI on npm gets fixes.

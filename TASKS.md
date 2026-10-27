@@ -1,5 +1,16 @@
 # htmlartifact — GA checklist
 
+## Ship without GitHub (2026-10-27, branch chore/ship-on-entire)
+GitHub suspended the account; the repo lives on Entire (`origin` = entire://aws-ap-south-1.entire.io/et/dhruv2mars/htmlartifact, public at https://entire.com/et/dhruv2mars/htmlartifact). Nothing GitHub Actions did runs anymore.
+Done = each item proven by command output in this session.
+- [ ] S1 `bun run check` runs every gate ci.yml ran (install, typechecks, lint, changelog, test d1+r2, built CLI on current and oldest Node); documented as the trail merge gate
+- [ ] S2 Entire runner for the gate, if runners can run commands (else say why not)
+- [ ] S3 live vs main: what's deployed (Pages + ops Worker) compared with main
+- [ ] S4 `bun run ship` deploys main from a local checkout (guards, check, deploy:all, smoke); staging first, then production
+- [ ] S5 `bun run release` publishes the CLI without GitHub provenance; `npm publish --dry-run` verified; real publish only if main has CLI changes newer than npm latest
+- [ ] S6 GitHub references users/tooling depend on point at Entire (package.json, README, CONTRIBUTING, SECURITY, CHANGELOG, CLI output, deploy scripts, dependabot); web/app/** untouched
+- [ ] S7 trail filed with the canonical URL, Sol-reviewed, merged; main deployed and smoked
+
 ## GA launch gates (2026-10-21, branch fix/ga-launch-gates)
 Done = every box below has its proof named next to it (test name, command output, or live URL check). Nothing is ticked on reasoning alone.
 - [x] G0 main CI green again: the 30df113 test step hung on test/deletion.test.js (300 s per test) and was cancelled at 20 min, so Deploy skipped. Proof: CI green on main, Deploy + smoke green. Done: main c650946 (PR #27) CI, Deploy (smoke step) and Release all success; local `bun run smoke` 11/11 against production afterwards.

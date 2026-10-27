@@ -7,6 +7,13 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+### Changed
+
+- The source moved to <https://entire.com/et/dhruv2mars/htmlartifact>. Report
+  bugs by email to Dhruv2mars@gmail.com, and security problems as SECURITY.md
+  says. Releases from now on have no npm provenance (CONTRIBUTING.md →
+  Releasing).
+
 ## [0.2.2] - 2026-10-21
 
 ### Security
@@ -226,10 +233,10 @@ First release.
   HTML stored in D1), with per-workspace and database quotas and rate limits
   sized to them.
 
-[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.2...HEAD
-[0.2.2]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.1...v0.2.2
-[0.2.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.2...v0.2.0
-[0.1.2]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/Dhruv2mars/htmlartifact/releases/tag/v0.1.0
+[Unreleased]: https://entire.com/et/dhruv2mars/htmlartifact/commits
+[0.2.2]: https://www.npmjs.com/package/htmlartifact/v/0.2.2
+[0.2.1]: https://www.npmjs.com/package/htmlartifact/v/0.2.1
+[0.2.0]: https://www.npmjs.com/package/htmlartifact/v/0.2.0
+[0.1.2]: https://www.npmjs.com/package/htmlartifact/v/0.1.2
+[0.1.1]: https://www.npmjs.com/package/htmlartifact/v/0.1.1
+[0.1.0]: https://www.npmjs.com/package/htmlartifact/v/0.1.0
