@@ -1,4 +1,5 @@
 import { createEmulator } from "@workos/emulate";
+import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -364,4 +365,42 @@ export async function retryLocked(run) {
       await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
     }
   }
+}
+
+// Runs a command at a terminal (a pty, through `script`), as a person would:
+// each answer is typed once the output so far matches its `when`, and input
+// ends after the last one. Resolves with the exit code and everything printed
+// (stdout and stderr together, \r\n turned into \n).
+export function atTerminal(command, args, { env = process.env, answers = [], timeout = 60_000 } = {}) {
+  const quoted = [command, ...args].map((a) => `'${String(a).replaceAll("'", `'\\''`)}'`).join(" ");
+  const [bin, scriptArgs] =
+    process.platform === "darwin"
+      ? // macOS script refuses a socket for stdin (Node's pipes): hand it a real pipe.
+        ["sh", ["-c", 'cat | script -q /dev/null "$@"', "sh", command, ...args]]
+      : ["script", ["-qec", quoted, "/dev/null"]];
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, scriptArgs, { env, stdio: ["pipe", "pipe", "pipe"] });
+    const pending = [...answers];
+    let output = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`timed out at a terminal; output so far:\n${output}`));
+    }, timeout);
+    const onData = (chunk) => {
+      output += chunk.toString("utf8");
+      while (pending.length && pending[0].when.test(output)) {
+        child.stdin.write(`${pending.shift().type}\n`);
+        // Nothing left to type: input ends (as Ctrl-D would), so `script` exits with the command.
+        if (!pending.length) child.stdin.end();
+      }
+    };
+    if (!pending.length) child.stdin.end();
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.on("error", reject);
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, output: output.replaceAll("\r\n", "\n") });
+    });
+  });
 }

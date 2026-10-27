@@ -1,5 +1,14 @@
 # htmlartifact — GA checklist
 
+## Membership and login bugs from simulated users (2026-10-27, branch fix/membership-login)
+Source: /tmp/ha-design/product/bugs-membership.md (agents simulating real users on the local stack).
+Done = each bug below is either fixed with a test that fails on main and passes here (test named next to it) or rejected with the reason; typecheck, lint and `bun run test` green locally and on Buildkite; Trail reviewed by Sol (sol-loop) and merged. No edits to web/app/**, src/render-web.ts, src/render.ts, src/web.ts (frontend thread owns them): web changes are described in the Trail instead.
+- [ ] M1 leaving a workspace revokes every live invite code in it (endMembership → revokeInvitesUpTo; the membership.deleted webhook does it again). Removal keeps revoking; leaving must not.
+- [ ] M2 after `workspace leave` there is no current workspace even when exactly one remains (CLI and web); `leave` has no confirmation and no --workspace.
+- [ ] M3 `login` without --workspace, in several workspaces: discards the finished browser sign-in, exits 3, saves nothing. TTY: prompt; otherwise keep the sign-in so `login --workspace <name>` finishes it.
+- [ ] M4 the local WorkOS emulator approves every CLI device login as the first seeded user (alice): each local login must choose its user.
+- [x] Shared: `cli/prompt.ts` (TTY-only questions on stderr) and `atTerminal` in test/helpers.js (pty via `script`; checked on macOS).
+
 ## GA launch gates (2026-10-21, branch fix/ga-launch-gates)
 Done = every box below has its proof named next to it (test name, command output, or live URL check). Nothing is ticked on reasoning alone.
 - [x] G0 main CI green again: the 30df113 test step hung on test/deletion.test.js (300 s per test) and was cancelled at 20 min, so Deploy skipped. Proof: CI green on main, Deploy + smoke green. Done: main c650946 (PR #27) CI, Deploy (smoke step) and Release all success; local `bun run smoke` 11/11 against production afterwards.
