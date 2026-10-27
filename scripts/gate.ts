@@ -25,12 +25,13 @@ export async function requireOriginTip(branch: string) {
 }
 
 export const recordPass = (sha: string) => Bun.write(passed, `${sha}\n`);
+const lastPass = async () => (await Bun.file(passed).text().catch(() => "")).trim();
 
-// Runs the gate unless it already passed on this commit (with a clean tree).
+// Runs the gate unless it already passed on this commit. check records a pass
+// only if HEAD stayed on the commit with a clean tree the whole time, so a
+// checkout that changed while it ran is refused rather than shipped.
 export async function ensureChecked(sha: string) {
-  const last = await Bun.file(passed)
-    .text()
-    .catch(() => "");
-  if (last.trim() === sha) console.log(`bun run check already passed on ${sha.slice(0, 7)}`);
-  else await $`bun run check`.cwd(root);
+  if ((await lastPass()) === sha) return console.log(`bun run check already passed on ${sha.slice(0, 7)}`);
+  await $`bun run check`.cwd(root);
+  if ((await lastPass()) !== sha) throw new Error(`The checkout changed while bun run check ran on ${sha.slice(0, 7)}. Start again from a clean origin tip.`);
 }

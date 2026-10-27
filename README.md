@@ -207,8 +207,9 @@ bun run ship   # bun run check (skipped if it passed on this commit), deploy:all
 ```
 
 `ship` refuses unless HEAD is exactly `origin/main` with a clean tree, and
-prints the commit that is live before it deploys (Pages records the commit of
-each deployment; the ops Worker version is tagged with it). It needs
+prints the commit of the last production deployment before it deploys (Pages
+records the commit of each deployment; the ops Worker version is tagged with
+it). It needs
 Cloudflare credentials: `bunx wrangler login`, or `CLOUDFLARE_API_TOKEN` (Pages,
 Workers Scripts and D1 Edit) and `CLOUDFLARE_ACCOUNT_ID`. `bun run ship --
 --staging` does the same for `origin/staging` and
