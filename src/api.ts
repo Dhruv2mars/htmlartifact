@@ -1333,6 +1333,14 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const changedFields = existing ? CHANGEABLE_FIELDS.filter((field) => existing[field] !== draft[field]) : [];
   // An admin (or a CI key) publishing over a teammate's artifact: say so,
   // since the artifact keeps its author.
+  // A page with a different title at a reused path is most likely another
+  // document: say so (it is still published; titles change between runs of
+  // one report too). A title that was only a file name is not a change.
+  if (existing && !unchanged && validation.title && existing.title !== validation.title && (await hadRealTitle(db, existing))) {
+    warnings.push(
+      `The title changed from "${existing.title}" to "${validation.title}". If this is a different document, publish it separately with --new (this upload is version ${version.version_number} of ${id}).`
+    );
+  }
   if (existing && !unchanged && existing.account_id !== viewer.account_id) {
     const author = await db.prepare("SELECT name FROM accounts WHERE id = ?").bind(existing.account_id).first<{ name: string }>();
     const name = author?.name || "a teammate";
@@ -1362,6 +1370,17 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     },
     existing ? 200 : 201
   );
+}
+
+// Whether an artifact's title came from its pages, not the fallbacks of an
+// upload without one ("Untitled", or a version's file name).
+async function hadRealTitle(db: D1Database, draft: DraftRow): Promise<boolean> {
+  if (draft.title === "Untitled") return false;
+  const named = await db
+    .prepare("SELECT 1 FROM draft_versions WHERE draft_id = ? AND original_filename = ? LIMIT 1")
+    .bind(draft.id, draft.title)
+    .first();
+  return !named;
 }
 
 // A read-only preflight: what the caller can publish, and whether a given

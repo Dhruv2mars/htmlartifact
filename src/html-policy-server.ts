@@ -4,10 +4,12 @@ import {
   createIssueList,
   EVENT_HANDLER_ATTRS,
   htmlResult,
+  NO_TITLE_HEADING_MESSAGE,
   NO_TITLE_MESSAGE,
   precheckHtml,
   runUploadAsync,
   SANDBOX_APIS,
+  headingText,
   titleText,
   uploadSteps,
   type Attribute,
@@ -46,8 +48,8 @@ import {
 //   - srcdoc attributes; <svg>/<math>; context tags (below).
 // Each callback runs the full element check (checkElementRules) on the
 // attributes as parse5 sees them (first duplicate wins, references decoded,
-// foreign names localized), so findings match parse5's. Script and title
-// text is read from the output between markers, not with text handlers
+// foreign names localized), so findings match parse5's. Script, title and
+// <h1> text is read from the output between markers, not with text handlers
 // (lol-html splits text at every "<"); a page that starts plainly has its
 // title read straight from the source (`leadingTitle`).
 //
@@ -89,7 +91,9 @@ import {
 //      is checked where it appears, so nothing parse5 checks is skipped.
 //      Counts can differ (parse5 also counts reconstructed formatting
 //      elements), the first <title> is the first in source order, and the
-//      text of a <title> holding markup inside SVG is approximated.
+//      text of a <title> holding markup inside SVG is approximated. So is an
+//      <h1>'s (what looks like a tag is dropped, even inside a <script> or
+//      CDATA in it), and only the first 16 <h1>s are read.
 //   6. A refused page (ambiguous-markup, too-deep, parse-failed) counts as
 //      having scripts, and may miss findings after the point of refusal.
 //   7. Limits. parse5's depth (512) and attribute (1000) limits protect its
@@ -108,7 +112,7 @@ const TEXT_TAGS = new Set(["script", "style", "title", "textarea", "xmp", "ifram
 // the policy lowercases tag names, so <linK> with a Kelvin sign is a link.
 // (Factored by first letter: irregexp scans it faster.)
 const TAG_SCAN =
-  /<(s(?:cript|ource|vg|elect|tyle)|t(?:itle|rac[k\u212a]|emplate|extarea)|lin[k\u212a]|m(?:eta|ath)|i(?:mg|mage|frame)|video|a(?:udio|pplet)|f(?:orm|rameset)|object|embed|no(?:script|embed|frames)|col|xmp|plaintext)(?=[\t\n\f\r />])/gi;
+  /<(s(?:cript|ource|vg|elect|tyle)|t(?:itle|rac[k\u212a]|emplate|extarea)|lin[k\u212a]|m(?:eta|ath)|i(?:mg|mage|frame)|video|a(?:udio|pplet)|f(?:orm|rameset)|object|embed|no(?:script|embed|frames)|col|xmp|plaintext|h1)(?=[\t\n\f\r />])/gi;
 // Tags with rules, called back whenever the page has them.
 const RULE_TAGS = new Set(["script", "title", "link", "meta", "img", "image", "video", "audio", "source", "track", "form", "iframe", "object", "embed", "applet"]);
 // Tags that only matter inside <select>, after <frameset>, or after <col> in a <template>.
@@ -212,6 +216,8 @@ function selectorsFor(found: Scan, titleKnown: boolean): string[] {
   for (const tag of tags) {
     const base = tag.replace(/\u212a/g, "k");
     if (tag === "title" && titleKnown && !contexts) continue;
+    // An <h1> only names a page with no <title>.
+    if (tag === "h1" && !titleKnown) selectors.push("h1");
     if (
       RULE_TAGS.has(base) ||
       tag === "template" ||
@@ -492,6 +498,7 @@ interface PassResult {
   hasScripts: boolean;
   sandbox: Set<string>; // SANDBOX_APIS codes some script or handler matched
   title: string | null;
+  heading: string | null; // the first <h1>'s text, read only when no <title> was found
   hosts: Set<string>;
   noscript: boolean; // the page may contain <noscript> elements
 }
@@ -608,7 +615,7 @@ async function readPage(html: string, restore: (text: string) => string = (text)
   const selectors = selectorsFor(found, Boolean(leading));
   const noscript = found.tags.has("noscript");
   if (!selectors.length) {
-    return { issues: issues.list(), hasScripts, sandbox, title: leading ?? null, hosts, noscript };
+    return { issues: issues.list(), hasScripts, sandbox, title: leading ?? null, heading: null, hosts, noscript };
   }
 
   // Scripts' and titles' text is read from the output, between markers:
@@ -630,6 +637,8 @@ async function readPage(html: string, restore: (text: string) => string = (text)
   // of <title> tooltips. Past this many, titles are read in a second pass
   // only if none of these had text.
   let titlesSeen = 0;
+  // Likewise the first <h1>s, in case the page has no <title>.
+  const headings: number[] = [];
 
   // Context, as conservative as the comments at the top describe.
   let templates = 0;
@@ -730,6 +739,10 @@ async function readPage(html: string, restore: (text: string) => string = (text)
       // A title inside <foreignObject>/<desc> is an HTML element again.
       if (++titlesSeen <= TITLES_MARKED) titles.push({ id: mark(current), foreign: !currentIsHtml });
     },
+    heading: () => {
+      if (inTemplate() || !currentIsHtml || headings.length >= TITLES_MARKED) return;
+      headings.push(mark(current));
+    },
     imageHost: (host) => hosts.add(host)
   };
 
@@ -811,7 +824,16 @@ async function readPage(html: string, restore: (text: string) => string = (text)
       hasScripts = true;
     }
   }
-  return { issues: issues.list(), hasScripts, sandbox, title, hosts, noscript };
+  // An <h1> holds markup: its text is what remains without tags and comments.
+  let heading: string | null = null;
+  for (const id of output && !title ? headings : []) {
+    const text = between(id, true, true);
+    if (/\S/.test(text)) {
+      heading = headingText(text);
+      break;
+    }
+  }
+  return { issues: issues.list(), hasScripts, sandbox, title, heading, hosts, noscript };
 }
 
 const NOSCRIPT_TAG = /<(\/?)(noscript)(?=[\t\n\f\r />])/gi;
@@ -828,7 +850,7 @@ async function validateHtml(html: unknown, options: { maxBytes?: number } = {}):
   const first = await readPage(source);
   const issues = createIssueList<never>();
   for (const issue of first.issues) issues.merge(issue);
-  let { hasScripts, title } = first;
+  let { hasScripts, title, heading } = first;
   const sandbox = first.sandbox;
   const hosts = first.hosts;
 
@@ -846,14 +868,15 @@ async function validateHtml(html: unknown, options: { maxBytes?: number } = {}):
     for (const code of second.sandbox) sandbox.add(code);
     for (const host of second.hosts) hosts.add(host);
     title = second.title ?? title;
+    heading = second.heading ?? heading;
   }
 
   for (const api of SANDBOX_APIS) {
     if (sandbox.has(api.code)) issues.warning(api.code, api.message, { fix: api.fix });
   }
-  if (!title) issues.warning("no-title", NO_TITLE_MESSAGE);
+  if (!title) issues.warning("no-title", heading ? NO_TITLE_HEADING_MESSAGE : NO_TITLE_MESSAGE);
 
-  return htmlResult({ issues, title, hasScripts, bytes, externalImageHosts: [...hosts].sort() });
+  return htmlResult({ issues, title: title ?? heading, hasScripts, bytes, externalImageHosts: [...hosts].sort() });
 }
 
 // validateUpload (src/html-policy-rules.ts) with the HTMLRewriter validator.
@@ -873,7 +896,7 @@ export function validateUpload(pages: PageInput[] | unknown, limits: UploadLimit
   selectorsFor(found, Boolean(leadingTitle(sample, (text) => text)));
   foreignRegionProblem(sample.slice(sample.indexOf("<svg"), sample.lastIndexOf("</svg>")), "svg");
   const ignore = () => {};
-  const sink: RuleSink = { error: ignore, warning: ignore, executableScript: ignore, handler: ignore, title: ignore, imageHost: ignore };
+  const sink: RuleSink = { error: ignore, warning: ignore, executableScript: ignore, handler: ignore, title: ignore, heading: ignore, imageHost: ignore };
   for (const [tag, attrs] of [
     ["a", [{ name: "href", value: "javascript:x" }, { name: "onclick", value: "fetch(1)" }, { name: "style", value: "x:expression(1)" }]],
     ["img", [{ name: "src", value: "a.png" }, { name: "srcset", value: "a.png 1x, b.png 2x" }]],

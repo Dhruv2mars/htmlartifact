@@ -320,3 +320,13 @@ describe("large uploads through the API", () => {
     assert.match(result.body.error, STORAGE === "r2" ? /Request is over the 12\.1 MiB limit\./ : /Request is over the 3\.1 MiB limit\./);
   });
 });
+
+test("fix texts only point to things that exist (no file-upload tool)", () => {
+  const result = validateHtml(
+    '<!doctype html><title>t</title><link rel="stylesheet" href="assets/style.css"><img src="assets/logo.png" alt="">'
+  );
+  const fixes = result.issues.map((issue) => issue.fix || "");
+  assert.deepEqual(result.issues.map((issue) => issue.code).sort(), ["link-href", "relative-asset"]);
+  for (const fix of fixes) assert.doesNotMatch(fix, /file-upload/);
+  for (const fix of fixes) assert.match(fix, /https/);
+});

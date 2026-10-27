@@ -135,3 +135,42 @@ test("the upload API: a description string sets (trimmed, 1000 characters) or cl
   assert.deepEqual(renamed.body.changedFields, ["slug"]);
   assert.equal(renamed.body.slug, "api-description");
 });
+
+test("a page with no <title> is named by its <h1>, not its file name", async () => {
+  const file = writeHtml(stack.tmp, "out.html", "<!doctype html><meta charset=utf-8><h1>Q3 incident retro</h1><p>notes</p>");
+  const receipt = await json(["upload", file, "--new"]);
+  assert.equal((await listed(receipt.draftId)).title, "Q3 incident retro");
+});
+
+test("a new version whose title changed says so (an unrelated page at a reused path)", async () => {
+  const file = writeHtml(stack.tmp, "plan.html", page("Plan"));
+  const first = await json(["upload", file, "--new"]);
+  assert.deepEqual(first.warnings, []);
+
+  // Same document, new content, same title: nothing to say.
+  writeHtml(stack.tmp, "plan.html", page("Plan", "<p>more detail</p>"));
+  const second = await json(["upload", file]);
+  assert.equal(second.action, "updated");
+  assert.ok(!second.warnings.some((w) => /title changed/i.test(w)), JSON.stringify(second.warnings));
+
+  // A different document reuses the path: still published (people regenerate
+  // reports at one path all day), but the receipt says what happened.
+  writeHtml(stack.tmp, "plan.html", page("Plan: onboarding email sequence"));
+  const third = await json(["upload", file]);
+  assert.equal(third.action, "updated");
+  assert.equal(third.draftId, first.draftId);
+  const warning = third.warnings.find((w) => /title changed/i.test(w));
+  assert.ok(warning, JSON.stringify(third.warnings));
+  assert.match(warning, /"Plan" to "Plan: onboarding email sequence"/);
+  assert.match(warning, /--new/);
+  const human = await cli(["upload", writeHtml(stack.tmp, "plan.html", page("Plan v2"))]);
+  assert.match(human.stderr, /Warning: The title changed from "Plan: onboarding email sequence" to "Plan v2"/);
+
+  // A title that was only the file name (no <title> or <h1>) getting a real one is not a change of document.
+  const bare = writeHtml(stack.tmp, "bare.html", "<!doctype html><p>no title yet</p>");
+  const untitled = await json(["upload", bare, "--new"]);
+  assert.equal((await listed(untitled.draftId)).title, "bare.html");
+  writeHtml(stack.tmp, "bare.html", page("Now titled"));
+  const titled = await json(["upload", bare]);
+  assert.ok(!titled.warnings.some((w) => /title changed/i.test(w)), JSON.stringify(titled.warnings));
+});
