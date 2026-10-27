@@ -15,7 +15,11 @@ PR merged with before/after screenshots.
 - [x] Sol round 1: CHANGES, S1/S2 (?q= via useSearchParams; keep q on older link) fixed in 1658401
 - [x] Critic round 1: 7.5 overall (identity 8.5, typography 8, layout 8, responsive 7, color 8, consistency 8, interaction 7.5, ux 7, copy 8, a11y 7.5); 18/24 resolved, 2 new P1 (static 404 recovery, field contrast)
 - [x] Fix round 2 (cab41de): origin-aware static 404, phone viewer workspace link, control border token, version details, copy fallbacks, palette close, honest search scope, nested docs index, phone hero order; D1 suite 250/250
-- [ ] Sol round 2 + critic round 2 (running)
+- [x] Sol round 2: APPROVE. Critic round 2: 8.5 (D29 hero command, D6/D30/D31). Round 3 fixes (b85b6e8): one copy contract, hero CTA, filter paging, focus ring, axe 0
+- [x] Critic round 3: 8.5 (7 categories at 9; D32-D34 P2). Sol round 3: S3 blocker (docs YAML copy) fixed in 6759d92
+- [x] Dhruv: "still looks really bad, redo from scratch with a design philosophy". Calibrated on his portfolio (chanhdai.com idiom) and Gunmetal; new contract web/DESIGN.md "Under seal"; full redesign c6c45f7 + 078cc6c (Geist, zinc, ruled sheet, foil seal, cycling install, new demo); axe 57/57 clean; auth/deletion/workspaces 79/79
+- [ ] BLOCKED: GitHub rejects pushes, "Your account is suspended" (gh token invalid); 078cc6c is local only. Needs Dhruv
+- [ ] Critic round 4 + Sol round 4 on the redesign (running)
 - [ ] Repeat until every category >= 9
 - [ ] PR with before/after screenshots, bots/CI green, merged
 Out-of-scope issues found (spawned as separate full-send threads):
