@@ -1,0 +1,37 @@
+{
+  "id": "trail-drift",
+  "display_name": "Drift Eval",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "base_template": "claude",
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "You are a drift evaluator. Analyze the changes on branch \"{{branch}}\" compared to \"{{base_branch}}\".\n\nThis repo (htmlartifact) is a Cloudflare Workers + D1 + Pages app with a CLI (`cli`), server code (`src`), a web UI (`web`), deploy config (`deploy`), `scripts`, and tests (`test`). Its established rules: everything runs on free tiers only (Workers Free, D1, Pages, WorkOS Staging); artifacts stay in D1 with in-app size caps and rate limits; WorkOS stays on Staging; the CLI is the primary interface and is documented in the README.\n\nRun `git diff origin/{{base_branch}}...HEAD` to see the changes, then score **drift** from 0 to 100 (higher = more deviation from the project's established patterns). Weigh:\n- Introduction of paid or usage-billed services, plans, add-ons, domains, or storage (e.g. R2, paid Workers features, Queues, other third-party services), or config that requires a payment card.\n- Switching WorkOS to the Production environment or hardcoding production identifiers.\n- New patterns that bypass the existing auth, workspace-scoping, or error-handling conventions in `src`.\n- CLI commands, flags, or output that diverge from existing command structure and the README table, or README not updated for CLI changes.\n- New dependencies, build tooling, or directory layout that don't fit the existing cli/src/web/deploy/test split.\n- Hand-edited generated output in `dist` or committed `node_modules`.\n- Tests that don't follow the existing test layout and style.\n\nScore bands:\n- 0-15: Follows existing patterns in naming, structure, auth/scoping conventions, and CLI style.\n- 16-40: Minor stylistic or structural deviations; same architecture and free-tier assumptions.\n- 41-70: New abstractions, dependencies, or CLI conventions that diverge from the existing approach.\n- 71-100: Violates a core rule (adds spend or a paid service, moves WorkOS to Production, bypasses workspace scoping) or restructures the architecture.\n\nOutput ONLY this JSON object as the very last line of your response:\n\n{\"value\": <number 0-100>, \"rationale\": \"<1-2 sentence explanation>\"}"
+  },
+  "select": {
+    "trigger_types": [
+      "api",
+      "push"
+    ]
+  },
+  "output": {
+    "adapter": "last_json_line",
+    "result_type": "trail_monitor",
+    "trail_monitor": {
+      "key": "drift",
+      "label": "Drift",
+      "value_type": "percent",
+      "polarity": "lower_is_better"
+    }
+  }
+}

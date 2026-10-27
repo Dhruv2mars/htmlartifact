@@ -1,0 +1,35 @@
+# Buildkite CI (replaces .github/workflows now that this repo lives on Entire).
+# Runs on the free hosted linux-small queue; checkout comes from the Entire plugin Buildkite adds to every job.
+x-node: &node
+  agents: { queue: linux-small }
+  plugins:
+    - docker#v5.12.0:
+        image: node:24
+        environment: [HTMLARTIFACT_HOME=/tmp/htmlartifact]
+steps:
+  - label: ":bun: typecheck, lint, test"
+    key: test
+    timeout_in_minutes: 20
+    <<: *node
+    command: |
+      npm i -g --silent bun@1.3.13
+      bun install --frozen-lockfile
+      bun run typecheck && bun run typecheck:cli && bun run typecheck:web
+      bun --bun run lint
+      bun scripts/changelog.ts check
+      bun run test
+  - label: ":package: build + CLI smoke"
+    key: cli
+    timeout_in_minutes: 10
+    <<: *node
+    command: |
+      npm i -g --silent bun@1.3.13
+      bun install --frozen-lockfile
+      bun run build
+      node dist/htmlartifact.js --version | grep -Fx "$$(node -p 'require("./package.json").version')"
+      node dist/htmlartifact.js --help | grep -q upload
+      mkdir -p site/docs
+      printf '<!doctype html><title>Home</title><a href="docs/notes.html">notes</a>' > site/index.html
+      printf '<!doctype html><title>Notes</title><p>notes</p>' > site/docs/notes.html
+      node dist/htmlartifact.js check site | tee check.txt
+      grep -q "2 pages" check.txt

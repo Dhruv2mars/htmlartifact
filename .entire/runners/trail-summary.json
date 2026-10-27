@@ -1,0 +1,33 @@
+{
+  "id": "trail-summary",
+  "display_name": "Trail Summary",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "model": "haiku",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "base_template": "claude",
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "You summarize code changes for reviewers. Analyze branch \"{{branch}}\" compared to \"{{base_branch}}\".\n\nThis repo (htmlartifact) is a Cloudflare Workers + D1 + Pages app with a CLI (`cli`), server (`src`), and web UI (`web`) for privately sharing HTML artifacts within a workspace.\n\nRun `git diff origin/{{base_branch}}...HEAD`, then write a short Problem -> Solution summary in Markdown. Start with the `**Problem:**` line and include a `**Solution:**` line. Call out any impact on workspace access control, auth (WorkOS), D1 schema/migrations, CLI commands or flags, or free-tier limits and cost when the diff touches them. Return Markdown only."
+  },
+  "select": {
+    "trigger_types": [
+      "api",
+      "push"
+    ]
+  },
+  "output": {
+    "adapter": "markdown",
+    "result_type": "trail_summary",
+    "trail_field": "body"
+  }
+}
