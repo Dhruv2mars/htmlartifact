@@ -28,8 +28,8 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
   const version = escapeHtml(frame.version);
   const state = frame.latest
     ? `<span class="chip now">Latest</span>`
-    : `<span class="chip old">Older version</span><a class="latest" href="${escapeHtml(frame.latestUrl)}">` +
-      `<span class="wide">Go to latest</span><span class="narrow">Latest<span class="sr"> version</span></span></a>`;
+    : `<span class="chip old">Older<span class="long"> version</span></span><a class="latest" href="${escapeHtml(frame.latestUrl)}">` +
+      `<span class="wide">Go to latest</span><span class="narrow">Open latest</span></a>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -192,7 +192,8 @@ iframe.artifact { flex: 1 1 auto; display: block; width: 100%; min-height: 0; bo
   }
   .title { max-width: 100%; margin: 0; line-height: 18px; }
   .version { margin-left: 8px; gap: 2px; }
-  .chip:not(.num) { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .chip.now { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .chip.old:not(.num) .long { display: none; }
   .latest .wide { display: none; }
   .latest .narrow { display: inline; }
   .latest { margin-left: 0; }

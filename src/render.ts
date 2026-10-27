@@ -37,19 +37,22 @@ export function renderNotFound(app: string | null = null): string {
 }
 
 // Shown in the artifact frame when its capability token has expired (a tab
-// left open for a long time): same shell, no action but a reload.
-let expired: string | undefined;
-
-export function renderExpired(): string {
-  expired ??= htmlPage({
+// left open for a long time): same shell, a reload, and, when the artifact is
+// still there, a link to open the same version again on the app. The frame
+// may not navigate its parent, so that link opens a new tab.
+export function renderExpired(reopen: string | null = null): string {
+  const action = reopen
+    ? `<p class="actions"><a class="button" href="${escapeHtml(reopen)}" target="_blank" rel="noopener">Open it again<span class="sr"> in a new tab</span></a></p>`
+    : "";
+  return htmlPage({
     title: "Expired",
     body: `<main>
 <p class="brand">${mark()}<span>htmlartifact</span></p>
 <h1 class="spaced">This view expired</h1>
-<p class="lead">Reload the page to keep reading.</p>
+<p class="lead">Reload the page to keep reading${reopen ? ", or open it again in a new tab" : ""}.</p>
+${action}
 </main>`
   });
-  return expired;
 }
 
 // The house mark (web/app/components/Logo.tsx Mark): the htmlartifact seal's

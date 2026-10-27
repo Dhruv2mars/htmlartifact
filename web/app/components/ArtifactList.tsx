@@ -93,11 +93,13 @@ function Row({ artifact: a, mine }: { artifact: ArtifactSummary; mine: boolean }
   const versions = a.versionCount || (a.version ?? 0);
   const who = mine ? a.repo : a.author;
   return (
-    <li className="group relative grid grid-cols-[3.5rem_minmax(0,1fr)] transition-colors duration-150 hover:bg-surface md:grid-cols-[3.5rem_minmax(0,1fr)_11rem_7.5rem_8.5rem]">
-      <span className="grid place-items-center border-r border-line py-3.5">
+    <li className="group relative grid grid-cols-[minmax(0,1fr)] transition-colors duration-150 hover:bg-surface md:grid-cols-[3.5rem_minmax(0,1fr)_11rem_7.5rem_8.5rem]">
+      <span className="hidden place-items-center border-r border-line py-3.5 md:grid">
         <Seal id={a.id} size={22} deferred />
       </span>
       <div className="min-w-0 px-4 py-3.5">
+        {/* Phones: the seal sits with the title, so the title gets the width. */}
+        <Seal id={a.id} size={16} deferred className="float-left mr-2 mt-[3px] md:hidden" />
         <a
           href={a.url}
           className="line-clamp-2 text-[14.5px] font-medium leading-snug text-foreground outline-none [overflow-wrap:anywhere] after:absolute after:inset-0 focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-foreground md:line-clamp-1"

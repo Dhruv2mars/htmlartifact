@@ -285,6 +285,49 @@
   }
 }
 
+/* The landing story (landing/Story.tsx): the command types, the link
+   prints, the seal stamps the document, the document prints, the access
+   switch arrives. Under 2.5 s, interactive throughout. */
+.story .s-in {
+  animation: appear 260ms var(--ease-out) var(--d, 0ms) both;
+}
+.story .s-type {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  vertical-align: bottom;
+  max-width: 100%;
+  animation: type calc(var(--n) * 26ms) steps(var(--n), end) var(--d, 0ms) both;
+}
+.story .s-stamp {
+  animation: stamp 520ms var(--ease-out) var(--d, 0ms) both;
+}
+@keyframes stamp {
+  from {
+    opacity: 0;
+    transform: scale(1.18) rotate(-14deg);
+  }
+}
+.story .s-print {
+  animation: print 620ms var(--ease-in-out) var(--d, 0ms) both;
+}
+@keyframes print {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .story .s-in,
+  .story .s-type,
+  .story .s-stamp,
+  .story .s-print {
+    animation: none;
+  }
+}
+
 /* A deferred seal fades in where its placeholder ring was. */
 .seal-in {
   animation: fade-in 200ms var(--ease-out) both;

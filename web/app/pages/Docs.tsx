@@ -256,6 +256,11 @@ export function Docs({ session }: { session: Session | null }) {
               commands={["npx htmlartifact upload plan.html"]}
               note="Upload the same file again to publish a new version at the same link."
             />
+            <p>
+              Pages must be self-contained: inline scripts and styles run, but external scripts, forms, iframes and embeds are refused,
+              and an upload holds up to 10 pages and 1 MiB. Run <code>check</code> first to see whether a file passes, and read{" "}
+              <a href="#publishing">what you can publish</a> for the full rules.
+            </p>
           </Step>
         </ol>
         <p className="mt-10">

@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode, type Ref } from "react";
 import { AppShell, PageHead } from "../components/AppShell";
+import { CopyCommand } from "../components/CopyCommand";
 import { Field } from "../components/Field";
 import { LockIcon } from "../components/icons";
 import { Seal } from "../components/Seal";
@@ -162,9 +163,11 @@ export function Workspaces({
         <Rule width="app" inner="">
           <dl className="divide-y divide-line">
             {COMMANDS.filter(([what]) => canSwitch || what !== "Switch").map(([what, command]) => (
-              <div key={what} className="grid gap-0.5 px-4 py-2.5 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-baseline sm:gap-4 sm:px-5">
+              <div key={what} className="grid gap-1.5 px-4 py-2.5 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-center sm:gap-4 sm:px-5">
                 <dt className="text-[13.5px] text-muted">{what}</dt>
-                <dd className="font-mono text-[12.5px] leading-[1.8] text-foreground [overflow-wrap:anywhere]">{command}</dd>
+                <dd className="min-w-0">
+                  <CopyCommand command={command} />
+                </dd>
               </div>
             ))}
           </dl>
