@@ -59,7 +59,7 @@ inside it is the loud thing.
 | control | zinc-400 #a1a1aa | zinc-600 #52525b | editable field edges (3:1) |
 | foreground | zinc-950 | zinc-50 | text |
 | muted | zinc-600 #52525b | zinc-400 #a1a1aa | secondary text (AA everywhere) |
-| faint | zinc-500 #71717a | zinc-500 #71717a | tertiary, large text and glyphs only |
+| faint | #6b6b74 | #8a8a94 | tertiary: labels, serials, counts (AA on every surface) |
 | open / ask / deny | #15803d / #b45309 / #b91c1c | #4ade80 / #fbbf24 / #f87171 | access results only |
 
 Radius: 6px chips, 8px controls, 12px cells that must be rounded (popovers,

@@ -309,15 +309,22 @@ export function PageHead({ title, count, children, aside }: { title: string; cou
   return (
     <Rule width="app" inner="flex flex-wrap items-end gap-x-8 gap-y-4 px-4 pb-6 pt-8 sm:px-5 sm:pt-12">
       <div className="min-w-0 flex-1">
-        <h1
-          className={cx(
-            "text-balance font-medium tracking-[-0.035em] text-foreground [overflow-wrap:anywhere]",
-            long ? "text-[24px] leading-[1.15] sm:text-[28px]" : "text-page"
+        <div className="flex items-start gap-1.5">
+          <h1
+            className={cx(
+              "min-w-0 text-balance font-medium tracking-[-0.035em] text-foreground [overflow-wrap:anywhere]",
+              long ? "text-[24px] leading-[1.15] sm:text-[28px]" : "text-page"
+            )}
+          >
+            {title}
+          </h1>
+          {/* The count is shown, not read: the list below says it in words. */}
+          {count != null && (
+            <span aria-hidden className="mt-1 font-mono text-[13px] text-faint">
+              {count}
+            </span>
           )}
-        >
-          {title}
-          {count != null && <sup className="ml-1 align-super font-mono text-[13px] font-normal tracking-normal text-faint">{count}</sup>}
-        </h1>
+        </div>
         {children && <div className="mt-2 max-w-[62ch] text-[14.5px] leading-relaxed text-muted">{children}</div>}
       </div>
       {aside}
