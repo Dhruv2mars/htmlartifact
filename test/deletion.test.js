@@ -6,6 +6,7 @@ import { getPlatformProxy, unstable_dev } from "wrangler";
 import {
   Browser,
   CI_KEY,
+  PASSWORD,
   STORAGE,
   accessToken,
   breakWorkos,
@@ -1006,6 +1007,12 @@ describe("review round 12", () => {
 });
 
 describe("leaving a workspace", () => {
+  // Earlier tests delete most seeded users: these three are new.
+  before(async () => {
+    for (const [email, first_name] of [["lee@oss.test", "Lee"], ["arjun@oss.test", "Arjun"], ["maya@oss.test", "Maya"]]) {
+      await workosApi(stack.emulator, "POST", "/user_management/users", { email, first_name, password: PASSWORD, email_verified: true });
+    }
+  });
   const codeLive = async (code) => (await rows("SELECT revoked_at FROM invites WHERE code = ?", code))[0]?.revoked_at === null;
   const membershipOf = async (email, org) => {
     const user = await findUser(stack.emulator, email);
@@ -1020,73 +1027,73 @@ describe("leaving a workspace", () => {
     );
 
   test("leaving keeps the workspace's invite codes (and its pinned link) working; an admin who leaves loses only their own codes; removal still revokes", async () => {
-    const olivia = await signInTokens(stack, "olivia@other.test");
-    const created = await callApi(stack, olivia.accessToken, "POST", "/api/workspaces", { name: "Openpipe OSS" });
+    const lee = await signInTokens(stack, "lee@oss.test");
+    const created = await callApi(stack, lee.accessToken, "POST", "/api/workspaces", { name: "Openpipe OSS" });
     assert.equal(created.status, 201, JSON.stringify(created.body));
     const org = await findOrganization(stack.emulator, "Openpipe OSS");
-    const admin = (await refreshInto(stack, olivia, org.id)).accessToken;
+    const admin = (await refreshInto(stack, lee, org.id)).accessToken;
     const pinned = (await callApi(stack, admin, "POST", "/api/workspaces/invites", { maxUses: 50 })).body.code;
 
     // A contributor joins through the pinned link, then leaves.
-    const sam = await signInTokens(stack, "sam@new.test", "Rejoin Labs");
-    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: pinned })).status, 200);
-    const samIn = await refreshInto(stack, sam, org.id);
-    const { user: samUser, membership: samMembership } = await membershipOf("sam@new.test", org);
-    const left = await callApi(stack, samIn.accessToken, "POST", "/api/workspaces/leave");
+    const arjun = await signInTokens(stack, "arjun@oss.test", "Openpipe OSS");
+    assert.equal((await callApi(stack, arjun.accessToken, "POST", "/api/workspaces/join", { code: pinned })).status, 200);
+    const arjunIn = await refreshInto(stack, arjun, org.id);
+    const { user: arjunUser, membership: arjunMembership } = await membershipOf("arjun@oss.test", org);
+    const left = await callApi(stack, arjunIn.accessToken, "POST", "/api/workspaces/leave");
     assert.equal(left.status, 200, JSON.stringify(left.body));
-    await webhookHandled(samUser, org);
+    await webhookHandled(arjunUser, org);
     assert.ok(await codeLive(pinned), "leaving revoked the pinned link");
     // The WorkOS webhook for that leave, delivered again (late), revokes nothing either.
     const replay = await sendWebhook(stack, {
-      id: "event_sam_left_replay",
+      id: "event_arjun_left_replay",
       event: "organization_membership.deleted",
       created_at: new Date().toISOString(),
-      data: { object: "organization_membership", id: samMembership.id, user_id: samUser.id, organization_id: org.id }
+      data: { object: "organization_membership", id: arjunMembership.id, user_id: arjunUser.id, organization_id: org.id }
     });
     assert.equal(replay.status, 200);
     assert.ok(await codeLive(pinned), "a replayed leave webhook revoked the pinned link");
-    const max = await signInTokens(stack, "max@both.test", "Acme");
-    assert.equal((await callApi(stack, max.accessToken, "POST", "/api/workspaces/join", { code: pinned })).status, 200, "the next person joins");
+    const maya = await signInTokens(stack, "maya@oss.test");
+    assert.equal((await callApi(stack, maya.accessToken, "POST", "/api/workspaces/join", { code: pinned })).status, 200, "the next person joins");
 
     // An admin who leaves (another admin stays) loses the codes they issued, as on demotion; the rest stay.
-    const { user: maxUser } = await membershipOf("max@both.test", org);
-    assert.equal((await callApi(stack, admin, "PATCH", `/api/workspaces/members/${maxUser.id}`, { role: "admin" })).status, 200);
-    const maxIn = await refreshInto(stack, max, org.id);
-    const maxCode = (await callApi(stack, maxIn.accessToken, "POST", "/api/workspaces/invites", {})).body.code;
-    assert.equal((await callApi(stack, maxIn.accessToken, "POST", "/api/workspaces/leave")).status, 200);
-    await webhookHandled(maxUser, org);
-    assert.ok(!(await codeLive(maxCode)), "the leaving admin's own code is revoked");
+    const { user: mayaUser } = await membershipOf("maya@oss.test", org);
+    assert.equal((await callApi(stack, admin, "PATCH", `/api/workspaces/members/${mayaUser.id}`, { role: "admin" })).status, 200);
+    const mayaIn = await refreshInto(stack, maya, org.id);
+    const mayaCode = (await callApi(stack, mayaIn.accessToken, "POST", "/api/workspaces/invites", {})).body.code;
+    assert.equal((await callApi(stack, mayaIn.accessToken, "POST", "/api/workspaces/leave")).status, 200);
+    await webhookHandled(mayaUser, org);
+    assert.ok(!(await codeLive(mayaCode)), "the leaving admin's own code is revoked");
     assert.ok(await codeLive(pinned), "another admin's code survives an admin leaving");
 
     // Removing someone still revokes every code issued until then.
-    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: pinned })).status, 200, "the leaver can come back");
-    assert.equal((await callApi(stack, admin, "DELETE", `/api/workspaces/members/${samUser.id}`)).status, 200);
+    assert.equal((await callApi(stack, arjun.accessToken, "POST", "/api/workspaces/join", { code: pinned })).status, 200, "the leaver can come back");
+    assert.equal((await callApi(stack, admin, "DELETE", `/api/workspaces/members/${arjunUser.id}`)).status, 200);
     assert.ok(!(await codeLive(pinned)), "removal revokes the codes");
   });
 
   test("a membership.deleted webhook names a left membership only near the time it was left", async () => {
     // A leave whose WorkOS delete failed leaves no lasting exemption: the same
     // membership deleted later (outside our app) revokes codes as any removal does.
-    const olivia = await signInTokens(stack, "olivia@other.test", "Openpipe OSS");
+    const lee = await signInTokens(stack, "lee@oss.test");
     const org = await findOrganization(stack.emulator, "Openpipe OSS");
-    const admin = (await refreshInto(stack, olivia, org.id)).accessToken;
+    const admin = (await refreshInto(stack, lee, org.id)).accessToken;
     const code = (await callApi(stack, admin, "POST", "/api/workspaces/invites", {})).body.code;
-    const sam = await signInTokens(stack, "sam@new.test", "Rejoin Labs");
-    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code })).status, 200);
-    const samIn = await refreshInto(stack, sam, org.id);
-    const { user: samUser, membership } = await membershipOf("sam@new.test", org);
+    const arjun = await signInTokens(stack, "arjun@oss.test", "Openpipe OSS");
+    assert.equal((await callApi(stack, arjun.accessToken, "POST", "/api/workspaces/join", { code })).status, 200);
+    const arjunIn = await refreshInto(stack, arjun, org.id);
+    const { user: arjunUser, membership } = await membershipOf("arjun@oss.test", org);
     const restore = await breakWorkos(stack.emulator, "DELETE", `/user_management/organization_memberships/${membership.id}`);
     try {
-      assert.notEqual((await callApi(stack, samIn.accessToken, "POST", "/api/workspaces/leave")).status, 200, "WorkOS refused the delete");
+      assert.notEqual((await callApi(stack, arjunIn.accessToken, "POST", "/api/workspaces/leave")).status, 200, "WorkOS refused the delete");
     } finally {
       await restore();
     }
     assert.ok(await codeLive(code));
     const later = await sendWebhook(stack, {
-      id: "event_sam_removed_later",
+      id: "event_arjun_removed_later",
       event: "organization_membership.deleted",
       created_at: new Date(Date.now() + 3600_000).toISOString(),
-      data: { object: "organization_membership", id: membership.id, user_id: samUser.id, organization_id: org.id }
+      data: { object: "organization_membership", id: membership.id, user_id: arjunUser.id, organization_id: org.id }
     });
     assert.equal(later.status, 200);
     assert.ok(!(await codeLive(code)), "a removal an hour later is a removal");
