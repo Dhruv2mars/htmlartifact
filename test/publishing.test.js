@@ -107,7 +107,7 @@ test('--description "" clears the description; no --description leaves it alone'
 });
 
 test("the upload API: a description string sets (trimmed, 1000 characters) or clears it; anything else leaves it", async () => {
-  const token = await accessToken(stack, "bob@acme.test");
+  const token = await accessToken(stack, "bob@acme.test", "Acme");
   const html = page("API description");
   const upload = (body) => callApi(stack, token, "POST", "/api/uploads", { html, filename: "api.html", ...body });
   const description = async (id) => (await callApi(stack, token, "GET", "/api/drafts")).body.drafts.find((d) => d.draftId === id).description;
@@ -215,7 +215,7 @@ test("a deleted artifact: the path's upload says it was deleted and that --new p
   const file = writeHtml(stack.tmp, "gone.html", page("Gone soon"));
   const first = await json(["upload", file, "--new"]);
   // Deleted elsewhere (the web, another machine): this machine's mapping stays.
-  const alice = await accessToken(stack, "alice@acme.test");
+  const alice = await accessToken(stack, "alice@acme.test", "Acme");
   assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${first.draftId}`)).status, 200);
   const failed = await fails(["upload", file]);
   assert.equal(failed.exit, 4);
@@ -287,7 +287,7 @@ test("the receipt's Raw HTML URL shows a signed-in browser the page's source", a
   // The artifact URL itself still opens the viewer.
   assert.match((await bob.get(receipt.url)).text_, /<iframe/);
   // Agents with a token get the HTML as before.
-  const token = await accessToken(stack, "bob@acme.test");
+  const token = await accessToken(stack, "bob@acme.test", "Acme");
   const agent = await fetch(receipt.rawUrl, { headers: { Authorization: `Bearer ${token}` } });
   assert.match(agent.headers.get("content-type"), /^text\/html/);
   assert.equal(await agent.text(), html);
@@ -317,7 +317,7 @@ test("a pruned version's link tells a member it was pruned, not to ask for an in
   assert.equal(opened.status, 200);
 
   // Agents: a 404 that says why, and where the latest is.
-  const token = await accessToken(stack, "bob@acme.test");
+  const token = await accessToken(stack, "bob@acme.test", "Acme");
   const agent = await fetch(v1, { headers: { Authorization: `Bearer ${token}` } });
   assert.equal(agent.status, 404);
   assert.equal(agent.headers.get("x-htmlartifact-latest-version"), "3");
@@ -336,7 +336,7 @@ test("a pruned version's link tells a member it was pruned, not to ask for an in
   const outsider = await olivia.get(v1);
   assert.equal(outsider.status, 404);
   assert.equal(outsider.text_, (await olivia.get(`${stack.baseUrl}/d/zzzzzzzzzzzz/v/1`)).text_);
-  const outsiderToken = await accessToken(stack, "olivia@other.test");
+  const outsiderToken = await accessToken(stack, "olivia@other.test", "Other");
   const outsiderAgent = await fetch(v1, { headers: { Authorization: `Bearer ${outsiderToken}` } });
   assert.equal(outsiderAgent.status, 404);
   assert.equal(outsiderAgent.headers.get("x-htmlartifact-latest-version"), null);
@@ -419,7 +419,7 @@ test("git metadata describes the uploaded file: an uncommitted file gets no comm
 });
 
 test("an admin deleting a teammate's artifact must confirm with --yes; deleting your own needs nothing", async () => {
-  const bob = await accessToken(stack, "bob@acme.test");
+  const bob = await accessToken(stack, "bob@acme.test", "Acme");
   const uploaded = await callApi(stack, bob, "POST", "/api/uploads", { html: page("Bob's rollout plan"), filename: "rollout.html" });
   assert.equal(uploaded.status, 201);
   await callApi(stack, bob, "POST", "/api/uploads", { html: page("Bob's rollout plan", "<p>v2</p>"), draftId: uploaded.body.draftId });
@@ -440,7 +440,7 @@ test("an admin deleting a teammate's artifact must confirm with --yes; deleting 
   assert.match(human.stderr, /2 versions/);
 
   // The API asks for the artifact's ID as confirmation, like `workspace delete`.
-  const alice = await accessToken(stack, "alice@acme.test");
+  const alice = await accessToken(stack, "alice@acme.test", "Acme");
   assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${id}`)).status, 409);
   assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${id}`, { confirm: "aaaaaaaaaaaa" })).status, 409);
 
