@@ -40,7 +40,7 @@ function Hero() {
             only for people in your workspace.
           </p>
           <div className="hero-rise mt-8 flex flex-col items-start gap-3 sm:flex-row sm:flex-wrap sm:items-center" style={rise(120)}>
-            <CopyCommand command="npx htmlartifact login" size="lg" className="w-full sm:w-auto" />
+            <CopyCommand command="npx htmlartifact login" size="lg" oneLine className="w-full sm:w-auto" />
             <a href="/docs" className="text-[15px] font-medium text-ink-2 underline decoration-rule-2 underline-offset-4 hover:text-ink hover:decoration-ink sm:hidden">
               Read the docs
             </a>
@@ -291,7 +291,7 @@ function Closing() {
       <div className={`${shell} py-20 sm:py-24`}>
         <h2 className="max-w-[18ch] font-expanded text-title font-[800] tracking-[-0.035em] text-ink">Give your agents somewhere private to publish.</h2>
         <div className="mt-9 flex flex-col items-start gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-          <CopyCommand command="npx htmlartifact login" size="lg" tone="ink" className="w-full sm:w-auto" />
+          <CopyCommand command="npx htmlartifact login" size="lg" tone="ink" oneLine className="w-full sm:w-auto" />
           <a href={REPO_URL} className="text-[15px] font-medium text-ink-2 underline decoration-rule-2 underline-offset-4 hover:text-ink hover:decoration-ink sm:hidden">
             View on GitHub
           </a>

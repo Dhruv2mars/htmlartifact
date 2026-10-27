@@ -49,6 +49,7 @@ export function CopyButton({
   label = "Copy",
   accessibleLabel,
   compact = false,
+  feedback = "above",
   tone = "paper",
   size = "md",
   className
@@ -59,6 +60,9 @@ export function CopyButton({
   label?: string;
   accessibleLabel?: string;
   compact?: boolean;
+  // Where a compact button's result label floats: above it, or to its left
+  // (inside a clipped card, where there is no room above).
+  feedback?: "above" | "left";
   tone?: "paper" | "ink" | "ghost";
   size?: "md" | "lg";
   className?: string;
@@ -90,8 +94,15 @@ export function CopyButton({
         <span
           aria-hidden
           className={cx(
-            "pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-[6px] bg-ink px-2 py-1 font-sans text-[12px] font-medium text-paper shadow-pop transition-[opacity,translate] duration-150 ease-out",
-            state === "idle" ? "translate-y-1 opacity-0" : "translate-y-0 opacity-100"
+            "pointer-events-none absolute whitespace-nowrap rounded-[6px] bg-ink px-2 py-1 font-sans text-[12px] font-medium text-paper shadow-pop transition-[opacity,translate] duration-150 ease-out",
+            feedback === "left" ? "right-full top-1/2 mr-2 -translate-y-1/2" : "bottom-full right-0 mb-2",
+            state === "idle"
+              ? feedback === "left"
+                ? "translate-x-1 opacity-0"
+                : "translate-y-1 opacity-0"
+              : feedback === "left"
+                ? "translate-x-0 opacity-100"
+                : "translate-y-0 opacity-100"
           )}
         >
           {state === "failed" ? "Not copied" : "Copied"}
