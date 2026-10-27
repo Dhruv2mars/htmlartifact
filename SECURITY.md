@@ -164,8 +164,11 @@ Artifact HTML lives in D1, so a restore brings back HTML and index together.
   revoked via `POST /portal/revoke_link`), and cannot rejoin through an old
   invite: invite codes are bearer credentials, so removing anyone (by an
   admin, the directory, or WorkOS) revokes every code the workspace issued up
-  to that moment; admins issue a fresh one for the team. An inactive
-  membership is never reactivated by an invite. Admin Portal sessions also end when an admin
+  to that moment; admins issue a fresh one for the team. Leaving is not a
+  removal: someone who leaves on their own (`workspace leave`) revokes only
+  the codes they issued as an admin, so a project's shared invite link keeps
+  working, and they may rejoin with it. An inactive membership is never
+  reactivated by an invite. Admin Portal sessions also end when an admin
   is demoted, and a link minted while a removal or demotion lands is revoked.
 - **MFA:** off in AuthKit (Staging), so sign-up is email + password or a social login. A workspace that needs MFA can require it through its own SSO identity provider.
 

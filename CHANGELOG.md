@@ -7,6 +7,14 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+### Fixed
+
+- Leaving a workspace (`workspace leave`) revoked every live invite code in
+  it, so one contributor leaving broke an open project's pinned invite link
+  without telling anyone. Leaving now revokes only the codes the person
+  issued as an admin (as demotion does); removing someone still revokes every
+  code issued until then.
+
 ## [0.2.2] - 2026-10-21
 
 ### Security

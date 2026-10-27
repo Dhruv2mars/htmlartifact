@@ -1,6 +1,6 @@
 import type { Event } from "@workos-inc/node";
 import type { Context, Hono } from "hono";
-import { bumpMembershipEpoch, now, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { bumpMembershipEpoch, isDeparture, now, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { deleteWorkspaceStatements, isWorkspaceDeleted, membershipBeingUndone, runWorkspaceDeletions, scrubUserStatements, undoJoin } from "./purge.ts";
 import type { AppEnv } from "./types.ts";
 import { revokePortalLinks, workos } from "./workos.ts";
@@ -56,10 +56,10 @@ async function applyEvent(
       // these for every member. Nothing is left to update: ignore them.
       if (await isWorkspaceDeleted(db, organizationId)) return;
       // A deleted membership: they may hold an invite code, so the codes
-      // issued up to this event stop working. Unconditional and first (no
-      // lookup can fail before it; one-way and time-keyed, so late or repeated
-      // events only revoke codes already due). Deactivated memberships need
-      // no revocation: joinWithCode refuses them.
+      // issued up to this event stop working. First (only D1 reads asking
+      // whether the deletion was our own come before it; one-way and
+      // time-keyed, so late or repeated events only revoke codes already due).
+      // Deactivated memberships need no revocation: joinWithCode refuses them.
       if (event === "organization_membership.deleted") {
         const removedId = field(data, "id");
         const at = eventTime(createdAt);
@@ -69,17 +69,22 @@ async function applyEvent(
           ? await db.prepare("SELECT 1 FROM joins WHERE membership_id = ? AND undone = 1").bind(removedId).first()
           : null;
         if (!undone) {
-          await revokeInvitesUpTo(db, organizationId, at);
-          // Removed outside our app and back in before this event arrived,
-          // through a code that was due for revocation at the removal: undo it.
-          const { results } = await db
-            .prepare(
-              `SELECT membership_id FROM joins WHERE user_id = ? AND organization_id = ? AND membership_id != ?
-                 AND undone = 0 AND code_created_at <= ?`
-            )
-            .bind(userId, organizationId, removedId ?? "", at)
-            .all<{ membership_id: string }>();
-          for (const { membership_id } of results) await undoJoin(c.env, membership_id);
+          // Someone leaving through our app: leaving revokes only a leaving
+          // admin's own codes (done there), and they may come back with any
+          // code the workspace still has.
+          if (!(removedId && (await isDeparture(db, removedId, at)))) {
+            await revokeInvitesUpTo(db, organizationId, at);
+            // Removed outside our app and back in before this event arrived,
+            // through a code that was due for revocation at the removal: undo it.
+            const { results } = await db
+              .prepare(
+                `SELECT membership_id FROM joins WHERE user_id = ? AND organization_id = ? AND membership_id != ?
+                   AND undone = 0 AND code_created_at <= ?`
+              )
+              .bind(userId, organizationId, removedId ?? "", at)
+              .all<{ membership_id: string }>();
+            for (const { membership_id } of results) await undoJoin(c.env, membership_id);
+          }
           // That membership is gone: its join no longer names a workspace they're in.
           if (removedId) await db.prepare("DELETE FROM joins WHERE membership_id = ? AND undone = 0").bind(removedId).run();
         }

@@ -144,6 +144,11 @@ CREATE TABLE IF NOT EXISTS admin_locks (
   holder TEXT NOT NULL,
   expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS departures (
+  membership_id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL,
+  left_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
 CREATE TABLE IF NOT EXISTS deleted_workspaces (
   organization_id TEXT PRIMARY KEY,
   deleted_at INTEGER NOT NULL DEFAULT (unixepoch())
@@ -409,7 +414,37 @@ export async function revokeInvitesUpTo(db: D1Database, organizationId: string, 
     .run();
 }
 
-// The live invite codes createdBy issued in organizationId (on demotion).
+// Someone leaving (POST /api/workspaces/leave) is about to delete this
+// membership. Leaving revokes no one else's invite codes, so the WorkOS
+// webhook for that deletion must not either (src/webhooks.ts).
+export async function recordDeparture(db: D1Database, membershipId: string, organizationId: string): Promise<void> {
+  await db
+    .prepare("INSERT INTO departures (membership_id, organization_id) VALUES (?, ?) ON CONFLICT (membership_id) DO UPDATE SET left_at = unixepoch()")
+    .bind(membershipId, organizationId)
+    .run();
+}
+
+// The delete failed: whoever deletes this membership later is removing them.
+export async function forgetDeparture(db: D1Database, membershipId: string): Promise<void> {
+  await db.prepare("DELETE FROM departures WHERE membership_id = ?").bind(membershipId).run();
+}
+
+// How long after a recorded departure its WorkOS deletion event may be dated.
+// The delete follows within the same request; a later deletion of the same
+// membership (say, the leave's delete failed and the marker outlived it) is a
+// removal, and revokes codes.
+const DEPARTURE_SECONDS = 300;
+
+// Whether the membership deletion dated `at` is someone leaving through our app.
+export async function isDeparture(db: D1Database, membershipId: string, at: number): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT 1 FROM departures WHERE membership_id = ? AND ? <= left_at + ?")
+    .bind(membershipId, at, DEPARTURE_SECONDS)
+    .first();
+  return Boolean(row);
+}
+
+// The live invite codes createdBy issued in organizationId (on demotion, or when an admin leaves).
 export async function revokeInvitesBy(db: D1Database, createdBy: string, organizationId: string): Promise<void> {
   await db
     .prepare("UPDATE invites SET revoked_at = unixepoch() WHERE created_by = ? AND organization_id = ? AND revoked_at IS NULL")
