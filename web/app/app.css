@@ -104,6 +104,24 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     scrollbar-gutter: stable;
+    /* Focus, fragment jumps and the skip link land below the sticky header. */
+    scroll-padding-top: 4.5rem;
+  }
+  html:has([data-sticky="app"]) {
+    scroll-padding-top: 7rem;
+  }
+  html:has([data-sticky="reading"]) {
+    scroll-padding-top: 8.5rem;
+  }
+  @media (min-width: 48rem) {
+    html:has([data-sticky="app"]) {
+      scroll-padding-top: 4.5rem;
+    }
+  }
+  @media (min-width: 64rem) {
+    html:has([data-sticky="reading"]) {
+      scroll-padding-top: 6rem;
+    }
   }
   body {
     background: var(--background);
@@ -268,13 +286,12 @@
 .story .s-in {
   animation: appear 260ms var(--ease-out) var(--d, 0ms) both;
 }
+/* backwards, not both: once typed, nothing clips the line, so it can wrap
+   under larger text spacing. */
 .story .s-type {
   display: inline-block;
-  overflow: hidden;
-  white-space: nowrap;
   vertical-align: bottom;
-  max-width: 100%;
-  animation: type calc(var(--n) * 26ms) steps(var(--n), end) var(--d, 0ms) both;
+  animation: type calc(var(--n) * 26ms) steps(var(--n), end) var(--d, 0ms) backwards;
 }
 .story .s-stamp {
   animation: stamp 520ms var(--ease-out) var(--d, 0ms) both;

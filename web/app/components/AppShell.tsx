@@ -1,6 +1,6 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Menu } from "@base-ui/react/menu";
-import { Command } from "cmdk";
+import { Command, useCommandState } from "cmdk";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "../lib/cx";
 import type { ArtifactSummary, Session } from "../page";
@@ -64,7 +64,7 @@ export function AppShell({
   return (
     <div className="flex min-h-dvh flex-col">
       <SkipLink />
-      <header className="vt-header sticky top-0 z-30 border-b border-line bg-background/80 backdrop-blur-md backdrop-saturate-150">
+      <header data-sticky="app" className="vt-header sticky top-0 z-30 border-b border-line bg-background/80 backdrop-blur-md backdrop-saturate-150">
         <div className="mx-auto flex h-14 max-w-[1040px] items-center gap-2 border-x border-line px-4 sm:px-5">
           <Logo />
           {workspace && (
@@ -147,7 +147,7 @@ function AccountMenu({ session }: { session: Session }) {
   const signOut = useRef<HTMLFormElement>(null);
   const initial = (session.name || session.email || "?").trim().charAt(0).toUpperCase();
   const item =
-    "flex h-8 cursor-default select-none items-center rounded-[6px] px-2.5 text-[14px] text-muted outline-none data-highlighted:bg-surface data-highlighted:text-foreground";
+    "flex h-8 cursor-default select-none items-center rounded-[6px] px-2.5 text-[14px] text-muted outline-none data-highlighted:bg-surface data-highlighted:text-foreground forced-colors:data-highlighted:outline-2 forced-colors:data-highlighted:outline-solid forced-colors:data-highlighted:-outline-offset-2 forced-colors:data-highlighted:outline-[Highlight]";
   return (
     <>
       <form ref={signOut} method="post" action="/auth/sign-out" hidden />
@@ -160,10 +160,10 @@ function AccountMenu({ session }: { session: Session }) {
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner sideOffset={8} align="end" className="z-40 outline-none">
-            <Menu.Popup className="w-60 origin-[var(--transform-origin)] rounded-card bg-card p-1 shadow-pop outline-none transition-[scale,opacity] duration-150 ease-out data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0">
+            <Menu.Popup className="max-h-[var(--available-height)] w-60 origin-[var(--transform-origin)] overflow-y-auto rounded-card bg-card p-1 shadow-pop outline-none forced-colors:border forced-colors:border-[CanvasText] transition-[scale,opacity] duration-150 ease-out data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0">
               <div className="px-2.5 pb-2 pt-1.5">
-                <p className="truncate text-[14px] font-medium text-foreground">{session.name}</p>
-                {session.email && <p className="truncate font-mono text-[12px] text-muted">{session.email}</p>}
+                <p className="text-[14px] font-medium text-foreground [overflow-wrap:anywhere]">{session.name}</p>
+                {session.email && <p className="font-mono text-[12px] text-muted [overflow-wrap:anywhere]">{session.email}</p>}
               </div>
               <Menu.Separator className="-mx-1 my-1 h-px bg-line" />
               <Menu.LinkItem href="/workspaces" className={item}>
@@ -204,9 +204,11 @@ function Palette({
   section: Section;
 }) {
   const [query, setQuery] = useState("");
+  const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!open) setQuery("");
   }, [open]);
+  useActiveDescendant(open, input);
   const go = (href: string) => {
     onOpenChange(false);
     window.location.assign(href);
@@ -220,20 +222,20 @@ function Palette({
       ? `${workspace.name}'s artifacts`
       : null;
   const item =
-    "flex h-10 cursor-default select-none items-center gap-3 rounded-[6px] px-2.5 text-[14px] text-muted data-[selected=true]:bg-surface data-[selected=true]:text-foreground";
+    "flex h-10 cursor-default select-none items-center gap-3 rounded-[6px] px-2.5 text-[14px] text-muted data-[selected=true]:bg-surface data-[selected=true]:text-foreground forced-colors:data-[selected=true]:outline-2 forced-colors:data-[selected=true]:outline-solid forced-colors:data-[selected=true]:-outline-offset-2 forced-colors:data-[selected=true]:outline-[Highlight]";
   const heading =
     "[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2.5 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[12px] [&_[cmdk-group-heading]]:text-faint";
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/40 dark:bg-black/60" />
-        <Dialog.Popup className="fixed left-1/2 top-[max(12px,12vh)] z-50 w-[min(560px,calc(100vw-24px))] -translate-x-1/2 overflow-hidden rounded-card bg-card shadow-pop outline-none">
+        <Dialog.Popup initialFocus={input} className="fixed left-1/2 top-[max(12px,12vh)] z-50 w-[min(560px,calc(100vw-24px))] -translate-x-1/2 overflow-hidden rounded-card bg-card shadow-pop outline-none forced-colors:border forced-colors:border-[CanvasText]">
           <Dialog.Title className="sr-only">Search artifacts</Dialog.Title>
           <Command label="Search artifacts" loop>
             <div className="flex items-center gap-3 border-b border-line px-4">
               <SearchIcon className="size-4 shrink-0 text-muted" />
               <Command.Input
-                autoFocus
+                ref={input}
                 value={query}
                 onValueChange={setQuery}
                 placeholder={artifacts ? "Search by title, author or repository" : "Search artifacts, or go to a page"}
@@ -246,6 +248,7 @@ function Palette({
                 <CloseIcon className="size-4" />
               </Dialog.Close>
             </div>
+            <Results query={query} />
             <Command.List className="max-h-[min(440px,60vh)] overflow-y-auto p-1.5">
               <Command.Empty className="px-3 py-8 text-center text-[14px] text-muted">
                 Nothing matches “{query}” in {scope ?? "these pages"}.
@@ -330,4 +333,43 @@ export function PageHead({ title, count, children, aside }: { title: string; cou
       {aside}
     </Rule>
   );
+}
+
+// Says how many results there are, or that nothing matches, as the query
+// changes: the list itself is silent while you type.
+function Results({ query }: { query: string }) {
+  const count = useCommandState((state) => state.filtered.count);
+  const q = query.trim();
+  return (
+    <p role="status" className="sr-only">
+      {q ? (count ? `${count} ${count === 1 ? "result" : "results"}` : `Nothing matches “${q}”`) : ""}
+    </p>
+  );
+}
+
+// cmdk sets the input's aria-activedescendant from a value it computes a
+// render late, so a screen reader can hear nothing or the wrong item. Keep
+// it on the item that is actually selected.
+function useActiveDescendant(open: boolean, input: React.RefObject<HTMLInputElement | null>) {
+  useEffect(() => {
+    if (!open) return;
+    let observer: MutationObserver | null = null;
+    const frame = requestAnimationFrame(() => {
+      const field = input.current;
+      const root = field?.closest("[cmdk-root]");
+      if (!field || !root) return;
+      const sync = () => {
+        const id = root.querySelector('[cmdk-item][aria-selected="true"]')?.id;
+        if (id && field.getAttribute("aria-activedescendant") !== id) field.setAttribute("aria-activedescendant", id);
+        if (!id && field.hasAttribute("aria-activedescendant")) field.removeAttribute("aria-activedescendant");
+      };
+      observer = new MutationObserver(sync);
+      observer.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ["aria-selected", "aria-activedescendant"] });
+      sync();
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [open, input]);
 }

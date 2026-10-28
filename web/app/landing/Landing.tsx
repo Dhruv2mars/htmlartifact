@@ -108,8 +108,9 @@ function Agents() {
             <pre
               ref={snippet}
               tabIndex={0}
+              role="region"
               aria-label="CLAUDE.md snippet"
-              className="overflow-x-auto px-4 py-4 text-[12.5px] leading-[1.75] text-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2"
+              className="overflow-x-auto rounded-b-card px-4 py-4 text-[12.5px] leading-[1.75] text-foreground focus-visible:-outline-offset-2"
             >
               {AGENT_SNIPPET}
             </pre>

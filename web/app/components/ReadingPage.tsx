@@ -36,7 +36,7 @@ export function ReadingPage({
           sits flush under the header without guessing its height. (The
           header's own sticky is switched off inside it: nested sticky
           layers with backdrop blur break full-page screenshots.) */}
-      <div className="sticky top-0 z-30 bg-background/80 backdrop-blur-md backdrop-saturate-150 [&>header]:static [&>header]:bg-transparent [&>header]:backdrop-blur-none">
+      <div data-sticky="reading" className="sticky top-0 z-30 bg-background/80 backdrop-blur-md backdrop-saturate-150 [&>header]:static [&>header]:bg-transparent [&>header]:backdrop-blur-none">
         <SiteHeader session={session} current={current} width="app" />
         <MobileToc sections={sections} active={active} parent={parent} />
       </div>
@@ -47,7 +47,7 @@ export function ReadingPage({
         </Rule>
         <div className="mx-auto max-w-[1040px] border-x border-line lg:grid lg:grid-cols-[14rem_minmax(0,1fr)]">
           <aside className="hidden border-r border-line lg:block">
-            <nav aria-label="On this page" className="sticky top-20 px-5 py-8">
+            <nav aria-label="On this page" className="sticky top-20 max-h-[calc(100dvh-6rem)] overflow-y-auto px-5 py-8">
               <p className="font-mono text-[12.5px] text-muted">On this page</p>
               <ol className="mt-3 border-l border-line">
                 {sections.map((s, i) => (
@@ -92,15 +92,26 @@ export function ReadingPage({
 
 function MobileToc({ sections, active, parent }: { sections: Toc; active: string | null; parent: string | null }) {
   const ref = useRef<HTMLDetailsElement>(null);
-  // Close after a jump, on Escape, and on a tap outside.
+  // Close after a jump, on Escape (wherever focus is), on a tap outside, and
+  // when focus moves out of it, so it never covers what has focus.
   useEffect(() => {
     const details = ref.current;
     if (!details) return;
     const outside = (e: PointerEvent) => {
       if (details.open && !details.contains(e.target as Node)) details.open = false;
     };
+    const escape = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !details.open) return;
+      const inside = details.contains(document.activeElement);
+      details.open = false;
+      if (inside) details.querySelector("summary")?.focus();
+    };
     document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
   }, []);
   const current = sections.find((s) => s.id === parent);
   const child = current?.children?.find((c) => c.id === active);
@@ -108,11 +119,8 @@ function MobileToc({ sections, active, parent }: { sections: Toc; active: string
     <details
       ref={ref}
       className="group relative border-b border-line lg:hidden"
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && ref.current?.open) {
-          ref.current.open = false;
-          ref.current.querySelector("summary")?.focus();
-        }
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) e.currentTarget.open = false;
       }}
     >
       <summary className="mx-auto flex h-11 max-w-[1040px] cursor-pointer list-none items-center gap-2 border-x border-line px-4 text-[13.5px] focus-visible:outline-offset-[-3px] sm:px-6 [&::-webkit-details-marker]:hidden">
@@ -214,7 +222,7 @@ function Serial({ n }: { n: number }) {
 export function Section({ toc, id, children }: { toc: Toc; id: string; children: ReactNode }) {
   const index = toc.findIndex((s) => s.id === id);
   return (
-    <section id={id} aria-labelledby={`${id}-h`} className="scroll-mt-[8.5rem] border-t border-line pt-8 first:border-t-0 [&:not(:first-child)]:mt-12 lg:scroll-mt-24">
+    <section id={id} aria-labelledby={`${id}-h`} className="border-t border-line pt-8 first:border-t-0 [&:not(:first-child)]:mt-12">
       <h2 id={`${id}-h`} className="flex items-baseline gap-3 text-[22px] font-medium leading-tight tracking-[-0.025em] text-foreground">
         <Serial n={index} />
         <a href={`#${id}`} className="group/h min-w-0 rounded-[4px]">
