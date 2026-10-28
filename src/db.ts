@@ -462,10 +462,13 @@ export async function isDeparture(db: D1Database, membershipId: string, at: numb
 // nothing.
 const STILL_REMOVED = "(allowed_ms IS NULL OR removed_ms > allowed_ms)";
 
+// Not for a deleted workspace: checked in the same statement, so a removal
+// racing the workspace's purge can't leave a row behind it.
 export async function recordRemoval(db: D1Database, userId: string, organizationId: string, atMs: number): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO removals (user_id, organization_id, removed_ms) VALUES (?, ?, ?)
+      `INSERT INTO removals (user_id, organization_id, removed_ms)
+       SELECT ?1, ?2, ?3 WHERE NOT EXISTS (SELECT 1 FROM deleted_workspaces WHERE organization_id = ?2)
        ON CONFLICT (user_id, organization_id) DO UPDATE SET removed_ms = MAX(removed_ms, excluded.removed_ms)`
     )
     .bind(userId, organizationId, atMs)
