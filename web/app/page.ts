@@ -13,6 +13,11 @@ export interface Session {
   notice: Notice | null;
 }
 
+export interface Usage {
+  storedBytes: number;
+  limitBytes: number;
+}
+
 // What a form post did, said once on the page it lands on.
 export interface Notice {
   tone: "done" | "problem";
@@ -114,8 +119,9 @@ export type Page =
   | { kind: "message"; title: string; message: string; retry: string | null; retryLabel?: string; session: Session | null }
   | { kind: "not-found"; session: Session | null }
   // older: the next page of the feed, when there is one.
-  | { kind: "feed"; session: Session; artifacts: ArtifactSummary[]; older: string | null }
-  | { kind: "mine"; session: Session; artifacts: ArtifactSummary[]; older: string | null }
+  // usage: set when the workspace is nearly full (admins from 80%, everyone from 95%).
+  | { kind: "feed"; session: Session; artifacts: ArtifactSummary[]; older: string | null; usage?: Usage | null }
+  | { kind: "mine"; session: Session; artifacts: ArtifactSummary[]; older: string | null; usage?: Usage | null }
   | { kind: "artifact"; session: Session; artifact: ArtifactHead; versions: ArtifactVersion[] }
   // next: where to go after joining or switching (a link they followed).
   // join: a join that failed, shown again with what they typed and why.

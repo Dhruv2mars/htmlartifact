@@ -5,7 +5,8 @@ import type { ArtifactSummary, ArtifactVersion, Confirmation, InviteLink, Notice
 // &fixture=empty for empty states. artifact takes &teammate; join takes
 // &member=current|other; workspaces takes &next[=/path] (a followed link)
 // and &error (a refused invite code); message takes &retry=none|signin.
-// Any signed-in page takes &role=member (default admin) and
+// feed and mine take &full (a nearly full workspace). Any signed-in page
+// takes &role=member (default admin) and
 // &notice=done|problem|fresh|lost; confirm takes &change=make-admin|
 // make-member|remove|leave|delete|blocked.
 
@@ -64,6 +65,7 @@ export function fixturePage(url: URL): Page {
   const worst = url.searchParams.get("fixture") === "worst";
   const empty = url.searchParams.get("fixture") === "empty";
   const role = url.searchParams.get("role") === "member" ? "member" : "admin";
+  const full = url.searchParams.has("full");
   const s: Session = { ...(worst ? worstSession : session), role, notice: fixtureNotice(url.searchParams.get("notice"), worst) };
   const list = empty ? [] : worst ? worstArtifacts : artifacts;
   switch (kind) {
@@ -91,9 +93,9 @@ export function fixturePage(url: URL): Page {
     case "not-found":
       return { kind: "not-found", session: null };
     case "feed":
-      return { kind: "feed", session: s, artifacts: list, older: worst ? "/?cursor=1.k3j9x0a1b2c4" : null };
+      return { kind: "feed", session: s, artifacts: list, older: worst ? "/?cursor=1.k3j9x0a1b2c4" : null, usage: full ? { storedBytes: 45_100_000, limitBytes: 52_428_800 } : null };
     case "mine":
-      return { kind: "mine", session: s, artifacts: list.filter((a, i) => worst || i % 2 === 0), older: null };
+      return { kind: "mine", session: s, artifacts: list.filter((a, i) => worst || i % 2 === 0), older: null, usage: full ? { storedBytes: 51_000_000, limitBytes: 52_428_800 } : null };
     case "artifact":
       return {
         kind: "artifact",

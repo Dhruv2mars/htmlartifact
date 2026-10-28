@@ -1,7 +1,10 @@
-import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { Menu } from "@base-ui/react/menu";
+import { Fragment, useDeferredValue, useEffect, useRef, useState } from "react";
+import { cx } from "../lib/cx";
 import { matchesAll, words } from "../lib/search";
 import type { ArtifactSummary } from "../page";
-import { SearchIcon } from "./icons";
+import { MoreIcon, SearchIcon } from "./icons";
+import { menuItem, menuPopup } from "./menu";
 import { Seal } from "./Seal";
 import { Rule } from "./Sheet";
 import { Time } from "./Time";
@@ -62,21 +65,26 @@ export function ArtifactList({
         </Rule>
       )}
       <Rule width="app" inner="">
-        <div
-          aria-hidden
-          className="hidden grid-cols-[3.5rem_minmax(0,1fr)_11rem_7.5rem_8.5rem] border-b border-line font-mono text-[12px] text-faint md:grid"
-        >
+        <div aria-hidden className={cx(COLUMNS, "hidden border-b border-line font-mono text-[12px] text-faint md:grid")}>
           <span className="border-r border-line" />
           <span className="px-4 py-2">Artifact</span>
           <span className="px-4 py-2">{mine ? "Repository" : "Published by"}</span>
           <span className="px-4 py-2">Versions</span>
           <span className="px-4 py-2 text-right">Updated</span>
+          <span />
         </div>
-        <ul className="divide-y divide-line">
-          {rows.map((a) => (
-            <Row key={a.id} artifact={a} mine={mine} />
-          ))}
-          {shown.length === 0 && (
+        {byDay(rows, hydrated).map((group) => (
+          <Fragment key={group.label}>
+            <h2 className="border-b border-line bg-surface/50 px-4 py-1.5 font-mono text-[12px] text-faint sm:px-5">{group.label}</h2>
+            <ul className="divide-y divide-line border-b border-line last:border-b-0">
+              {group.rows.map((a) => (
+                <Row key={a.id} artifact={a} mine={mine} />
+              ))}
+            </ul>
+          </Fragment>
+        ))}
+        {shown.length === 0 && (
+          <ul>
             <li className="px-5 py-14 text-center text-[14px] text-muted">
               Nothing {paged ? "on this page " : ""}matches “{query.trim()}”.{" "}
               <button
@@ -89,11 +97,40 @@ export function ArtifactList({
                 Clear the filter
               </button>
             </li>
-          )}
-        </ul>
+          </ul>
+        )}
       </Rule>
     </>
   );
+}
+
+// The list's columns on wide screens: seal, artifact, who, versions, when, actions.
+const COLUMNS = "md:grid-cols-[3.5rem_minmax(0,1fr)_11rem_7.5rem_8.5rem_2.75rem]";
+
+// Rows newest first, under Today / Yesterday / This week / Earlier, so a busy
+// feed (agents publish dozens a day) still reads as days. The server renders
+// in UTC; after hydration the reader's own days take over.
+function byDay(rows: ArtifactSummary[], local: boolean): { label: string; rows: ArtifactSummary[] }[] {
+  const zone = local ? undefined : "UTC";
+  const day = (date: Date) => {
+    const parts = new Intl.DateTimeFormat("en", { timeZone: zone, year: "numeric", month: "numeric", day: "numeric" }).formatToParts(date);
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+    return Date.UTC(get("year"), get("month") - 1, get("day")) / 86_400_000;
+  };
+  const today = day(new Date());
+  const label = (iso: string | null) => {
+    if (!iso) return "Earlier";
+    const ago = today - day(new Date(iso));
+    return ago <= 0 ? "Today" : ago === 1 ? "Yesterday" : ago < 7 ? "This week" : "Earlier";
+  };
+  const groups: { label: string; rows: ArtifactSummary[] }[] = [];
+  for (const row of rows) {
+    const name = label(row.updatedAt);
+    const last = groups.at(-1);
+    if (last?.label === name) last.rows.push(row);
+    else groups.push({ label: name, rows: [row] });
+  }
+  return groups;
 }
 
 function Row({ artifact: a, mine }: { artifact: ArtifactSummary; mine: boolean }) {
@@ -101,11 +138,11 @@ function Row({ artifact: a, mine }: { artifact: ArtifactSummary; mine: boolean }
   const versions = a.versionCount || (a.version ?? 0);
   const who = mine ? a.repo : a.author;
   return (
-    <li className="group relative grid grid-cols-[minmax(0,1fr)] transition-colors duration-150 hover:bg-surface md:grid-cols-[3.5rem_minmax(0,1fr)_11rem_7.5rem_8.5rem]">
+    <li className={cx("group relative grid grid-cols-[minmax(0,1fr)] transition-colors duration-150 hover:bg-surface", COLUMNS)}>
       <span className="hidden place-items-center border-r border-line py-3.5 md:grid">
         <Seal id={a.id} size={22} deferred />
       </span>
-      <div className="min-w-0 px-4 py-3.5">
+      <div className="min-w-0 py-3.5 pl-4 pr-12 md:px-4">
         {/* Phones: the seal sits with the title, so the title gets the width. */}
         <Seal id={a.id} size={16} deferred className="float-left mr-2 mt-[3px] md:hidden" />
         <a
@@ -144,7 +181,60 @@ function Row({ artifact: a, mine }: { artifact: ArtifactSummary; mine: boolean }
         <VersionsLink artifact={a} count={versions} title={title} />
       </div>
       <Time iso={a.updatedAt} className="hidden px-4 py-3.5 text-right font-mono text-[12.5px] text-muted md:block" />
+      <div className="absolute right-2 top-2.5 md:static md:flex md:items-start md:justify-center md:py-2.5">
+        <RowMenu artifact={a} title={title} />
+      </div>
     </li>
+  );
+}
+
+// What you do with an artifact without opening it: copy its link (the thing
+// people paste in chat many times a day), or go to its versions.
+function RowMenu({ artifact, title }: { artifact: ArtifactSummary; title: string }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState<"idle" | "copied" | "failed">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(artifact.url);
+      setCopied("copied");
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setOpen(false), 700);
+    } catch {
+      setCopied("failed");
+    }
+  };
+  return (
+    <Menu.Root
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setCopied("idle");
+      }}
+    >
+      <Menu.Trigger
+        aria-label={`Actions for ${title}`}
+        className="press relative z-[1] grid size-8 place-items-center rounded-control text-muted hover:bg-card hover:text-foreground data-popup-open:bg-card data-popup-open:text-foreground"
+      >
+        <MoreIcon className="size-4" />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner sideOffset={6} align="end" className="z-40 outline-none">
+          <Menu.Popup className={cx(menuPopup, "w-56")}>
+            <Menu.Item closeOnClick={false} onClick={copy} className={menuItem}>
+              {copied === "copied" ? "Link copied" : copied === "failed" ? "Couldn't copy: open it and copy from there" : "Copy link"}
+            </Menu.Item>
+            <Menu.LinkItem href={`/history/${artifact.id}`} className={menuItem}>
+              Versions and details
+            </Menu.LinkItem>
+            <p role="status" className="sr-only">
+              {copied === "copied" ? "Link copied" : copied === "failed" ? "Couldn't copy the link" : ""}
+            </p>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
   );
 }
 

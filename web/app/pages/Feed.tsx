@@ -5,28 +5,31 @@ import { ArtifactList } from "../components/ArtifactList";
 import { ButtonLink } from "../components/Button";
 import { CommandBlock } from "../components/CommandBlock";
 import { Rule } from "../components/Sheet";
-import type { ArtifactSummary, Session } from "../page";
+import { bytes } from "../lib/time";
+import type { ArtifactSummary, Session, Usage } from "../page";
 
-export function Feed({ session, artifacts, older }: { session: Session; artifacts: ArtifactSummary[]; older: string | null }) {
+export function Feed({ session, artifacts, older, usage }: { session: Session; artifacts: ArtifactSummary[]; older: string | null; usage: Usage | null }) {
   const name = session.workspace?.name ?? "Workspace";
   return (
     <AppShell session={session} section="feed" artifacts={artifacts}>
       <PageHead title={name} count={artifacts.length || undefined}>
         Everything published in {name}, newest first. Only members can open these links.
       </PageHead>
+      {usage && <NearlyFull usage={usage} workspace={name} admin={session.role === "admin"} />}
       {artifacts.length ? <Listing artifacts={artifacts} older={older} /> : <FirstArtifact workspace={name} admin={session.role === "admin"} />}
       <Fill />
     </AppShell>
   );
 }
 
-export function Mine({ session, artifacts, older }: { session: Session; artifacts: ArtifactSummary[]; older: string | null }) {
+export function Mine({ session, artifacts, older, usage }: { session: Session; artifacts: ArtifactSummary[]; older: string | null; usage: Usage | null }) {
   const name = session.workspace?.name ?? "this workspace";
   return (
     <AppShell session={session} section="mine" artifacts={artifacts}>
       <PageHead title="My artifacts" count={artifacts.length || undefined}>
         What you've published in {name}. Open an artifact's versions to see its history.
       </PageHead>
+      {usage && <NearlyFull usage={usage} workspace={name} admin={session.role === "admin"} />}
       {artifacts.length ? <Listing artifacts={artifacts} older={older} mine /> : <FirstArtifact workspace={name} mine />}
       <Fill />
     </AppShell>
@@ -75,6 +78,26 @@ function FirstArtifact({ workspace, mine = false, admin = false }: { workspace: 
           />
         </li>
       </ol>
+    </Rule>
+  );
+}
+
+// The workspace is nearly full: say how full, what stops, and the way out,
+// before CI fails cold.
+function NearlyFull({ usage, workspace, admin }: { usage: Usage; workspace: string; admin: boolean }) {
+  const percent = Math.min(100, Math.round((usage.storedBytes / usage.limitBytes) * 100));
+  return (
+    <Rule width="app" inner="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 sm:px-5">
+      <p className="min-w-0 flex-1 basis-72 text-[14px] leading-relaxed text-foreground">
+        {workspace} has used <span className="font-mono tabular-nums">{bytes(usage.storedBytes)}</span> of{" "}
+        <span className="font-mono tabular-nums">{bytes(usage.limitBytes)}</span> ({percent}%). Uploads stop when it's full: prune old versions with{" "}
+        <code className="font-mono text-[12.5px]">npx htmlartifact prune</code> or delete what nobody needs.
+      </p>
+      {admin && (
+        <ButtonLink href="/settings#storage" tone="line" size="sm">
+          Storage
+        </ButtonLink>
+      )}
     </Rule>
   );
 }

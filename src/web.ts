@@ -77,7 +77,13 @@ export function registerWeb(app: Hono<AppEnv>): void {
       handle: viewer.workspace.handle,
       cursor: c.req.query("cursor")
     });
-    return renderPage(c, { kind: "feed", session: await session(c, viewer), artifacts: toArtifacts(drafts), older: olderLink("/", nextCursor) });
+    return renderPage(c, {
+      kind: "feed",
+      session: await session(c, viewer),
+      artifacts: toArtifacts(drafts),
+      older: olderLink("/", nextCursor),
+      usage: await nearlyFull(c, viewer)
+    });
   });
 
   app.get("/docs", async (c) => renderPage(c, { kind: "docs", session: await session(c, await sessionViewer(c)) }));
@@ -92,7 +98,13 @@ export function registerWeb(app: Hono<AppEnv>): void {
       handle: viewer.workspace.handle,
       cursor: c.req.query("cursor")
     });
-    return renderPage(c, { kind: "mine", session: await session(c, viewer), artifacts: toArtifacts(drafts), older: olderLink("/mine", nextCursor) });
+    return renderPage(c, {
+      kind: "mine",
+      session: await session(c, viewer),
+      artifacts: toArtifacts(drafts),
+      older: olderLink("/mine", nextCursor),
+      usage: await nearlyFull(c, viewer)
+    });
   });
 
   // Version history of any artifact in the workspace, not only your own. A
@@ -447,6 +459,15 @@ async function session<E extends AppEnv>(c: Context<E>, viewer: Viewer | null): 
     );
   }
   return toSession(viewer, notice);
+}
+
+// The workspace's storage when it is nearly full: admins (who can clean up)
+// hear at 80%, everyone at 95%, before uploads and CI start failing.
+async function nearlyFull<E extends AppEnv>(c: Context<E>, viewer: Viewer): Promise<{ storedBytes: number; limitBytes: number } | null> {
+  if (!viewer.organization_id) return null;
+  const { storedBytes, limitBytes } = await workspaceUsage(c, viewer.organization_id);
+  const share = limitBytes ? storedBytes / limitBytes : 0;
+  return share >= (viewer.role === "admin" ? 0.8 : 0.95) ? { storedBytes, limitBytes } : null;
 }
 
 // Sets the notice the next page shows.

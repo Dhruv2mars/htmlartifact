@@ -14,6 +14,9 @@ export interface ArtifactFrame {
   latestUrl: string; // the artifact URL without /v/<n>
   historyUrl: string;
   feedUrl: string;
+  by?: string | null; // who published this version
+  at?: number | null; // when (unix seconds)
+  now?: number; // for tests: the time "2 hours ago" is measured from
 }
 
 // An artifact, framed from the sandbox origin (src/serve.ts), under a thin
@@ -51,7 +54,7 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
 <h1 class="title" title="${title}">${title}</h1>
 </div>
 <span class="version"><span class="chip num${frame.latest ? "" : " old"}"><span aria-hidden="true">v${version}</span><span class="sr">Version ${version}</span></span>${state}</span>
-</div>
+${meta(frame)}</div>
 <div class="tools">
 <p class="access">${icon(LOCK)}<span>Only <span class="name">${workspace ?? "workspace"}</span> members can see this</span></p>
 <a class="tool" href="${escapeHtml(frame.historyUrl)}" aria-label="History of ${title}">${icon(HISTORY)}<span class="label">History</span></a>
@@ -65,6 +68,39 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
 </main>
 </body>
 </html>`;
+}
+
+// Who published this version and when, as people say it ("Maya · 2 hours
+// ago"); the exact time is in the tooltip. Rendered once: the wrapper has no
+// script to tick it, and every open renders it fresh (no-store).
+function meta(frame: ArtifactFrame): string {
+  if (!frame.by && !frame.at) return "";
+  const parts: string[] = [];
+  if (frame.by) parts.push(`<span class="by"><span class="sr">Published by </span>${escapeHtml(frame.by)}</span>`);
+  if (frame.at) {
+    const iso = new Date(frame.at * 1000).toISOString();
+    const exact = new Date(frame.at * 1000).toLocaleString("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC";
+    parts.push(`<time datetime="${iso}" title="${escapeHtml(exact)}">${escapeHtml(ago(frame.at, frame.now ?? Math.floor(Date.now() / 1000)))}</time>`);
+  }
+  return `<span class="meta">${parts.join('<span aria-hidden="true"> · </span>')}</span>`;
+}
+
+const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ["year", 31_536_000],
+  ["month", 2_592_000],
+  ["week", 604_800],
+  ["day", 86_400],
+  ["hour", 3_600],
+  ["minute", 60]
+];
+const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+function ago(then: number, now: number): string {
+  const seconds = then - now;
+  for (const [unit, size] of UNITS) {
+    if (Math.abs(seconds) >= size) return relative.format(Math.round(seconds / size), unit);
+  }
+  return "just now";
 }
 
 // Stroke icons on the app's 16px grid (web/app/components/icons.tsx).
@@ -146,6 +182,10 @@ a { color: inherit; text-decoration: none; touch-action: manipulation; }
 }
 .latest .i { width: 14px; height: 14px; }
 
+.meta {
+  flex: 0 1 auto; min-width: 0; margin-left: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fog); font-size: 13px;
+}
 .tools { flex: none; display: flex; align-items: center; gap: 2px; }
 .access {
   display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 10px 0 0;
@@ -189,8 +229,12 @@ body:has(.toggle:checked) .bar { display: none; }
 main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 iframe.artifact { flex: 1 1 auto; display: block; width: 100%; min-height: 0; border: 0; background: #fff; }
 
-@media (max-width: 899px) {
+/* Room first for who and when; the access line returns on wide screens. */
+@media (max-width: 1199px) {
   .access { display: none; }
+}
+@media (max-width: 899px) {
+  .meta { display: none; }
 }
 @media (max-width: 639px) {
   .bar { gap: 8px; padding: 2px 6px 0 12px; }

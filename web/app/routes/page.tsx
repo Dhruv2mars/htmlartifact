@@ -102,9 +102,9 @@ function PageBody() {
     case "not-found":
       return <NotFound />;
     case "feed":
-      return <Feed session={page.session} artifacts={page.artifacts} older={page.older} />;
+      return <Feed session={page.session} artifacts={page.artifacts} older={page.older} usage={page.usage ?? null} />;
     case "mine":
-      return <Mine session={page.session} artifacts={page.artifacts} older={page.older} />;
+      return <Mine session={page.session} artifacts={page.artifacts} older={page.older} usage={page.usage ?? null} />;
     case "artifact":
       return <ArtifactDetail session={page.session} artifact={page.artifact} versions={page.versions} />;
     case "workspaces":

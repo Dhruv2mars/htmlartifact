@@ -344,3 +344,10 @@ describe("web app assets", () => {
     assert.match(await signIn.text(), /Sign in to htmlartifact/);
   });
 });
+
+test("the wrapper's bar says who published the version and when, without script", async () => {
+  const { wrapper } = await frameOf(single.publicUrl);
+  assert.match(wrapper.text_, /<span class="meta"><span class="by"><span class="sr">Published by <\/span>Alice<\/span>/);
+  assert.match(wrapper.text_, /<time datetime="\d{4}-\d\d-\d\dT[^"]+" title="[^"]+ UTC">(just now|\d+ minutes? ago)<\/time>/);
+  assert.doesNotMatch(wrapper.text_, /<script/i, "the wrapper stays script-free");
+});

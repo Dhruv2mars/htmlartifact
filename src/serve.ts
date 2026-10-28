@@ -72,8 +72,12 @@ async function serve(c: Context<AppEnv>, ref: DraftRef) {
   c.header("Content-Security-Policy", frameContentSecurityPolicy(sandboxOrigin));
   c.header("Referrer-Policy", "no-referrer");
   c.header("Cache-Control", "private, no-store");
+  // Who published this version, for the bar ("Maya · 2 hours ago").
+  const by = await c.env.DB.prepare("SELECT name FROM accounts WHERE id = ?").bind(version.created_by).first<{ name: string }>();
   return c.html(
     renderArtifactFrame({
+      by: by?.name ?? null,
+      at: version.created_at,
       title: draft.title,
       src,
       id: draft.id,
