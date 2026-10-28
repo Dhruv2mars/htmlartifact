@@ -39,8 +39,10 @@ the CLI and web app loops.
 Changes land on `main` through an Entire trail (a branch plus
 `entire trail create`). `bun run check` is the merge gate. It runs everything
 the old GitHub Actions CI ran, in order, and stops at the first failure.
-Buildkite runs the same command on every push (`.buildkite/pipeline.yml`, the
-free hosted `linux-small` queue) and reports it on the trail as a gate:
+Buildkite runs the same gate on every push (`.buildkite/pipeline.yml`, the
+free hosted `linux-small` queue), split into parts that run side by side
+(`bun run check -- --part static|d1|r2`; each suite in 3 shards), and reports
+it on the trail as a gate:
 
 | Step | What |
 |---|---|
@@ -53,8 +55,9 @@ free hosted `linux-small` queue) and reports it on the trail as a gate:
 
 Buildkite covers Linux; run it locally for macOS. Windows is no longer
 tested. Buildkite's Free plan (no card) includes 2,000 Linux vCPU-minutes a
-month and a run uses about 25 (11 minutes on 2 vCPUs), so about 80 pushes a
-month across all branches; push finished work, not every commit. A trail merges only when, on its latest commit, rebased on `main`:
+month. A run takes about 5 minutes on 7 parallel 2-vCPU jobs and uses about 37
+vCPU-minutes, so about 50 pushes a month across all branches; push finished
+work, not every commit. A trail merges only when, on its latest commit, rebased on `main`:
 
 - Buildkite's `bun run check` passed, so `entire trail merge --dry-run`
   passes, and every finding from the trail's review agents is fixed or

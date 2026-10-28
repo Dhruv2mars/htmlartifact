@@ -27,9 +27,11 @@ export async function requireOriginTip(branch: string) {
 export const recordPass = (sha: string) => Bun.write(passed, `${sha}\n`);
 const lastPass = async () => (await Bun.file(passed).text().catch(() => "")).trim();
 
-// Buildkite runs the same gate on every push (.buildkite/pipeline.yml). With the
-// bk CLI logged in, a build of this exact commit counts if its `check` job ran
+// Buildkite runs the same gate on every push (.buildkite/pipeline.yml), in
+// parts side by side. With the bk CLI logged in, a build of this exact commit
+// counts if every job of its `check`, `check-d1` and `check-r2` steps ran
 // `bun run check` and passed outright (a soft failure does not count).
+const GATE_STEPS = ["check", "check-d1", "check-r2"];
 type Job = { step_key?: string; command?: string; state?: string; exit_status?: number; soft_failed?: boolean };
 async function buildkitePass(sha: string) {
   const path = `/pipelines/htmlartifact/builds?commit=${sha}&state=passed`;
@@ -37,8 +39,12 @@ async function buildkitePass(sha: string) {
   try {
     const out = res.stdout.toString();
     const builds = res.exitCode === 0 ? (JSON.parse(out.slice(out.indexOf("["))) as { number: number; jobs: Job[] }[]) : [];
+    const outright = (j: Job) => j.command?.includes("bun run check") && j.state === "passed" && j.exit_status === 0 && !j.soft_failed;
     const gated = builds.find((b) =>
-      b.jobs.some((j) => j.step_key === "check" && j.command?.includes("bun run check") && j.state === "passed" && j.exit_status === 0 && !j.soft_failed)
+      GATE_STEPS.every((key) => {
+        const jobs = b.jobs.filter((j) => j.step_key === key);
+        return jobs.length > 0 && jobs.every(outright);
+      })
     );
     return gated?.number ?? null;
   } catch {
