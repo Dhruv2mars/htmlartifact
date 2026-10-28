@@ -572,6 +572,8 @@ async function admitWithCode<E extends AppEnv>(c: Context<E>, viewer: Viewer, co
         const revoked = await db.prepare("SELECT revoked_at FROM invites WHERE code = ?").bind(code).first<{ revoked_at: number | null }>();
         if (revoked?.revoked_at || (await isRemoved(db, viewer.account_id, organizationId))) {
           await undoJoin(c.env, membershipId);
+          // Still a live code: nobody was admitted, so hand its use back.
+          if (!revoked?.revoked_at) await release();
           return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
         }
         await setRevokedAtEpoch(db, viewer.account_id, organizationId, false, epoch);

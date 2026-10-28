@@ -460,15 +460,17 @@ export async function isDeparture(db: D1Database, membershipId: string, at: numb
 // late, repeated or out-of-order removal events can't undo an Allow back made
 // after them, and a removal after an Allow back blocks again. Leaving records
 // nothing.
-const STILL_REMOVED = "(allowed_ms IS NULL OR removed_ms > allowed_ms)";
+export const STILL_REMOVED = "(allowed_ms IS NULL OR removed_ms > allowed_ms)";
 
-// Not for a deleted workspace: checked in the same statement, so a removal
-// racing the workspace's purge can't leave a row behind it.
+// Not for a deleted workspace or a deleted user (user.deleted revokes them
+// everywhere): checked in the same statement, so a removal racing either
+// purge can't leave a row behind it.
 export async function recordRemoval(db: D1Database, userId: string, organizationId: string, atMs: number): Promise<void> {
   await db
     .prepare(
       `INSERT INTO removals (user_id, organization_id, removed_ms)
        SELECT ?1, ?2, ?3 WHERE NOT EXISTS (SELECT 1 FROM deleted_workspaces WHERE organization_id = ?2)
+         AND NOT EXISTS (SELECT 1 FROM revocations WHERE subject = ?1 AND organization_id = '*')
        ON CONFLICT (user_id, organization_id) DO UPDATE SET removed_ms = MAX(removed_ms, excluded.removed_ms)`
     )
     .bind(userId, organizationId, atMs)
@@ -488,7 +490,7 @@ export async function listRemovals(db: D1Database, organizationId: string): Prom
   const { results } = await db
     .prepare(
       `SELECT r.user_id, r.removed_ms, a.name, a.email FROM removals r LEFT JOIN accounts a ON a.id = r.user_id
-       WHERE r.organization_id = ? AND ${STILL_REMOVED} ORDER BY r.removed_ms DESC LIMIT 100`
+       WHERE r.organization_id = ? AND ${STILL_REMOVED} ORDER BY r.removed_ms DESC`
     )
     .bind(organizationId)
     .all<{ user_id: string; removed_ms: number; name: string | null; email: string | null }>();

@@ -1,6 +1,6 @@
 import type { Event } from "@workos-inc/node";
 import type { Context, Hono } from "hono";
-import { bumpMembershipEpoch, isDeparture, isRemoved, isRevoked, recordRemoval, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { STILL_REMOVED, bumpMembershipEpoch, isDeparture, recordRemoval, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { deleteWorkspaceStatements, isWorkspaceDeleted, membershipBeingUndone, runWorkspaceDeletions, scrubUserStatements, undoJoin } from "./purge.ts";
 import type { AppEnv } from "./types.ts";
 import { revokePortalLinks, workos } from "./workos.ts";
@@ -80,20 +80,17 @@ async function applyEvent(
             // can't undo an Allow back made after it. Not a deleted pending
             // membership (they were never in), nor a deleted user's
             // (user.deleted erases their records; this may come after it).
-            let blocked = false;
-            if (field(data, "status") !== "pending" && !(await isRevoked(db, [userId], "*"))) {
-              await recordRemoval(db, userId, organizationId, eventMs(createdAt));
-              blocked = await isRemoved(db, userId, organizationId);
-            }
+            if (field(data, "status") !== "pending") await recordRemoval(db, userId, organizationId, eventMs(createdAt));
             // Removed outside our app and back in before this event arrived,
             // through a code that was due for revocation at the removal, or
-            // through any code while the removal stands: undo it.
+            // through any code while the removal stands (read here, so an
+            // Allow back meanwhile counts): undo it.
             const { results } = await db
               .prepare(
-                `SELECT membership_id FROM joins WHERE user_id = ? AND organization_id = ? AND membership_id != ?
-                   AND undone = 0 AND (code_created_at <= ? OR ?)`
+                `SELECT membership_id FROM joins WHERE user_id = ?1 AND organization_id = ?2 AND membership_id != ?3
+                   AND undone = 0 AND (code_created_at <= ?4 OR EXISTS (SELECT 1 FROM removals r WHERE r.user_id = ?1 AND r.organization_id = ?2 AND ${STILL_REMOVED}))`
               )
-              .bind(userId, organizationId, removedId ?? "", at, blocked ? 1 : 0)
+              .bind(userId, organizationId, removedId ?? "", at)
               .all<{ membership_id: string }>();
             for (const { membership_id } of results) await undoJoin(c.env, membership_id);
           }
