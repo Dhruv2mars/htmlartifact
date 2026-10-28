@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { gzipSync } from "node:zlib";
 import { Console, Effect, Option } from "effect";
 import { Argument, Command } from "effect/cli";
 
@@ -172,8 +173,7 @@ export const upload = Command.make(
     const expectedDraftId = slug !== undefined && mapping?.draftId && !options.force ? mapping.draftId : undefined;
 
     const ci = collectCiMetadata();
-    const payload = {
-      ...source.body,
+    const fields = {
       filename: source.filename,
       draftId,
       slug,
@@ -191,14 +191,25 @@ export const upload = Command.make(
     // out of CPU; Cloudflare then answers 503 with its own error page (not our
     // JSON). The allowance refills within seconds, so retry, and an upload is
     // safe to repeat: identical content to the same artifact is a no-op.
-    let attempt = 0;
-    let result = yield* requestJson(`${apiUrl}/api/uploads`, { apiKey, body: payload, timeoutMs: 300_000 });
-    while (result.status === 503 && !result.body.ok && typeof result.body.error === "string" && result.body.error.startsWith("htmlartifact returned HTTP 503") && attempt < 3) {
-      const wait = result.retryAfter ?? [5, 15, 30][attempt]!;
-      attempt += 1;
-      yield* Console.error(`The server is busy (HTTP 503). Retrying in ${wait}s...`);
-      yield* Effect.sleep(`${wait} seconds`);
-      result = yield* requestJson(`${apiUrl}/api/uploads`, { apiKey, body: payload, timeoutMs: 300_000 });
+    const send = (payload: object) =>
+      Effect.gen(function* () {
+        let attempt = 0;
+        let result = yield* requestJson(`${apiUrl}/api/uploads`, { apiKey, body: payload, timeoutMs: 300_000 });
+        while (result.status === 503 && !result.body.ok && typeof result.body.error === "string" && result.body.error.startsWith("htmlartifact returned HTTP 503") && attempt < 3) {
+          const wait = result.retryAfter ?? [5, 15, 30][attempt]!;
+          attempt += 1;
+          yield* Console.error(`The server is busy (HTTP 503). Retrying in ${wait}s...`);
+          yield* Effect.sleep(`${wait} seconds`);
+          result = yield* requestJson(`${apiUrl}/api/uploads`, { apiKey, body: payload, timeoutMs: 300_000 });
+        }
+        return result;
+      });
+    // Pages travel gzip-compressed, and the server stores them as sent: a
+    // workspace holds about 3x more. A server older than that reads no
+    // "gzip" (every page looks empty to it), so the HTML goes again as is.
+    let result = yield* send({ ...fields, ...compressed(source.body) });
+    if (result.status === 422 && Array.isArray(result.body.issues) && result.body.issues.some((issue: Issue) => issue.code === "empty")) {
+      result = yield* send({ ...fields, ...source.body });
     }
     const { ok, status, body } = result;
 
@@ -236,6 +247,8 @@ export const upload = Command.make(
         // The server's own message, unless it was about HTMLARTIFACT_TOKEN.
         details: {
           status,
+          ...(typeof body.code === "string" ? { code: body.code } : {}),
+          ...(body.code === "cli_too_old" ? { minVersion: body.minVersion } : {}),
           ...(staleMapping ? { code: "mapped_artifact_not_found", draftId: staleMapping.draftId } : {}),
           error: staleMapping ? `${body.error || "Artifact not found."} ${hint}` : status === 401 && envToken() ? error.message : body.error || null,
           errors: body.errors || [],
@@ -271,6 +284,7 @@ export const upload = Command.make(
       versionUrl: body.versionUrl,
       contentHash: body.contentHash,
       totalBytes: body.totalBytes,
+      storedBytes: typeof body.storedBytes === "number" ? body.storedBytes : null,
       account: body.account?.name || null,
       workspace: body.workspace?.name || null,
       pages: body.pages || null,
@@ -279,7 +293,8 @@ export const upload = Command.make(
       // The draft ID never moves; a slug can be renamed and reused by
       // another draft, so it would not reliably name this one.
       updateCommand: [`${CMD} upload`, shellQuote(displayPath(source.resolved)), `--draft ${body.draftId}`].join(" "),
-      warnings
+      warnings,
+      notices: Array.isArray(body.notices) ? body.notices : []
     };
 
     // Print the receipt before touching local state: the page is already
@@ -604,3 +619,10 @@ export const prune = Command.make(
     if (usage) yield* Console.log(usage);
   })
 ).pipe(Command.withDescription("Delete an artifact's old versions to free storage, keeping the latest --keep <n>."));
+
+// An upload's pages, each gzip-compressed and base64-encoded (`gzip` in place
+// of `html`): the bytes exactly as read, a byte order mark included.
+function compressed(body: UploadSource["body"]): { gzip: string } | { files: Array<{ path: string; gzip: string }> } {
+  const gzip = (html: string) => gzipSync(Buffer.from(html, "utf8"), { level: 9 }).toString("base64");
+  return body.files ? { files: body.files.map((file) => ({ path: file.path, gzip: gzip(file.html) })) } : { gzip: gzip(body.html) };
+}

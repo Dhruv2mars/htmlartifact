@@ -5,15 +5,18 @@ import { FLAGS, bumpMembershipEpoch, databaseUsage, findWorkspace, findWorkspace
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 // The Worker validates with the native HTMLRewriter (Workers Free CPU limits);
 // parse5 (src/html-policy.ts) stays in the CLI.
-import { formatBytes, type Issue, type PageInput } from "./html-policy-rules.ts";
+import { formatBytes, formatIssue, type Issue, type PageInput } from "./html-policy-rules.ts";
+import { decodePages, type StoredBody } from "./gzip.ts";
+import { creationGate } from "./capacity.ts";
+import { LATEST_CLI_VERSION, cliVersion, compareVersions } from "./cli-version.ts";
 import { validateUpload } from "./html-policy-server.ts";
 import { CI_KEY_PREFIX, newCiKeyId, newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { draftUrl, slugProblem } from "./public-url.ts";
 import { checkLimit, clientIp, rateLimit, tooMany } from "./rate-limit.ts";
 import { activeMembership, bearerViewer, userStillMember } from "./auth.ts";
 import { deleteWorkspaceStatements, draftPrefix, isWorkspaceDeleted, membershipBeingUndone, pruneVersions, purgeDraft, queueDeletion, runDeletion, runWorkspaceDeletions, undoJoin, versionPrefix } from "./purge.ts";
-import { reserveBudget, secondsUntilUtcMidnight } from "./budget.ts";
-import { stageObjects, storageKind } from "./storage.ts";
+import { metered, secondsUntilUtcMidnight, spendRows } from "./budget.ts";
+import { GZIP_SUFFIX, stageObjects, storageKind } from "./storage.ts";
 import {
   isMember,
   type AppEnv,
@@ -201,7 +204,7 @@ export function registerApi(app: Hono<AppEnv>): void {
 
   // Creates a WorkOS organization with the caller as its admin. The CLI then
   // refreshes its token into the new workspace.
-  app.post("/api/workspaces", requireUser, perUser("workspace-create", 10), writeBudget(WORKSPACE_ROWS), async (c) => {
+  app.post("/api/workspaces", requireUser, perUser("workspace-create", 10), creationGate, writeBudget(WORKSPACE_ROWS), async (c) => {
     const viewer = c.get("viewer");
     if (viewer.is_api_key) return c.json({ ok: false, error: "API keys cannot create workspaces." }, 403);
     const body = await readJson(c, 16 * 1024);
@@ -549,7 +552,7 @@ export function registerApi(app: Hono<AppEnv>): void {
   });
 
   // ---- Artifacts
-  app.post("/api/uploads", requireMember, perUser("upload", 30), handleUpload);
+  app.post("/api/uploads", requireMember, perUser("upload", 30), (c, next) => metered(c, "upload", next), handleUpload);
   app.post("/api/check", requireMember, perUser("check", 60), handleCheck);
 
   // ?workspace=<id or handle> lists another workspace the caller is an active
@@ -650,15 +653,30 @@ export function registerApi(app: Hono<AppEnv>): void {
 // A use is reserved atomically before WorkOS is touched, so concurrent joins
 // can never exceed max_uses; it is released if nobody new was admitted.
 export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: Viewer, rawCode: unknown): Promise<JoinResult> {
-  const db = c.env.DB;
   const code = normalizeInviteCode(rawCode);
-  // Charged to the workspace the code is for, before anything is written.
-  const target = code ? await db.prepare("SELECT organization_id FROM invites WHERE code = ?").bind(code).first<{ organization_id: string }>() : null;
-  const over = await overDailyBudget(c, target?.organization_id ?? null, JOIN_ROWS, "join");
-  if (over) {
-    c.header("Retry-After", String(secondsUntilUtcMidnight()));
-    return { status: 429, body: { ok: false, error: `${over} Try again after 00:00 UTC.` } };
-  }
+  // Charged to the workspace the code is for ("ops"), before anything is written.
+  const target = code ? await c.env.DB.prepare("SELECT organization_id FROM invites WHERE code = ?").bind(code).first<{ organization_id: string }>() : null;
+  let result: JoinResult = { status: 500, body: { ok: false, error: "Internal server error." } };
+  await metered(
+    c,
+    "ops",
+    async () => {
+      const over = await spendRows(c, JOIN_ROWS, c.get("config").limits.budgets.ops, "join");
+      if (!over) {
+        result = await admitWithCode(c, viewer, code);
+        return;
+      }
+      c.header("Retry-After", String(secondsUntilUtcMidnight()));
+      result = { status: 429, body: { ok: false, error: `${over} Try again after 00:00 UTC.` } };
+    },
+    target?.organization_id ?? null
+  );
+  return result;
+}
+
+// joinWithCode within its budget.
+async function admitWithCode<E extends AppEnv>(c: Context<E>, viewer: Viewer, code: string | null): Promise<JoinResult> {
+  const db = c.env.DB;
   const reserved = code
     ? await db
         .prepare(
@@ -1043,10 +1061,28 @@ const CHANGEABLE_FIELDS = ["title", "description", "slug"] as const;
 async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const viewer = c.get("viewer");
   const db = c.env.DB;
+  // A CLI below the floor (src/cli-version.ts) is refused before its body is read.
+  const client = cliVersion(c.req.header("user-agent"));
+  const floor = c.get("config").minCliVersion;
+  if (client && compareVersions(client, floor) < 0) {
+    return c.json(
+      {
+        ok: false,
+        code: "cli_too_old",
+        minVersion: floor,
+        error: `htmlartifact ${client} is too old to publish to this server (it needs ${floor} or later). Update it and run the same command again: npx htmlartifact@latest upload … (or npm install -g htmlartifact@latest).`,
+        fix: "npx htmlartifact@latest"
+      },
+      426
+    );
+  }
   const capabilities = uploadCapabilities(viewer, c.get("config"));
   const body = await readJson<UploadBody, MemberEnv>(c, uploadBodyLimit(capabilities.maxBytes));
   const { filename, metadata = {}, draftId, description } = body;
-  const validation = await validateUpload(requestPages(body), capabilities);
+  // Gzip pages (src/gzip.ts) are inflated first; what is stored is what was sent.
+  const decoded = decodePages(requestPages(body), capabilities.maxBytes);
+  if (decoded.issue) return c.json({ ok: false, errors: [formatIssue(decoded.issue)], warnings: [], issues: [decoded.issue] }, 422);
+  const validation = await validateUpload(decoded.pages, capabilities);
   if (!validation.ok) {
     return c.json(
       { ok: false, errors: validation.errors, warnings: validation.warnings, issues: validation.issues },
@@ -1135,8 +1171,17 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
         .bind(existing.current_version_id)
         .first<Pick<VersionRow, "id" | "version_number" | "content_hash">>()
     : null;
-  // Re-sending identical content (a blind retry) keeps the current version.
+  // Re-sending identical content (a blind retry) keeps the current version,
+  // gzip-compressed or not: the hash is of the HTML.
   const unchanged = current?.content_hash === validation.contentHash;
+  // What each page stores, and the bytes the quotas count: a gzip page's
+  // compressed size, a plain one's HTML.
+  const bodies = new Map<unknown, StoredBody | null>(decoded.pages.map((page, i) => [page.path, decoded.bodies[i] ?? null]));
+  const stored = (page: { path: string; html: string; bytes: number }) => {
+    const body = bodies.get(page.path) ?? page.html;
+    return { body, bytes: typeof body === "string" ? page.bytes : body.byteLength, suffix: typeof body === "string" ? "" : GZIP_SUFFIX };
+  };
+  const storedBytes = validation.pages.reduce((sum, page) => sum + stored(page).bytes, 0);
   const id = existing?.id || newDraftId();
   const observedVersionId = existing?.current_version_id ?? null;
   const title = validation.title || existing?.title || filename || "Untitled";
@@ -1163,7 +1208,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   let fits = "1";
   let fitsParams: (string | number)[] = [];
   if (!unchanged) {
-    const reading = await storageFull(c, validation.totalBytes);
+    const reading = await storageFull(c, storedBytes);
     if (reading instanceof Response) return reading;
     // Bytes counted after this reading are not in `size` yet: the batch adds
     // the counters' growth since then (all workspaces) to the measured size.
@@ -1172,18 +1217,18 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       AND (SELECT COALESCE(SUM(stored_bytes), 0) FROM workspace_usage) + ? <= ?`;
     fitsParams = [
       viewer.organization_id,
-      validation.totalBytes,
+      storedBytes,
       workspaceBytes,
-      validation.totalBytes,
+      storedBytes,
       size === null ? Number.MAX_SAFE_INTEGER : databaseLimit - size + countedBytes
     ];
   }
 
   // Daily budgets (src/budget.ts): D1 rows written, the workspace's share
   // first. Past either, uploads stop with a 429 until 00:00 UTC; reads,
-  // sign-ins and deletes keep working. Unchanged content still writes its
-  // metadata, so it counts as an upload of no pages.
-  const over = await overDailyBudget(c, viewer.organization_id, uploadRows(c, unchanged ? [] : validation.pages), "upload");
+  // sign-ins and deletes keep working. Reserved as estimated, settled to what
+  // D1 measured. Unchanged content still writes its metadata.
+  const over = await spendRows(c, uploadRows(c, unchanged ? [] : validation.pages.map(stored)), c.get("config").limits.budgets.upload, "upload");
   if (over) return dailyBudgetSpent(c, over);
 
   const statements: D1PreparedStatement[] = [];
@@ -1196,15 +1241,16 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     if (!index) throw new Error("Upload has no index.html page.");
     const extraPages = pages.filter((page) => page !== index);
     const prefix = draftPrefix(viewer.organization_id, id);
-    const objectKey = `${prefix}versions/${versionId}.html`;
-    const pageKey = (page: { path: string }) => `${prefix}versions/${versionId}/${page.path}`;
+    // A ".gz" key marks an object stored gzip-compressed (src/storage.ts).
+    const objectKey = `${prefix}versions/${versionId}.html${stored(index).suffix}`;
+    const pageKey = (page: (typeof pages)[number]) => `${prefix}versions/${versionId}/${page.path}${stored(page).suffix}`;
     written = versionPrefix(viewer.organization_id, id, versionId);
     // R2: written now. D1: chunk inserts that join this batch after the
     // version row (each conditional on it), so they commit together.
     try {
       blobStatements = await stageObjects(c.env, versionId, [
-        { key: objectKey, html: index.html },
-        ...extraPages.map((page) => ({ key: pageKey(page), html: page.html }))
+        { key: objectKey, body: stored(index).body },
+        ...extraPages.map((page) => ({ key: pageKey(page), body: stored(page).body }))
       ]);
     } catch (error) {
       await discard();
@@ -1257,7 +1303,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
           id,
           objectKey,
           validation.contentHash,
-          validation.totalBytes,
+          storedBytes,
           pages.length,
           index.hasScripts ? 1 : 0,
           viewer.account_id,
@@ -1284,7 +1330,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
             `INSERT INTO draft_pages (draft_version_id, path, object_key, content_hash, file_size, title, has_inline_script)
              SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM draft_versions WHERE id = ?)`
           )
-          .bind(versionId, page.path, pageKey(page), sha256(page.html), page.bytes, page.title, page.hasScripts ? 1 : 0, versionId)
+          .bind(versionId, page.path, pageKey(page), sha256(page.html), stored(page).bytes, page.title, page.hasScripts ? 1 : 0, versionId)
       );
     }
     statements.push(...blobStatements);
@@ -1296,7 +1342,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
            SELECT ?, ? WHERE EXISTS (SELECT 1 FROM draft_versions WHERE id = ?)
            ON CONFLICT (organization_id) DO UPDATE SET stored_bytes = stored_bytes + excluded.stored_bytes`
         )
-        .bind(viewer.organization_id, validation.totalBytes, versionId)
+        .bind(viewer.organization_id, storedBytes, versionId)
     );
   }
   // Metadata applies even when the content is unchanged; only new content
@@ -1334,7 +1380,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     if (!results.at(-1)?.meta.changes) {
       await discard();
       // Concurrent uploads filled the storage after the first check.
-      const full = unchanged ? null : await storageFull(c, validation.totalBytes);
+      const full = unchanged ? null : await storageFull(c, storedBytes);
       if (full instanceof Response) return full;
       return c.json({ ok: false, error: "Another upload to this artifact landed at the same moment. Retry." }, 409);
     }
@@ -1360,6 +1406,15 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const publicUrl = draftUrl(origin, draft, viewer.workspace.handle);
   const multiPage = validation.pages.length > 1;
   const warnings = [...validation.warnings];
+  // Typed warnings for agents; each is in `warnings` too, which older CLIs print.
+  const notices: { code: string; message: string; fix: string }[] = [];
+  if (client && compareVersions(client, LATEST_CLI_VERSION) < 0) {
+    notices.push({
+      code: "cli_outdated",
+      message: `htmlartifact ${client} is out of date: this server is ${LATEST_CLI_VERSION}.`,
+      fix: "npx htmlartifact@latest (or npm install -g htmlartifact@latest)"
+    });
+  }
   // What else this upload changed on an existing artifact: identical content
   // publishes no version, but can still set its description or slug.
   const changedFields = existing ? CHANGEABLE_FIELDS.filter((field) => existing[field] !== draft[field]) : [];
@@ -1391,6 +1446,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       title,
       contentHash: validation.contentHash,
       totalBytes: validation.totalBytes,
+      // What the quota counts: smaller than totalBytes for gzip uploads.
+      storedBytes,
       account: { id: viewer.account_id, name: viewer.account_name },
       workspace: workspaceJson(viewer.workspace),
       publicUrl,
@@ -1398,7 +1455,8 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       // Built from the draft ID, which never moves: a slug can be renamed.
       versionUrl: `${origin}/d/${id}/v/${version.version_number}${multiPage ? "/" : ""}`,
       pages: multiPage ? validation.pages.map((p) => ({ path: p.path, url: `${publicUrl}/${p.path}` })) : undefined,
-      warnings
+      warnings: [...warnings, ...notices.map((notice) => `${notice.message} Update: ${notice.fix}`)],
+      notices
     },
     existing ? 200 : 201
   );
@@ -1461,8 +1519,11 @@ async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
       blockedInSandbox: SANDBOX_LIMITS
     }
   };
-  if (body.html !== undefined || body.files !== undefined) {
-    const validation = await validateUpload(requestPages(body), capabilities);
+  if (body.html !== undefined || body.gzip !== undefined || body.files !== undefined) {
+    const decoded = decodePages(requestPages(body), capabilities.maxBytes);
+    const validation = decoded.issue
+      ? { ok: false, totalBytes: 0, pages: [], issues: [decoded.issue], errors: [formatIssue(decoded.issue)], warnings: [] }
+      : await validateUpload(decoded.pages, capabilities);
     Object.assign(report, {
       ok: validation.ok,
       totalBytes: validation.totalBytes,
@@ -1494,27 +1555,16 @@ async function handleCheck(c: Context<MemberEnv>): Promise<Response> {
   return c.json(report);
 }
 
-// D1 rows an upload writes, doubled for index entries: the artifact, version,
-// usage counter and final update, the two budget rows, plus a row per extra
-// page and, on D1 storage, per <= 1 MB chunk.
-function uploadRows(c: Context<MemberEnv>, pages: { bytes: number }[]): number {
-  const chunks = storageKind(c.env) === "d1" ? pages.reduce((n, page) => n + Math.max(1, Math.ceil(page.bytes / 1_000_000)), 0) : 0;
-  return 2 * (6 + pages.length + chunks);
-}
-
-/**
- * Why `rows` more D1 rows don't fit today's budgets (the workspace's share
- * first, when there is a workspace), or null once they are reserved.
- */
-async function overDailyBudget<E extends AppEnv>(c: Context<E>, organizationId: string | null, rows: number, what: string): Promise<string | null> {
-  const { workspaceRowsPerDay, rowsPerDay } = c.get("config").limits;
-  if (organizationId && !(await reserveBudget(c.env.DB, `d1:rows:${organizationId}`, rows, workspaceRowsPerDay))) {
-    return `This workspace has reached today's ${what} limit.`;
-  }
-  if (!(await reserveBudget(c.env.DB, "d1:rows", rows, rowsPerDay))) {
-    return `This htmlartifact deployment has reached today's ${what} limit.`;
-  }
-  return null;
+// The D1 rows an upload is expected to write, to reserve before it runs (the
+// budget then settles to what D1 measured). Measured locally, index entries
+// included (test/capacity.test.js): MEASURED_UPLOAD_ROWS.
+function uploadRows(c: Context<MemberEnv>, pages: { bytes: number; body: StoredBody }[]): number {
+  const chunks =
+    storageKind(c.env) === "d1"
+      ? pages.reduce((n, page) => n + Math.max(1, Math.ceil(page.bytes / (typeof page.body === "string" ? 1_000_000 : 500_000))), 0)
+      : 0;
+  const { base, newVersion, page, chunk } = MEASURED_UPLOAD_ROWS;
+  return base + (pages.length ? newVersion + page * (pages.length - 1) : 0) + chunk * chunks;
 }
 
 function dailyBudgetSpent<E extends AppEnv>(c: Context<E>, over: string): Response {
@@ -1522,26 +1572,32 @@ function dailyBudgetSpent<E extends AppEnv>(c: Context<E>, over: string): Respon
   return c.json({ ok: false, code: "daily_budget", error: `${over} Try again after 00:00 UTC.` }, 429);
 }
 
-// D1 rows a route writes, doubled for index entries like uploadRows (the two
-// budget rows included): a grant (an invite or a CI key, and the re-check's
-// revoke), a new workspace, a role change (lock, epoch, cache, revocations)
-// and a join (epoch, cache, join and invite rows).
-const GRANT_ROWS = 2 * (2 + 2);
-export const WORKSPACE_ROWS = 2 * (1 + 2);
-const MEMBER_CHANGE_ROWS = 2 * (8 + 2);
-const JOIN_ROWS = 2 * (6 + 2);
+// D1 rows written per action, as measured locally (index entries and the
+// budget's own rows included; test/capacity.test.js measures them again and
+// fails if they drift). They are only what each action reserves up front:
+// the budget then settles to what D1 measured for that request.
+const MEASURED_UPLOAD_ROWS = { base: 6, newVersion: 14, page: 6, chunk: 3 };
+const GRANT_ROWS = 8;
+export const WORKSPACE_ROWS = 6;
+const MEMBER_CHANGE_ROWS = 20;
+const JOIN_ROWS = 16;
 
 /**
- * Charges a write route's D1 rows to the daily budgets that uploads use, so
- * no route can spend D1 Free's daily writes (past them D1 refuses every
- * write until 00:00 UTC). Removals, leaving, revocations and deletes are not
- * charged: they only write when something real ends, and must keep working.
+ * Charges a write route's D1 rows to the "ops" budget (src/budget.ts), so no
+ * route can spend D1 Free's daily writes (past them D1 refuses every write
+ * until 00:00 UTC), and uploads or social writes cannot spend these.
+ * Removals, leaving, revocations and deletes are not charged: they only write
+ * when something real ends, and must keep working.
  */
 export const writeBudget = (rows: number): MiddlewareHandler<AppEnv> =>
   async function budget(c, next) {
-    const over = await overDailyBudget(c, c.get("viewer")?.organization_id ?? null, rows, "change");
-    if (over) return dailyBudgetSpent(c, over);
-    return next();
+    let refused: Response | undefined;
+    await metered(c, "ops", async () => {
+      const over = await spendRows(c, rows, c.get("config").limits.budgets.ops, "change");
+      if (over) refused = dailyBudgetSpent(c, over);
+      else await next();
+    });
+    return refused;
   };
 
 // A 507 if `bytes` more would overflow the workspace's share or the
@@ -1595,12 +1651,13 @@ function uploadBodyLimit(maxBytes: number): number {
   return maxBytes * 3 + 64 * 1024;
 }
 
-// An upload is one document (`html`) or a folder of pages (`files`).
+// An upload is one document (`html`, or `gzip`: src/gzip.ts) or a folder of
+// pages (`files`, each with `html` or `gzip`).
 function requestPages(body: JsonBody): PageInput[] {
   if (Array.isArray(body?.files)) {
-    return body.files.map((file: PageInput | null | undefined) => ({ path: file?.path, html: file?.html }));
+    return body.files.map((file: PageInput | null | undefined) => ({ path: file?.path, html: file?.html, gzip: file?.gzip }));
   }
-  return [{ path: "index.html", html: body?.html }];
+  return [{ path: "index.html", html: body?.html, gzip: body?.gzip }];
 }
 
 // Returns null when no slug was sent; anything else goes through slugProblem.

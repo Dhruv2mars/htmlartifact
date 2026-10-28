@@ -36,6 +36,8 @@ export interface HtmlValidation {
 export interface PageInput {
   path?: unknown;
   html?: unknown;
+  // Server only: the page gzip-compressed, base64 (src/gzip.ts).
+  gzip?: unknown;
 }
 
 interface ValidatedPage extends HtmlValidation {

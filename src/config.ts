@@ -1,3 +1,4 @@
+import { MIN_CLI_VERSION } from "./cli-version.ts";
 import type { Config, Env } from "./types.ts";
 
 // Worker configuration, read from bindings (wrangler.toml vars + secrets).
@@ -49,12 +50,26 @@ export function getConfig(env: Env): Config {
       // fills it for everyone.
       workspaceBytes: Number(env.HTMLARTIFACT_WORKSPACE_QUOTA_BYTES || 50 * 1024 * 1024),
       databaseBytes: Number(env.HTMLARTIFACT_DATABASE_LIMIT_BYTES || 450_000_000),
-      // D1 Free allows 100,000 rows written a day, then refuses every write
-      // until 00:00 UTC. Uploads may use 40,000 of them (~2,000–4,000
-      // uploads), and one workspace 4,000 (~200–400), so no tenant can use up
-      // the day for everyone; sign-ins, invites and webhooks keep the rest.
-      rowsPerDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_DAY || 40_000),
-      workspaceRowsPerDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY || 4_000),
+      // D1 Free allows 100,000 rows written a day (account-wide), then
+      // refuses every write until 00:00 UTC. Each scope gets a share, and each
+      // workspace a share of that, so no tenant or feature can use up the day
+      // for everyone (src/budget.ts). Uploads 40,000; social writes 20,000;
+      // admin writes (invites, keys, roles, joins, new workspaces) 20,000. The
+      // last 20,000 are never budgeted: sign-ins, webhooks, deletions, cron.
+      budgets: {
+        upload: {
+          perDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_DAY || 40_000),
+          perWorkspaceDay: Number(env.HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY || 4_000)
+        },
+        engage: {
+          perDay: Number(env.HTMLARTIFACT_ENGAGE_ROWS_PER_DAY || 20_000),
+          perWorkspaceDay: Number(env.HTMLARTIFACT_ENGAGE_ROWS_PER_WORKSPACE_DAY || 2_000)
+        },
+        ops: {
+          perDay: Number(env.HTMLARTIFACT_OPS_ROWS_PER_DAY || 20_000),
+          perWorkspaceDay: Number(env.HTMLARTIFACT_OPS_ROWS_PER_WORKSPACE_DAY || 2_000)
+        }
+      },
       ...(env.ARTIFACTS
       ? {
           accountBytes: Number(env.MAX_ACCOUNT_HTML_BYTES || 4 * 1024 * 1024),
@@ -67,6 +82,8 @@ export function getConfig(env: Env): Config {
           maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 10)
         })
     },
+    // The oldest CLI that may upload (src/cli-version.ts).
+    minCliVersion: env.HTMLARTIFACT_MIN_CLI_VERSION || MIN_CLI_VERSION,
     workos: {
       apiKey,
       clientId,
