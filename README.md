@@ -74,6 +74,9 @@ fields named here:
 | `artifact_has_another_slug` | `upload --slug` | 2 | The path's artifact (`draftId`) already has another custom URL (`slug`): rename it with `--draft <id> --slug <name>`, or `--force` for a separate artifact |
 | `mapped_artifact_not_found` | `upload` | 4 | The artifact this path was published to (`draftId`) is not in the current workspace: deleted, or (a mapping saved by CLI 0.2.2 or older) in another of your workspaces |
 | `confirm_teammate_artifact` | `delete` | 2 | Someone else published it (`author`, `title`, `versionCount`): re-run with `--yes` |
+| `cli_too_old` | `upload` | 1 | This CLI is older than the server accepts (`minVersion`; HTTP 426): update with `npx htmlartifact@latest` and run the same command again |
+| `daily_budget` | `upload`, admin commands | 7 | Today's D1 write budget for that kind of change is spent (HTTP 429, `Retry-After` until 00:00 UTC) |
+| `creation_closed` | `workspace create` | 1 | htmlartifact is full for new teams right now (HTTP 507, `reason`: `storage` or `uploads`); joining with an invite still works |
 
 `upload --json` prints a receipt:
 
@@ -88,15 +91,23 @@ fields named here:
   "rawUrl": "https://…/w/acme/weekly-report/raw",   // the HTML with a token (`read`); its source in a browser
   "versionUrl": "https://…/d/k3j9x0a1b2c4/v/4",     // this version, pinned
   "contentHash": "…",
-  "totalBytes": 18213,
+  "totalBytes": 18213,          // the HTML's size
+  "storedBytes": 4120,          // what the workspace's storage counts (pages go up and are stored gzip-compressed); null from older servers
   "account": "Alice",
   "workspace": "Acme",
   "pages": null,                // multi-page uploads: [{ "path", "url" }]
   "changedFields": ["description"], // what else this upload changed: "title", "description", "slug"
   "updateCommand": "htmlartifact upload report.html --draft k3j9x0a1b2c4",
-  "warnings": []                // e.g. the title changed (another document at a reused path?), CI without --slug
+  "warnings": [],               // e.g. the title changed (another document at a reused path?), CI without --slug
+  "notices": []                 // the warnings that have a stable code: [{ "code": "cli_outdated", "message", "fix" }]
 }
 ```
+
+The CLI names itself in its User-Agent (`htmlartifact/<version>`). An upload
+from a CLI older than the newest on npm (`HTMLARTIFACT_LATEST_CLI_VERSION`,
+default the server's own version) gets the `cli_outdated` notice (and the same
+text in `warnings`); one older than the server's floor
+(`HTMLARTIFACT_MIN_CLI_VERSION`, default 0.2.1) is refused with `cli_too_old`.
 
 A page with no `<title>` is named after its first `<h1>`, else its file name.
 A pruned version's URL answers agents with a 404 that says so and gives the
@@ -210,7 +221,16 @@ Artifact HTML lives in D1 (`src/storage.ts`): each object is split into
 ≤ 1 MB rows of a `blobs` table, written in the same atomic batch as the version
 that references them, so a fresh artifact opens for teammates immediately (D1,
 not KV: KV is eventually consistent). Deleting an artifact or workspace
-deletes every chunk of every version.
+deletes every chunk of every version (test/deletion.test.js checks every
+table for leftovers after each kind of deletion).
+
+The CLI (0.3.0 and later) sends each page gzip-compressed. The server inflates
+it inside validation (1 MiB of HTML per upload at most; one gzip member with
+nothing after it), stores the bytes it received (a `.gz` key), and serves them
+with `Content-Encoding: gzip`, inflating only for clients that don't accept
+gzip. Quotas count stored bytes, so a workspace holds 3–7× more HTML. Versions
+stored before that stay plain text and keep serving. Inflating a dense 1 MiB
+page takes about 2 ms of CPU.
 
 The app's own limits keep usage inside the free quotas (numbers from
 Cloudflare's docs: Workers limits, D1 limits and pricing, Pages Functions
@@ -220,7 +240,8 @@ pricing, checked 2026-10-19):
 |---|---|
 | D1: 500 MB per database (5 GB per account) | Uploads stop when the database would pass 450 MB (`HTMLARTIFACT_DATABASE_LIMIT_BYTES`); each workspace holds at most 50 MiB of HTML, every version counted (`HTMLARTIFACT_WORKSPACE_QUOTA_BYTES`); 1 MiB per upload (2 MiB flagged), 10 pages |
 | D1: 50 queries per request | An upload is one batch of ~2 statements per page + 1 per MB + ~8 |
-| D1: 100,000 rows written per day | Uploads, invites, CI keys, joins, role changes and new workspaces may write 40,000 rows a day in all (`HTMLARTIFACT_UPLOAD_ROWS_PER_DAY`) and one workspace 4,000 (`HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY`), counted conservatively (a one-page upload counts 16, index entries included). Past either, they get a 429 with `Retry-After` until 00:00 UTC; reading, signing in, removing members, leaving, revoking and deleting keep working on the remaining 60,000 |
+| D1: 100,000 rows written per day | Three budgets, each counted as D1 measures it (`meta.rows_written`, index entries included) and split per workspace: uploads 40,000 a day, one workspace 4,000 (`HTMLARTIFACT_UPLOAD_ROWS_PER_DAY`, `…_PER_WORKSPACE_DAY`); social writes 20,000 / 2,000 (`HTMLARTIFACT_ENGAGE_ROWS_…`, none yet); invites, CI keys, joins, role changes and new workspaces 20,000 / 2,000 (`HTMLARTIFACT_OPS_ROWS_…`). A one-page upload writes 19 rows (14 for a new version of an artifact, 7 for unchanged content), so a workspace can publish about 280 versions a day and the deployment about 2,800. Past a budget, that kind of change gets a 429 with `Retry-After` until 00:00 UTC, and the others keep working; reading, signing in, webhooks, removing members, leaving, revoking and deleting are never budgeted and write in the remaining 20,000 |
+| New workspaces (beta gate) | Creating a workspace (API and web) closes while the database holds more than 60% of its limit, or once the upload budget was 80% spent on 3 of the last 7 days: `creation_closed`, HTTP 507. Joining with an invite stays open |
 | D1: 5 million rows read per day | Lists read one page of 100 (keyset cursor on an index); opening an artifact reads ~10 rows. Not budgeted in the app: past it, Cloudflare refuses D1 queries (errors, no charge) until 00:00 UTC |
 | Workers: 10 ms CPU per request (with a burst allowance) | The server validates HTML with the native HTMLRewriter (`src/html-policy-server.ts`); the CLI checks pages locally first (`src/html-policy.ts`, with line numbers). Measured in production: 1 MB pages pass even after the burst allowance is spent. If heavy uploads exhaust it, Cloudflare answers 503 for a few seconds and the CLI retries |
 | Workers + Pages Functions: 100,000 requests per day, shared by the app, the sandbox and the ops Worker | Opening an artifact in a browser is 2 requests (app page + sandbox frame); per-user rate limits (uploads 30/min, checks 60/min, sign-in polling per device code) and per-IP limits on API-key validation; the ops cron runs every 15 minutes (96/day). Not budgeted in the app (counting would cost a D1 write per request): past it, Cloudflare answers Worker and Functions requests with Error 1027 (no charge) until 00:00 UTC, so artifacts, sign-in and the API are down for the rest of the day; static assets stay free and unlimited (checked 2026-10-21: Workers limits, Pages Functions pricing) |

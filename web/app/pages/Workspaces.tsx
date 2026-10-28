@@ -1,124 +1,210 @@
+import { useEffect, useRef, type ReactNode, type Ref } from "react";
 import { AppShell, PageHead } from "../components/AppShell";
-import { Button } from "../components/Button";
+import { CopyCommand } from "../components/CopyCommand";
+import { Field } from "../components/Field";
+import { LockIcon } from "../components/icons";
 import { Seal } from "../components/Seal";
-import { cx } from "../lib/cx";
-import type { Session, WorkspaceChoice } from "../page";
+import { Gutter, Rule } from "../components/Sheet";
+import { Submit } from "../components/Submit";
+import type { JoinFailure, Session, WorkspaceChoice } from "../page";
 
-const field =
-  "h-11 w-full min-w-0 rounded-xl border border-rule-2 bg-paper px-3.5 text-[16px] text-ink outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-fog/70 focus:border-intaglio focus:shadow-[0_0_0_3px_var(--wash)] sm:text-[14.5px]";
+// Every way into a workspace: switch to one you're in, create one, or join
+// with a code. `next` is the link that brought them here (joining or
+// switching goes back to it); `join`, a code the server refused.
+export function Workspaces({
+  session,
+  workspaces,
+  next,
+  join
+}: {
+  session: Session;
+  workspaces: WorkspaceChoice[];
+  next: string | null;
+  join?: JoinFailure | null;
+}) {
+  const failed = join ?? null;
+  // Only a link to an artifact means "you followed someone else's link".
+  const followedLink = Boolean(next && /^\/(d|w|history)\//.test(next));
+  const canSwitch = workspaces.some((w) => !w.current);
+  // Joining comes first for someone with nothing else to do, a link to
+  // follow, or a code to fix.
+  const joinFirst = followedLink || Boolean(failed) || !workspaces.length;
+  // A refused code: the field has focus; bring the whole form, error and
+  // button included, into view (a phone shows only the field otherwise).
+  const joinRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (failed) joinRef.current?.scrollIntoView({ block: "nearest" });
+  }, [failed]);
 
-export function Workspaces({ session, workspaces, next }: { session: Session; workspaces: WorkspaceChoice[]; next: string | null }) {
-  // Only an artifact link means "you followed someone else's link".
-  const foreignLink = Boolean(next && /^\/(d|w)\//.test(next));
-  const join = (
-    <Panel title="Join with an invite code" body={<>Ask an admin of the workspace for a code. It looks like <span className="whitespace-nowrap font-mono text-[12.5px]">HA-7KQ2-MX9P-4TRA</span>.</>}>
-      <form method="post" action="/join" className="flex flex-col gap-2.5 sm:flex-row">
+  const joinPanel = (
+    <FormPanel
+      ref={joinRef}
+      id="join-title"
+      title="Join a workspace"
+      description="Use the invite code an admin of the workspace sent you."
+    >
+      <form method="post" action="/join">
         {next && <input type="hidden" name="next" value={next} />}
-        <label className="sr-only" htmlFor="code">
-          Invite code
-        </label>
-        <input
-          id="code"
+        <Field
+          label="Invite code"
           name="code"
           required
-          maxLength={40}
+          maxLength={200}
           autoComplete="off"
-          autoCapitalize="characters"
+          autoCapitalize="none"
+          autoCorrect="off"
           spellCheck={false}
-          placeholder="HA-XXXX-XXXX-XXXX"
-          className={cx(field, "font-mono uppercase tracking-wide placeholder:normal-case")}
+          defaultValue={failed?.code}
+          error={failed?.error}
+          autoFocus={Boolean(failed)}
+          inputClassName="font-mono tracking-[0.02em]"
+          hint={
+            <>
+              The code, like <span className="whitespace-nowrap font-mono text-[12px] text-foreground">HA-7KQ2-MX9P-4TRA</span>, or the whole
+              invite link.
+            </>
+          }
         />
-        <Button type="submit" className="h-11 shrink-0">
-          Join
-        </Button>
+        <Submit tone={joinFirst ? "ink" : "line"} pending="Joining…" className="mt-4 w-full sm:w-auto">
+          Join workspace
+        </Submit>
       </form>
-    </Panel>
+    </FormPanel>
   );
-  const create = (
-    <Panel title="Start a workspace" body={<>You'll be its admin. Invite people from a terminal with <span className="whitespace-nowrap font-mono text-[12.5px]">npx htmlartifact workspace invite</span>.</>}>
-      <form method="post" action="/workspaces" className="flex flex-col gap-2.5 sm:flex-row">
-        <label className="sr-only" htmlFor="name">
-          Workspace name
-        </label>
-        <input id="name" name="name" required maxLength={100} placeholder="Northwind" className={field} />
-        <Button type="submit" tone="line" className="h-11 shrink-0">
-          Create
-        </Button>
+  const createPanel = (
+    <FormPanel id="create-title" title="Create a workspace" description="You'll be its admin, and can invite your team with a link.">
+      <form method="post" action="/workspaces">
+        <Field label="Workspace name" name="name" required maxLength={100} autoComplete="off" hint="Usually your team or company, like Northwind." />
+        <Submit tone={joinFirst ? "line" : "ink"} pending="Creating workspace…" className="mt-4 w-full sm:w-auto">
+          Create workspace
+        </Submit>
       </form>
-    </Panel>
+    </FormPanel>
   );
 
   return (
     <AppShell session={session} section="workspaces">
-      <main className="mx-auto max-w-[1120px] px-4 pb-24 pt-10 sm:px-6 sm:pt-14">
-        <PageHead title="Workspaces">
-          {workspaces.length
-            ? "Switch to another workspace, start a new one, or join one with an invite code."
-            : "You're not in a workspace yet. Join your team's with an invite code, or start one."}
-        </PageHead>
+      <PageHead title="Workspaces" count={workspaces.length || undefined}>
+        {workspaces.length
+          ? "Switch workspaces, create a new one, or join one with an invite code."
+          : "You're not in a workspace yet. Join your team's with an invite code, or create one."}
+      </PageHead>
 
-        {foreignLink && (
-          <div role="status" className="mt-8 flex gap-4 rounded-2xl border border-intaglio/25 bg-wash px-5 py-4 text-[14.5px] leading-relaxed text-ink-2">
-            <Seal id="htmlartifact" size={28} className="mt-0.5" />
-            <p>
-              That link belongs to a workspace you are not in. Ask whoever shared it for an invite code and enter it below; you
-              will go straight back to the link.
+      {followedLink && (
+        <Rule width="app" inner="flex gap-3.5 bg-surface/70 px-4 py-4 sm:px-5">
+          <LockIcon className="mt-[3px] size-[17px] shrink-0 text-foreground" />
+          <div className="min-w-0 text-[14px] leading-relaxed">
+            <p className="font-medium text-foreground">Your link opens inside its workspace</p>
+            <p className="mt-0.5 text-muted">
+              {canSwitch
+                ? "If you're a member, switch to that workspace below. If not, ask whoever shared it for an invite code. Either way, you'll go straight back to the link."
+                : "Ask whoever shared it for an invite code and enter it below. You'll go straight back to the link."}
             </p>
           </div>
-        )}
+        </Rule>
+      )}
 
-        {workspaces.length > 0 && (
-          <ul className="mt-10 divide-y divide-rule overflow-hidden rounded-2xl border border-rule bg-paper-2">
-            {workspaces.map((w) => (
-              <li key={w.id}>
-                <form method="post" action="/workspaces/switch">
-                  <input type="hidden" name="id" value={w.id} />
-                  <button
-                    type="submit"
-                    disabled={w.current}
-                    className="group flex w-full items-center gap-4 px-5 py-4 text-left transition-colors duration-150 enabled:hover:bg-paper"
-                  >
-                    <Seal id={w.id} size={40} deferred />
-                    <span className="min-w-0 flex-1 truncate font-medium text-ink">{w.name}</span>
+      {workspaces.length > 0 && (
+        <section aria-labelledby="yours">
+          <Rule width="app" inner="px-4 py-3 sm:px-5">
+            <h2 id="yours" className="font-mono text-[12.5px] text-muted">
+              Your workspaces
+            </h2>
+          </Rule>
+          <Rule width="app" inner="">
+            <ul className="divide-y divide-line">
+              {workspaces.map((w) => (
+                <li key={w.id} className="grid grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center">
+                  <span className="grid h-full place-items-center border-r border-line py-3">
+                    <Seal id={w.id} size={22} deferred />
+                  </span>
+                  <span className="min-w-0 px-4 py-3 text-[14.5px] font-medium leading-snug text-foreground [overflow-wrap:anywhere]">{w.name}</span>
+                  <span className="px-4">
                     {w.current ? (
-                      <span className="rounded-full bg-wash px-2.5 py-1 text-[12px] font-medium text-intaglio">Current</span>
+                      <span className="rounded-[5px] border border-border px-1.5 font-mono text-[11.5px] leading-[18px] text-foreground">current</span>
                     ) : (
-                      <span className="text-[13px] text-fog transition-colors duration-150 group-hover:text-ink">Switch</span>
+                      <form method="post" action="/workspaces/switch">
+                        <input type="hidden" name="id" value={w.id} />
+                        {next && <input type="hidden" name="next" value={next} />}
+                        <Submit tone="line" size="sm" pending="Switching…">
+                          Switch<span className="sr-only"> to {w.name}</span>
+                        </Submit>
+                      </form>
                     )}
-                  </button>
-                </form>
-              </li>
-            ))}
-          </ul>
-        )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Rule>
+        </section>
+      )}
 
-        <div className="mt-10 grid gap-5 *:min-w-0 md:grid-cols-2">
-          {foreignLink || !workspaces.length ? (
-            <>
-              {join}
-              {create}
-            </>
-          ) : (
-            <>
-              {create}
-              {join}
-            </>
-          )}
-        </div>
-        <p className="mt-8 text-[13.5px] text-fog">
-          From a terminal or an agent: <code className="text-[12.5px] text-ink-2">npx htmlartifact workspace create "Northwind"</code> or{" "}
-          <code className="text-[12.5px] text-ink-2">npx htmlartifact workspace join &lt;code&gt;</code>
-        </p>
-      </main>
+      <Gutter width="app" />
+      <Rule width="app" inner="grid md:grid-cols-2">
+        {joinFirst ? (
+          <>
+            {joinPanel}
+            {createPanel}
+          </>
+        ) : (
+          <>
+            {createPanel}
+            {joinPanel}
+          </>
+        )}
+      </Rule>
+
+      <section aria-labelledby="terminal">
+        <Rule width="app" inner="px-4 py-3 sm:px-5">
+          <h2 id="terminal" className="font-mono text-[12.5px] text-muted">
+            From a terminal or an agent
+          </h2>
+        </Rule>
+        <Rule width="app" inner="">
+          <dl className="divide-y divide-line">
+            {/* Inviting is for the current workspace's admins only. */}
+            {COMMANDS.filter(([what]) => (canSwitch || what !== "Switch") && (session.role === "admin" || what !== "Invite")).map(([what, command]) => (
+              <div key={what} className="grid gap-1.5 px-4 py-2.5 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-center sm:gap-4 sm:px-5">
+                <dt className="text-[13.5px] text-muted">{what}</dt>
+                <dd className="min-w-0">
+                  <CopyCommand command={command} />
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </Rule>
+      </section>
+      <div aria-hidden className="mx-auto w-full max-w-[1040px] flex-1 border-x border-line" />
     </AppShell>
   );
 }
 
-function Panel({ title, body, children }: { title: string; body: React.ReactNode; children: React.ReactNode }) {
+const COMMANDS = [
+  ["Switch", "npx htmlartifact workspace switch <name>"],
+  ["Create", "npx htmlartifact workspace create <name>"],
+  ["Join", "npx htmlartifact workspace join <code>"],
+  ["Invite", "npx htmlartifact workspace invite"]
+] as const;
+
+function FormPanel({
+  ref,
+  id,
+  title,
+  description,
+  children
+}: {
+  ref?: Ref<HTMLElement>;
+  id: string;
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
   return (
-    <section className="rounded-2xl border border-rule bg-paper-2 p-5 sm:p-6">
-      <h2 className="font-wide text-[18px] font-[680] tracking-[-0.015em] text-ink">{title}</h2>
-      <p className="mt-1.5 text-[14px] leading-relaxed text-fog">{body}</p>
+    <section ref={ref} aria-labelledby={id} className="min-w-0 border-line px-4 py-7 max-md:[&:first-child]:border-b sm:px-5 md:[&:first-child]:border-r">
+      <h2 id={id} className="text-[16px] font-medium tracking-[-0.015em] text-foreground">
+        {title}
+      </h2>
+      <p className="mt-1 text-[14px] leading-relaxed text-muted">{description}</p>
       <div className="mt-5">{children}</div>
     </section>
   );

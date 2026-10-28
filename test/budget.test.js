@@ -4,17 +4,19 @@ import { STORAGE, accessToken, callApi, page, startStack } from "./helpers.js";
 
 // Daily budgets for D1 rows written by uploads (README: Storage and the
 // free-tier budget): D1 Free refuses every write, for everyone, for the rest
-// of the day past 100,000. A one-page upload counts 16 rows on D1 storage
-// (14 with an R2 bucket); content sent again unchanged counts 12.
-const UPLOAD = STORAGE === "d1" ? 16 : 14;
-const RESEND = 12;
+// of the day past 100,000. A one-page upload reserves 23 rows on D1 storage
+// (21 with an R2 bucket), content sent again unchanged 7, and each settles to
+// what D1 measured (test/capacity.test.js): a workspace's first upload of the
+// day writes what it reserved, later ones 4 fewer.
+const UPLOAD = STORAGE === "d1" ? 23 : 21;
+const RESEND = 7;
 
 describe("D1 rows-written budget", () => {
   let stack;
   before(async () => {
     stack = await startStack({
       vars: {
-        HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY: String(2 * UPLOAD),
+        HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY: String(UPLOAD + RESEND),
         HTMLARTIFACT_UPLOAD_ROWS_PER_DAY: String(2 * UPLOAD + RESEND)
       }
     });
@@ -44,8 +46,10 @@ describe("D1 rows-written budget", () => {
 
     // Another workspace has its own share, until the deployment's total runs out.
     const olivia = await accessToken(stack, "olivia@other.test", "Other");
-    assert.equal((await up(olivia, 3)).status, 201);
-    const deploymentFull = await up(olivia, 4);
+    const third = await up(olivia, 3);
+    assert.equal(third.status, 201);
+    // Within Olivia's share (a resend), but not the deployment's total.
+    const deploymentFull = await callApi(stack, olivia, "POST", "/api/uploads", { html: page("Page 3"), draftId: third.body.draftId, description: "x" });
     assert.equal(deploymentFull.status, 429);
     assert.match(deploymentFull.body.error, /deployment has reached today's upload limit/);
   });

@@ -1,80 +1,99 @@
 @import "tailwindcss";
-@import "@fontsource-variable/archivo/wdth.css";
-@import "@fontsource-variable/martian-mono/wdth.css";
+@import "@fontsource-variable/geist/index.css";
+@import "@fontsource-variable/geist-mono/index.css";
+@import "@fontsource/caveat/latin-400.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
+/* Margin notes are for readers with a cursor and room in the margins. */
+@custom-variant pointer-fine (@media (pointer: fine));
 
-/* Security printing for agent output: cool paper, navy ink, intaglio blue.
-   The seal (guilloche) is the one loud thing; everything else stays quiet. */
-@theme {
-  --font-sans: "Archivo Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Martian Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+/* Under seal (web/DESIGN.md): a zinc sheet, hairline rules, no brand colour.
+   Colour appears only where it means something: open, ask, deny. Every text
+   colour passes WCAG AA where it is used; `faint` is for large text and
+   glyphs only; `control` edges editable fields at 3:1 or more. `inline`, so
+   a nested `.dark` re-themes its subtree. */
+@theme inline {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-hand: "Caveat", ui-serif, cursive;
 
-  --color-paper: var(--paper);
-  --color-paper-2: var(--paper-2);
-  --color-ink: var(--ink);
-  --color-ink-2: var(--ink-2);
-  --color-fog: var(--fog);
-  --color-rule: var(--rule);
-  --color-rule-2: var(--rule-2);
-  --color-intaglio: var(--intaglio);
-  --color-intaglio-ink: var(--intaglio-ink);
-  --color-wash: var(--wash);
-  --color-pass: var(--pass);
+  --color-background: var(--background);
+  --color-card: var(--card);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-border: var(--border);
+  --color-control: var(--control);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-open: var(--open);
+  --color-ask: var(--ask);
   --color-deny: var(--deny);
-  --color-hold: var(--hold);
+  --color-open-wash: var(--open-wash);
+  --color-ask-wash: var(--ask-wash);
+  --color-deny-wash: var(--deny-wash);
+
+
+  --radius-chip: 6px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-sheet: 12px;
+
+  --shadow-pop: 0 0 0 1px var(--line), 0 16px 40px -12px rgb(0 0 0 / 0.28);
+  --shadow-sheet: 0 0 0 1px var(--line);
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 
-  --text-display: clamp(2.75rem, 1.6rem + 5.2vw, 6.25rem);
-  --text-display--line-height: 0.94;
-  --text-title: clamp(1.875rem, 1.4rem + 2vw, 3rem);
-  --text-title--line-height: 1.02;
+  --text-display: clamp(2.75rem, 1.4rem + 5.4vw, 5rem);
+  --text-display--line-height: 1;
+  --text-title: clamp(1.75rem, 1.35rem + 1.6vw, 2.5rem);
+  --text-title--line-height: 1.1;
+  --text-page: clamp(1.75rem, 1.5rem + 1vw, 2.25rem);
+  --text-page--line-height: 1.1;
 }
 
 :root {
-  --paper: #f5f6f8;
-  --paper-2: #ffffff;
-  --ink: #121a33;
-  --ink-2: #2b3452;
-  --fog: #5e6782;
-  --rule: #dfe2ea;
-  --rule-2: #c9cedb;
-  --intaglio: #2337c6;
-  --intaglio-ink: #ffffff;
-  --wash: #e8ebfa;
-  --pass: #0f7a55;
-  --deny: #b42a37;
-  --hold: #8a5a00;
-  --seal-0: #2337c6;
-  --seal-1: #0f7a6b;
-  --seal-2: #7a2e8c;
-  --seal-3: #9e2b3a;
-  --seal-4: #8f6410;
+  --background: #fafafa;
+  --card: #ffffff;
+  --surface: #f4f4f5;
+  --line: #e9e9ec;
+  --border: #e4e4e7;
+  --control: #8b8b94;
+  --foreground: #09090b;
+  --muted: #52525b;
+  --faint: #6b6b74;
+  --open: #15803d;
+  --ask: #b45309;
+  --deny: #b91c1c;
+  --open-wash: #f0fdf4;
+  --ask-wash: #fffbeb;
+  --deny-wash: #fef2f2;
+  --hatch: color-mix(in oklab, var(--line) 100%, transparent);
+  --foil: linear-gradient(105deg, #a1a1aa, #c4b5fd 30%, #99f6e4 50%, #fde68a 70%, #a1a1aa);
+  --seal-ink: #52525b;
   color-scheme: light;
 }
 
 .dark {
-  --paper: #0b1020;
-  --paper-2: #11172b;
-  --ink: #e7eaf4;
-  --ink-2: #c3c9dc;
-  --fog: #8e97b3;
-  --rule: #1f2741;
-  --rule-2: #2c3554;
-  --intaglio: #8c9bff;
-  --intaglio-ink: #0b1020;
-  --wash: #161e3d;
-  --pass: #4fd1a1;
-  --deny: #ff7b86;
-  --hold: #f0b84a;
-  --seal-0: #8c9bff;
-  --seal-1: #4fc9b4;
-  --seal-2: #d08ce0;
-  --seal-3: #ff8f9c;
-  --seal-4: #f0c060;
+  --background: #09090b;
+  --card: #18181b;
+  --surface: #111113;
+  --line: #1f1f23;
+  --border: #27272a;
+  --control: #6b6b75;
+  --foreground: #fafafa;
+  --muted: #a1a1aa;
+  --faint: #8a8a94;
+  --open: #4ade80;
+  --ask: #fbbf24;
+  --deny: #f87171;
+  --open-wash: rgb(74 222 128 / 0.08);
+  --ask-wash: rgb(251 191 36 / 0.08);
+  --deny-wash: rgb(248 113 113 / 0.08);
+  --seal-ink: #a1a1aa;
+  --shadow-pop: 0 0 0 1px var(--border), 0 16px 40px -12px rgb(0 0 0 / 0.7);
   color-scheme: dark;
 }
 
@@ -84,19 +103,39 @@
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    scrollbar-gutter: stable;
+    /* Focus, fragment jumps and the skip link land below the sticky header. */
+    scroll-padding-top: 4.5rem;
+  }
+  html:has([data-sticky="app"]) {
+    scroll-padding-top: 7rem;
+  }
+  html:has([data-sticky="reading"]) {
+    scroll-padding-top: 8.5rem;
+  }
+  @media (min-width: 48rem) {
+    html:has([data-sticky="app"]) {
+      scroll-padding-top: 4.5rem;
+    }
+  }
+  @media (min-width: 64rem) {
+    html:has([data-sticky="reading"]) {
+      scroll-padding-top: 6rem;
+    }
   }
   body {
-    background: var(--paper);
-    color: var(--ink);
+    background: var(--background);
+    color: var(--foreground);
     font-family: var(--font-sans);
-    font-stretch: 100%;
+    font-size: 15px;
+    line-height: 1.6;
+    letter-spacing: -0.006em;
+    font-feature-settings: "ss01";
     overflow-wrap: break-word;
     -webkit-tap-highlight-color: transparent;
-    /* Landscape phones with viewport-fit=cover: keep content off the notch. */
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
   }
-  /* No double-tap zoom delay on controls. Links keep their long-press menu. */
   a,
   button,
   [role="tab"],
@@ -108,20 +147,21 @@
     -webkit-touch-callout: none;
   }
   ::selection {
-    background: var(--intaglio);
-    color: var(--intaglio-ink);
+    background: var(--foreground);
+    color: var(--background);
   }
   :focus-visible {
-    outline: 2px solid var(--intaglio);
-    outline-offset: 3px;
-    border-radius: 4px;
+    outline: 2px solid var(--foreground);
+    outline-offset: 2px;
+    border-radius: 6px;
   }
   code,
   kbd,
   pre,
   samp {
     font-family: var(--font-mono);
-    font-stretch: 87.5%;
+    font-feature-settings: normal;
+    letter-spacing: 0;
   }
 }
 
@@ -132,7 +172,7 @@
 ::view-transition-group(*),
 ::view-transition-old(*),
 ::view-transition-new(*) {
-  animation-duration: 180ms;
+  animation-duration: 160ms;
   animation-timing-function: var(--ease-out);
 }
 .vt-header {
@@ -144,18 +184,13 @@
   }
 }
 
-@utility font-expanded {
-  font-stretch: 125%;
-}
-@utility font-wide {
-  font-stretch: 112.5%;
-}
-@utility font-condensed {
-  font-stretch: 87.5%;
+/* The sheet's hatched gutters: 45° hairlines in the line colour. */
+@utility hatch {
+  background-image: repeating-linear-gradient(-45deg, var(--line) 0 1px, transparent 1px 7px);
 }
 
-/* Microprint: the hairline of tiny repeated text on banknotes and cheques.
-   Purely decorative; screen readers skip it (aria-hidden at the call site). */
+/* Microprint: tiny repeated text as a hairline (the invite ticket's edges).
+   Decorative; callers mark it aria-hidden. */
 @utility microprint {
   font-family: var(--font-mono);
   font-size: 5px;
@@ -163,16 +198,15 @@
   letter-spacing: 0.08em;
   white-space: nowrap;
   overflow: hidden;
-  color: var(--fog);
-  opacity: 0.7;
+  color: var(--muted);
   user-select: none;
 }
 
-/* Pressable: owns its full transition list (scale plus colours), so callers
-   must not add transition-* utilities, which would drop the scale. */
+/* Pressable: owns its transition list (scale plus colours), so callers must
+   not add transition-* utilities, which would drop the scale. */
 @utility press {
-  transition-property: scale, color, background-color, border-color, opacity;
-  transition-duration: 160ms;
+  transition-property: scale, color, background-color, border-color, opacity, box-shadow;
+  transition-duration: 150ms;
   transition-timing-function: var(--ease-out);
   &:active {
     scale: 0.97;
@@ -184,64 +218,19 @@
   transform-origin: 50% 50%;
 }
 
-/* ---- Hero: the one orchestrated moment. Pure CSS, so it plays the same
-   before and after hydration. `--d` is each element's delay. ---- */
-.hero-rise {
-  animation: rise 700ms var(--ease-out) var(--d, 0ms) both;
+/* ---- The landing's one orchestrated moment. Pure CSS on a timeline (`--d`
+   is each element's delay), so it plays the same before and after
+   hydration, and every element is in the first paint for readers without
+   motion. ---- */
+.rise {
+  animation: rise 560ms var(--ease-out) var(--d, 0ms) both;
 }
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(8px);
+    filter: blur(2px);
   }
-}
-.hero-seal .seal {
-  animation: seal-settle 1400ms var(--ease-out) 120ms both;
-}
-.hero-seal .seal [data-layer="0"] {
-  animation: lock-cw 1600ms var(--ease-out) 120ms both;
-}
-.hero-seal .seal [data-layer="1"] {
-  animation: lock-ccw 1600ms var(--ease-out) 200ms both;
-}
-.hero-seal .seal [data-layer="2"] {
-  animation: lock-cw 1600ms var(--ease-out) 280ms both;
-}
-@keyframes seal-settle {
-  from {
-    opacity: 0;
-    transform: scale(0.94);
-  }
-}
-@keyframes lock-cw {
-  from {
-    opacity: 0;
-    transform: rotate(-50deg);
-  }
-}
-@keyframes lock-ccw {
-  from {
-    opacity: 0;
-    transform: rotate(40deg);
-  }
-}
-
-.term-animate .term-line {
-  animation: line-in 260ms var(--ease-out) var(--d, 0ms) both;
-}
-@keyframes line-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-}
-.term-animate .term-type {
-  display: inline-block;
-  vertical-align: bottom;
-  overflow: hidden;
-  white-space: nowrap;
-  width: calc(var(--n) * 1ch);
-  animation: type calc(var(--n) * 22ms) steps(var(--n), end) calc(var(--d, 0ms) + 120ms) both;
 }
 @keyframes type {
   from {
@@ -251,13 +240,70 @@
     clip-path: inset(0 0 0 0);
   }
 }
-
-/* The artifact "prints" into the window, top to bottom. */
-.hero-seq .stage-print {
-  animation: print 800ms var(--ease-in-out) var(--d, 0ms) both;
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
 }
-.hero-seq .stage {
-  animation: rise 600ms var(--ease-out) calc(var(--d, 0ms) - 500ms) both;
+/* A ring of a seal settling into place, like a dial locking. */
+.lock .seal [data-layer="0"] {
+  animation: lock-cw 1200ms var(--ease-out) var(--d, 0ms) both;
+}
+.lock .seal [data-layer="1"] {
+  animation: lock-ccw 1200ms var(--ease-out) calc(var(--d, 0ms) + 60ms) both;
+}
+.lock .seal [data-layer="2"] {
+  animation: lock-cw 1200ms var(--ease-out) calc(var(--d, 0ms) + 120ms) both;
+}
+@keyframes lock-cw {
+  from {
+    opacity: 0;
+    transform: rotate(-40deg) scale(0.96);
+  }
+}
+@keyframes lock-ccw {
+  from {
+    opacity: 0;
+    transform: rotate(32deg) scale(0.96);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .lock .seal [data-layer] {
+    animation: fade 240ms ease both;
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+  }
+}
+
+/* The landing story (landing/Story.tsx): the command types, the link
+   prints, the seal stamps the document, the document prints, the access
+   switch arrives. Under 2.5 s, interactive throughout. */
+.story .s-in {
+  animation: appear 260ms var(--ease-out) var(--d, 0ms) both;
+}
+/* backwards, not both: once typed, nothing clips the line, so it can wrap
+   under larger text spacing. */
+.story .s-type {
+  display: inline-block;
+  vertical-align: bottom;
+  animation: type calc(var(--n) * 26ms) steps(var(--n), end) var(--d, 0ms) backwards;
+}
+.story .s-stamp {
+  animation: stamp 520ms var(--ease-out) var(--d, 0ms) both;
+}
+@keyframes stamp {
+  from {
+    opacity: 0;
+    transform: scale(1.18) rotate(-14deg);
+  }
+}
+.story .s-print {
+  animation: print 620ms var(--ease-in-out) var(--d, 0ms) both;
 }
 @keyframes print {
   from {
@@ -267,72 +313,18 @@
     clip-path: inset(0 0 0 0);
   }
 }
-
 @media (prefers-reduced-motion: reduce) {
-  .hero-rise,
-  .hero-seq .stage,
-  .hero-seal .seal,
-  .hero-seal .seal [data-layer],
-  .term-animate .term-line,
-  .term-animate .term-type,
-  .hero-seq .stage-print {
-    animation: fade 300ms ease both;
-  }
-  @keyframes fade {
-    from {
-      opacity: 0;
-    }
-  }
-}
-
-/* Docs body copy. */
-.docs-prose > p,
-.docs-prose li {
-  margin-top: 1rem;
-  font-size: 16px;
-  line-height: 1.7;
-  color: var(--ink-2);
-  max-width: 68ch;
-}
-.docs-prose :not(pre) > code,
-.docs-prose dd code,
-.docs-prose dt + dd code {
-  font-size: 0.82em;
-  padding: 0.12em 0.4em;
-  border-radius: 6px;
-  background: var(--wash);
-  color: var(--ink);
-}
-.docs-prose a {
-  color: var(--intaglio);
-  text-underline-offset: 3px;
-}
-.docs-prose a:hover {
-  text-decoration: underline;
-}
-.docs-prose h2 a:hover {
-  text-decoration: none;
-}
-
-/* The invite's seal locks in once, like the hero's. A rare page: delight. */
-.ticket-seal [data-layer="0"] {
-  animation: lock-cw 1400ms var(--ease-out) 100ms both;
-}
-.ticket-seal [data-layer="1"] {
-  animation: lock-ccw 1400ms var(--ease-out) 180ms both;
-}
-.ticket-seal [data-layer="2"] {
-  animation: lock-cw 1400ms var(--ease-out) 260ms both;
-}
-@media (prefers-reduced-motion: reduce) {
-  .ticket-seal [data-layer] {
-    animation: fade 300ms ease both;
+  .story .s-in,
+  .story .s-type,
+  .story .s-stamp,
+  .story .s-print {
+    animation: none;
   }
 }
 
 /* A deferred seal fades in where its placeholder ring was. */
 .seal-in {
-  animation: fade-in 240ms var(--ease-out) both;
+  animation: fade-in 200ms var(--ease-out) both;
 }
 @keyframes fade-in {
   from {
@@ -342,5 +334,44 @@
 @media (prefers-reduced-motion: reduce) {
   .seal-in {
     animation: none;
+  }
+}
+
+/* Reading pages (/docs, /privacy). In the components layer, so a utility on
+   an element always wins. */
+@layer components {
+  .docs-prose :where(p, li) {
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+  .docs-prose :where(p, ul, ol, dl) {
+    margin-top: 1rem;
+  }
+  .docs-prose :where(strong) {
+    color: var(--foreground);
+    font-weight: 500;
+  }
+  /* Inline code: a hairline chip. Never breaks inside a flag; a long
+     identifier opts in with `whitespace-normal wrap-anywhere`. */
+  .docs-prose :where(p, li, dd) code {
+    font-size: 0.86em;
+    padding: 0.1em 0.32em;
+    border-radius: 5px;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--line);
+    color: var(--foreground);
+    white-space: nowrap;
+  }
+  .docs-prose :where(p, li, dd) a {
+    color: var(--foreground);
+    text-decoration-line: underline;
+    text-decoration-thickness: 1px;
+    text-decoration-color: var(--control);
+    text-underline-offset: 3px;
+    transition: text-decoration-color 150ms var(--ease-out);
+  }
+  .docs-prose :where(p, li, dd) a:hover {
+    text-decoration-color: currentColor;
   }
 }

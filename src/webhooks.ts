@@ -116,6 +116,18 @@ async function applyEvent(
       const membership = found && !(await membershipBeingUndone(db, found.id)) ? found : undefined;
       const active = Boolean(membership);
       await setRevokedAtEpoch(db, userId, organizationId, !active, epoch);
+      // Deleted in WorkOS directly, its organization.deleted can be handled
+      // while this runs: rows written above would outlive that purge (the
+      // purge list, test/deletion.test.js). Access already ends with the
+      // workspace; drop them. (Purged after this check: the purge drops them.)
+      if (await isWorkspaceDeleted(db, organizationId)) {
+        await db.batch(
+          ["membership_epochs", "revocations", "memberships"].map((table) =>
+            db.prepare(`DELETE FROM ${table} WHERE ${table === "revocations" ? "subject" : "user_id"} = ? AND organization_id = ?`).bind(userId, organizationId)
+          )
+        );
+        return;
+      }
       // No longer an active admin: end any Admin Portal session they opened.
       // A failure returns 500, so WorkOS retries; access already ended above.
       if (membership?.role?.slug !== "admin") {

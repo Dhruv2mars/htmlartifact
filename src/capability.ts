@@ -41,10 +41,11 @@ export function verifyCapability(secret: string, token: string, now = Math.floor
   return claims && claims.exp > now ? claims : null;
 }
 
-// Genuine but past its expiry: the viewer just left the page open too long.
-export function capabilityExpired(secret: string, token: string, now = Math.floor(Date.now() / 1000)): boolean {
+// Genuine but past its expiry (the viewer just left the page open too long):
+// its claims, so the expired page can offer the way back; otherwise null.
+export function expiredCapability(secret: string, token: string, now = Math.floor(Date.now() / 1000)): Capability | null {
   const claims = verifySignedCapability(secret, token);
-  return Boolean(claims && claims.exp <= now);
+  return claims && claims.exp <= now ? claims : null;
 }
 
 function verifySignedCapability(secret: string, token: string): Capability | null {

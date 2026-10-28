@@ -14,6 +14,9 @@ const Mine = lazy(() => import("../pages/Feed").then((m) => ({ default: m.Mine }
 const ArtifactDetail = lazy(() => import("../pages/ArtifactDetail").then((m) => ({ default: m.ArtifactDetail })));
 const Workspaces = lazy(() => import("../pages/Workspaces").then((m) => ({ default: m.Workspaces })));
 const Join = lazy(() => import("../pages/Join").then((m) => ({ default: m.Join })));
+const People = lazy(() => import("../pages/People").then((m) => ({ default: m.People })));
+const Settings = lazy(() => import("../pages/Settings").then((m) => ({ default: m.Settings })));
+const Confirm = lazy(() => import("../pages/Confirm").then((m) => ({ default: m.Confirm })));
 import type { Page } from "../page";
 
 export const meta: MetaFunction = ({ matches }) => {
@@ -64,6 +67,12 @@ function titleFor(page: Page | undefined): string {
       return "Workspaces · htmlartifact";
     case "join":
       return `${page.member ? page.workspace.name : `Join ${page.workspace.name}`} · htmlartifact`;
+    case "people":
+      return `People · ${page.session.workspace?.name ?? "Workspace"} · htmlartifact`;
+    case "settings":
+      return `Settings · ${page.session.workspace?.name ?? "Workspace"} · htmlartifact`;
+    case "confirm":
+      return `${page.confirm.title} · htmlartifact`;
     default:
       return "htmlartifact";
   }
@@ -89,18 +98,24 @@ function PageBody() {
     case "sign-in":
       return <SignIn next={page.next} />;
     case "message":
-      return <Message title={page.title} message={page.message} retry={page.retry} />;
+      return <Message title={page.title} message={page.message} retry={page.retry} retryLabel={page.retryLabel ?? null} />;
     case "not-found":
       return <NotFound />;
     case "feed":
-      return <Feed session={page.session} artifacts={page.artifacts} older={page.older} />;
+      return <Feed session={page.session} artifacts={page.artifacts} older={page.older} usage={page.usage ?? null} />;
     case "mine":
-      return <Mine session={page.session} artifacts={page.artifacts} older={page.older} />;
+      return <Mine session={page.session} artifacts={page.artifacts} older={page.older} usage={page.usage ?? null} />;
     case "artifact":
       return <ArtifactDetail session={page.session} artifact={page.artifact} versions={page.versions} />;
     case "workspaces":
-      return <Workspaces session={page.session} workspaces={page.workspaces} next={page.next} />;
+      return <Workspaces session={page.session} workspaces={page.workspaces} next={page.next} join={page.join ?? null} />;
     case "join":
       return <Join {...page} />;
+    case "people":
+      return <People session={page.session} people={page.people} invites={page.invites} invite={page.invite} />;
+    case "settings":
+      return <Settings session={page.session} usage={page.usage} admins={page.admins} />;
+    case "confirm":
+      return <Confirm session={page.session} section={page.section} confirm={page.confirm} />;
   }
 }

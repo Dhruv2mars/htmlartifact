@@ -2,92 +2,263 @@
 // because it must carry no script at all. Every other page is React
 // (src/frontend.ts).
 
-// An artifact, framed from the sandbox origin (src/serve.ts). No script: the
-// wrapper's CSP allows none. The frame is sandboxed without allow-same-origin
-// as well, on top of the sandbox CSP the artifact itself is served with.
-export function renderArtifactFrame({ title, src }: { title: string; src: string }): string {
-  return webPage({
-    title: `${title} · htmlartifact`,
-    script: false,
-    body: `<iframe class="artifact" title="${escapeHtml(title)}" src="${escapeHtml(src)}" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>`
-  });
+import { sealSvg } from "../web/app/lib/seal.ts";
+
+export interface ArtifactFrame {
+  title: string;
+  src: string; // the artifact on the sandbox origin
+  id: string; // draft id: the bar wears its seal
+  workspace: string | null; // the viewer's workspace, which owns the artifact
+  version: number;
+  latest: boolean; // this is the current version
+  latestUrl: string; // the artifact URL without /v/<n>
+  historyUrl: string;
+  feedUrl: string;
+  by?: string | null; // who published this version
+  at?: number | null; // when (unix seconds)
+  now?: number; // for tests: the time "2 hours ago" is measured from
 }
 
-function webPage({
-  title,
-  body,
-  header = "",
-  script = true
-}: {
-  title: string;
-  body: string;
-  header?: string;
-  script?: boolean;
-}): string {
+// An artifact, framed from the sandbox origin (src/serve.ts), under a thin
+// reading bar: where it lives, which version this is, its history, and a way
+// home. No script: the wrapper's CSP allows none, so hiding the bar is a
+// checkbox and CSS, and the theme follows the system. The frame is sandboxed
+// without allow-same-origin as well, on top of the sandbox CSP the artifact
+// itself is served with.
+export function renderArtifactFrame(frame: ArtifactFrame): string {
+  const title = escapeHtml(frame.title);
+  const workspace = frame.workspace ? escapeHtml(frame.workspace) : null;
+  const version = escapeHtml(frame.version);
+  const state = frame.latest
+    ? `<span class="chip now">Latest</span>`
+    : `<span class="chip old">Older version</span><a class="latest" href="${escapeHtml(frame.latestUrl)}">Go to latest</a>`;
   return `<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="alternate icon" href="/favicon.png" type="image/png">
-  <title>${escapeHtml(title)}</title>
-  <style>
-    body { margin: 0; background: #f8fafc; color: #111827; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    main { max-width: 860px; margin: 32px auto 80px; padding: 0 20px; }
-    main.narrow { max-width: 560px; }
-    main.center { text-align: center; margin-top: 96px; }
-    h1 { font-size: 30px; margin: 0 0 14px; }
-    h2 { font-size: 17px; margin: 30px 0 6px; }
-    p { line-height: 1.6; }
-    a { color: #1d4ed8; }
-    code { background: #eef2f7; border: 1px solid #d1d5db; border-radius: 5px; padding: 1px 5px; font-size: 14px; }
-    .muted { color: #6b7280; }
-    .small { font-size: 13px; }
-    .button { display: inline-block; background: #111827; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font-size: 15px; text-decoration: none; cursor: pointer; }
-    .linklike { background: none; border: 0; color: #1d4ed8; cursor: pointer; font-size: 13px; padding: 0; margin-left: 10px; text-decoration: underline; }
-    .top { display: flex; justify-content: space-between; align-items: center; max-width: 860px; margin: 0 auto; padding: 14px 20px; border-bottom: 1px solid #e5e7eb; }
-    .top nav a { margin-right: 16px; text-decoration: none; color: #374151; }
-    .top nav a.active { color: #111827; font-weight: 600; }
-    .top form { display: inline-flex; align-items: center; gap: 8px; }
-    .avatar { width: 26px; height: 26px; border-radius: 50%; vertical-align: middle; }
-    .repo-link { font-weight: 400; text-decoration: none; margin-left: 6px; }
-    .row-meta a { color: #6b7280; }
-    .pii { filter: blur(4px); border-radius: 3px; transition: filter .15s ease; cursor: pointer; }
-    .pii:hover, .pii:focus { filter: none; outline: none; }
-    .row { display: flex; justify-content: space-between; gap: 14px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
-    .row-title { font-weight: 600; text-decoration: none; }
-    .row-meta { white-space: nowrap; }
-    .pill { font-size: 11px; border-radius: 999px; padding: 2px 8px; margin-left: 6px; }
-    .pill.warn { background: #fef3c7; color: #92400e; }
-    table { width: 100%; border-collapse: collapse; margin-top: 14px; }
-    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
-    th { color: #6b7280; font-weight: 600; font-size: 12px; text-transform: uppercase; }
-    .keybox { display: flex; gap: 10px; align-items: center; background: #fff; border: 1px solid #d1d5db; border-radius: 8px; padding: 14px; margin: 14px 0; }
-    .keybox code { flex: 1; word-break: break-all; background: none; border: 0; font-size: 15px; }
-    .button.secondary { background: #fff; color: #111827; border: 1px solid #d1d5db; }
-    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
-    form.inline { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
-    input, select { font: inherit; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 8px; }
-    input { flex: 1; min-width: 200px; }
-    .orgs { padding-left: 18px; line-height: 2; }
-    .orgs .linklike { margin-left: 0; font-size: 15px; }
-    .notice { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 10px 14px; }
-    iframe.artifact { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="/favicon.png" type="image/png">
+<title>${title} · htmlartifact</title>
+<style>${FRAME_CSS}</style>
 </head>
-<body>${header}${body}
-${script ? `<script>
-  for (const button of document.querySelectorAll(".copy")) {
-    button.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(button.previousElementSibling.textContent);
-      button.textContent = "Copied";
-    });
-  }
-</script>` : ""}
+<body>
+<a class="skip" href="#artifact">Read the artifact</a>
+<header class="bar${frame.latest ? "" : " is-old"}">
+<div class="where">
+<span class="seal">${sealSvg(frame.id, 20, "currentColor")}</span>
+<div class="path">
+<a class="ws" href="${escapeHtml(frame.feedUrl)}"><span class="sr">All artifacts in </span>${workspace ?? "your workspace"}</a>
+<span class="sep" aria-hidden="true">/</span>
+<h1 class="title" title="${title}">${title}</h1>
+</div>
+<span class="version"><span class="chip num${frame.latest ? "" : " old"}"><span aria-hidden="true">v${version}</span><span class="sr">Version ${version}</span></span>${state}</span>
+${meta(frame)}</div>
+<div class="tools">
+<p class="access">${icon(LOCK)}<span>Only <span class="name">${workspace ?? "workspace"}</span> members can see this</span></p>
+<a class="tool" href="${escapeHtml(frame.historyUrl)}" aria-label="History of ${title}">${icon(HISTORY)}<span class="label">History</span></a>
+<label class="tool square hide" for="hide-bar" title="Hide bar">${icon(CHEVRON_UP)}<span class="sr">Hide bar</span></label>
+</div>
+</header>
+<main>
+<input class="toggle" type="checkbox" id="hide-bar">
+<label class="show" for="hide-bar">${icon(CHEVRON_DOWN)}Show bar</label>
+<iframe class="artifact" id="artifact" title="${title}" src="${escapeHtml(frame.src)}" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
+</main>
 </body>
 </html>`;
 }
+
+// Who published this version and when, as people say it ("Maya · 2 hours
+// ago"); the exact time is in the tooltip. Rendered once: the wrapper has no
+// script to tick it, and every open renders it fresh (no-store).
+function meta(frame: ArtifactFrame): string {
+  if (!frame.by && !frame.at) return "";
+  const parts: string[] = [];
+  if (frame.by) parts.push(`<span class="by"><span class="sr">Published by </span>${escapeHtml(frame.by)}</span>`);
+  if (frame.at) {
+    const iso = new Date(frame.at * 1000).toISOString();
+    const exact = new Date(frame.at * 1000).toLocaleString("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }) + " UTC";
+    parts.push(`<time datetime="${iso}" title="${escapeHtml(exact)}">${escapeHtml(ago(frame.at, frame.now ?? Math.floor(Date.now() / 1000)))}</time>`);
+  }
+  return `<span class="meta">${parts.join('<span aria-hidden="true"> · </span>')}</span>`;
+}
+
+const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ["year", 31_536_000],
+  ["month", 2_592_000],
+  ["week", 604_800],
+  ["day", 86_400],
+  ["hour", 3_600],
+  ["minute", 60]
+];
+const relative = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+function ago(then: number, now: number): string {
+  const seconds = then - now;
+  for (const [unit, size] of UNITS) {
+    if (Math.abs(seconds) >= size) return relative.format(Math.round(seconds / size), unit);
+  }
+  return "just now";
+}
+
+// Stroke icons on the app's 16px grid (web/app/components/icons.tsx).
+const LOCK = '<rect x="3.25" y="7" width="9.5" height="6.75" rx="1.5"/><path d="M5.25 7V5a2.75 2.75 0 0 1 5.5 0v2"/>';
+const HISTORY = '<path d="M2.75 8a5.25 5.25 0 1 0 1.6-3.77M2.5 2.75v2.5H5"/><path d="M8 5.25V8l1.9 1.4"/>';
+const CHEVRON_UP = '<path d="m4.5 9.75 3.5-3.5 3.5 3.5"/>';
+const CHEVRON_DOWN = '<path d="m4.5 6.25 3.5 3.5 3.5-3.5"/>';
+
+function icon(paths: string): string {
+  return `<svg class="i" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+}
+
+// The app's tokens (web/app/app.css), light and dark. The wrapper's CSP has
+// no font-src, so type is a system stack tuned to the app's metrics.
+const FRAME_CSS = `
+:root {
+  --paper: #fafafa; --paper-2: #ffffff; --ink: #09090b; --ink-2: #52525b; --fog: #52525b;
+  --rule: #e9e9ec; --rule-2: #e4e4e7; --intaglio: #09090b; --wash: #f4f4f5; --hold: #b45309; --hold-wash: #fffbeb;
+  --seal: #52525b;
+  --lift: 0 0 0 1px #e4e4e7, 0 8px 20px -10px rgb(0 0 0 / 0.18);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #09090b; --paper-2: #18181b; --ink: #fafafa; --ink-2: #a1a1aa; --fog: #a1a1aa;
+    --rule: #1f1f23; --rule-2: #27272a; --intaglio: #fafafa; --wash: #18181b; --hold: #fbbf24; --hold-wash: rgb(251 191 36 / 0.08);
+    --seal: #a1a1aa;
+    --lift: 0 0 0 1px #27272a, 0 8px 20px -10px rgb(0 0 0 / 0.6);
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; height: 100vh; height: 100dvh; overflow: hidden;
+  display: flex; flex-direction: column;
+  background: var(--paper); color: var(--ink);
+  font: 14px/1.4 "Geist", ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+}
+a { color: inherit; text-decoration: none; touch-action: manipulation; }
+:focus-visible { outline: 2px solid var(--intaglio); outline-offset: 2px; border-radius: 6px; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.i { flex: none; display: block; }
+
+.bar {
+  position: relative; flex: none; height: 44px; padding: 0 10px 0 16px;
+  display: flex; align-items: center; gap: 16px;
+  background: var(--paper); border-bottom: 1px solid var(--rule);
+}
+.where { flex: 1; min-width: 0; display: flex; align-items: center; }
+.path { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; }
+.seal { flex: none; width: 20px; height: 20px; margin-right: 8px; }
+.seal svg { display: block; }
+.seal { color: var(--seal); }
+.ws {
+  flex: 0 1 auto; min-width: 3.5em; max-width: 13rem; padding: 3px 6px; border-radius: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink-2); font-weight: 500; letter-spacing: -0.006em;
+}
+.sep { flex: none; margin: 0 4px 0 2px; color: var(--rule-2); font-size: 17px; font-weight: 300; }
+.title {
+  flex: 0 1 auto; min-width: 3em; margin: 0 0 0 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 14px; font-weight: 600; letter-spacing: -0.011em; color: var(--ink);
+}
+.version { flex: none; display: flex; align-items: center; gap: 6px; margin-left: 10px; }
+.chip {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: 6px;
+  font-size: 12px; font-weight: 600; letter-spacing: 0; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.chip.num { padding: 0 5px; border: 1px solid var(--rule-2); color: var(--ink-2); font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; }
+.chip.num.old { border-color: color-mix(in srgb, var(--hold) 45%, transparent); color: var(--hold); }
+.chip.now { background: var(--wash); color: var(--intaglio); }
+.chip.old:not(.num) { background: var(--hold-wash); color: var(--hold); }
+.latest {
+  display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 6px; margin-left: -2px; border-radius: 6px;
+  color: var(--intaglio); font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.latest .i { width: 14px; height: 14px; }
+
+.meta {
+  flex: 0 1 auto; min-width: 0; margin-left: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--fog); font-size: 13px;
+}
+.tools { flex: none; display: flex; align-items: center; gap: 2px; }
+.access {
+  display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 10px 0 0;
+  color: var(--fog); font-size: 13px; white-space: nowrap;
+}
+.access .i { width: 14px; height: 14px; }
+.access .name { display: inline-block; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.tool {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 8px;
+  color: var(--ink-2); font-size: 13.5px; font-weight: 500; white-space: nowrap; cursor: pointer; user-select: none; -webkit-user-select: none;
+}
+.tool.square { width: 32px; padding: 0; }
+.toggle { position: fixed; top: 8px; right: 24px; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.show {
+  display: none; position: fixed; z-index: 1; top: 0; right: 20px; height: 32px; padding: 2px 10px 0 8px; gap: 4px;
+  align-items: center; overflow: hidden;
+  background: var(--paper); color: var(--ink-2); border: 1px solid var(--rule-2); border-top: 0; border-radius: 0 0 8px 8px;
+  box-shadow: var(--lift); font-size: 12.5px; font-weight: 500; cursor: pointer; user-select: none; -webkit-user-select: none;
+}
+.show .i { width: 14px; height: 14px; }
+@media (hover: hover) {
+  .ws:hover, .tool:hover, .show:hover { background: var(--wash); color: var(--ink); }
+  .latest:hover { background: var(--wash); }
+}
+body:has(.toggle:focus-visible) .hide, .toggle:focus-visible + .show { outline: 2px solid var(--intaglio); outline-offset: 2px; }
+/* Over the artifact the page colour is unknown: draw the ring on the tab itself. */
+.toggle:focus-visible + .show { outline-offset: -3px; }
+/* The frame only takes keyboard focus through a link to it: a cross-origin
+   frame with nothing focusable inside is skipped by Tab, so its content could
+   not be scrolled from the keyboard. Hidden until focused. */
+.skip {
+  position: absolute; z-index: 2; top: 6px; left: 8px; padding: 6px 10px; border-radius: 8px;
+  background: var(--paper); color: var(--ink); border: 1px solid var(--rule-2); box-shadow: var(--lift);
+  font-size: 13px; font-weight: 500; translate: 0 calc(-100% - 12px); opacity: 0;
+}
+.skip:focus { translate: 0 0; opacity: 1; }
+/* Inside its own box: over a hidden bar the page behind is the artifact. */
+.skip:focus-visible { outline-offset: -3px; }
+body:has(.toggle:checked) .bar { display: none; }
+.toggle:checked + .show { display: flex; }
+main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+iframe.artifact { flex: 1 1 auto; display: block; width: 100%; min-height: 0; border: 0; background: #fff; }
+
+/* Room first for who and when; the access line returns on wide screens. */
+@media (max-width: 1199px) {
+  .access { display: none; }
+}
+@media (max-width: 899px) {
+  .meta { display: none; }
+}
+@media (max-width: 639px) {
+  .bar { gap: 8px; padding: 2px 6px 0 12px; }
+  .sep { display: none; }
+  .seal { margin-right: 10px; }
+  /* Two lines: the workspace (a link back to its artifacts), then the title. */
+  .path { flex-direction: column; align-items: flex-start; }
+  .ws {
+    max-width: 100%; min-width: 0; margin: 0 0 1px -4px; padding: 0 4px; line-height: 16px;
+    font-size: 12px; color: var(--fog);
+  }
+  .title { max-width: 100%; margin: 0; line-height: 18px; }
+  .version { margin-left: 8px; gap: 2px; }
+  .chip.now { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  /* An older version gets a second row of its own: which version, and the
+     way to the latest, never squeezed against the title. */
+  .is-old { height: auto; min-height: 44px; padding-top: 6px; padding-bottom: 4px; align-items: flex-start; }
+  .is-old .where { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; row-gap: 2px; }
+  .is-old .version { grid-column: 2; margin-left: 0; gap: 6px; }
+  .is-old .tools { margin-top: 2px; }
+  .tool { width: 36px; height: 36px; padding: 0; }
+  .tool .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+`;
 
 function escapeHtml(value: unknown): string {
   return String(value)

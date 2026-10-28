@@ -1,20 +1,28 @@
-// Guilloche seals: the rosettes on banknotes and certificates, generated from
-// an artifact id. Same id, same seal, on the server and in the browser.
+// Guilloche seals: the medallions on banknotes and certificates, generated
+// from an artifact id. Same id, same seal, on the server and in the browser.
 //
-// Each layer is one closed curve plus rotated copies of it (an SVG <use> per
-// copy), so a seal stays a few KB however dense it looks.
+// A seal is a rope band (fine sine waves woven by rotating copies of one
+// curve), a rosette with a second, fainter family of petals crossing it (the
+// lattice), a small core, and a frame: one hairline at small sizes, two plus
+// a ring of microprint carrying the id at large ones. Every curve is one path
+// plus rotated <use> copies, so a seal stays a few KB however dense it looks.
 
-const SEAL_INKS = ["#2337c6", "#0f7a6b", "#7a2e8c", "#9e2b3a", "#8f6410"] as const;
-
-interface SealLayer {
+interface SealPath {
   d: string;
   copies: number;
   step: number; // degrees between copies
+  opacity: number;
+  weight: number; // stroke, in screen px
+}
+
+// One ring of the seal: everything in it turns together.
+export interface SealLayer {
+  paths: SealPath[];
 }
 
 export interface Seal {
-  ink: number; // index into SEAL_INKS
-  layers: SealLayer[];
+  layers: SealLayer[]; // 0 rope, 1 rosette, 2 core
+  frame: { rings: Array<{ r: number; opacity: number; weight: number }>; text: string | null };
 }
 
 // FNV-1a, then mulberry32: small, fast, stable across engines.
@@ -42,45 +50,84 @@ function polar(radius: (t: number) => number, points: number): string {
   for (let i = 0; i < points; i++) {
     const t = (i / points) * Math.PI * 2;
     const r = radius(t);
-    const x = 50 + r * Math.cos(t);
-    const y = 50 + r * Math.sin(t);
-    d += `${i ? "L" : "M"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    d += `${i ? "L" : "M"}${(50 + r * Math.cos(t)).toFixed(2)} ${(50 + r * Math.sin(t)).toFixed(2)}`;
   }
   return `${d}Z`;
 }
 
-// detail: 1 for hero-sized seals, lower for small ones (fewer points, copies).
-export function makeSeal(id: string, detail = 1): Seal {
+// The radius the microprint runs along, and the text that fills it.
+export const SEAL_TEXT_RADIUS = 47.1;
+
+// `size` is the rendered size in px: small seals drop copies, the lattice and
+// the microprint, or they turn to mush.
+export function makeSeal(id: string, size = 40): Seal {
   const r = rng(id);
-  const pts = (n: number) => Math.max(72, Math.round(n * detail));
-  // Small seals keep the curves but drop most copies, or they turn to mush.
-  const copies = (n: number) => (detail < 0.4 ? Math.max(2, Math.round(n * 0.4)) : Math.max(4, Math.round(n * Math.sqrt(detail))));
+  const tier = size >= 120 ? 3 : size >= 64 ? 2 : size >= 32 ? 1 : 0;
+  const pts = (n: number) => Math.max(96, Math.round(n * [0.45, 0.6, 0.8, 1][tier]!));
 
-  // Outer band: a wave woven with a few shifted copies of itself.
-  const n1 = int(r, 14, 22);
-  const a1 = real(r, 4.5, 6.5);
-  const band = polar((t) => 40.5 + a1 * Math.sin(n1 * t), pts(n1 * 20));
-  const bandCopies = copies(int(r, 4, 6));
+  // Rope: a sine wave around the rim, woven with rotated copies of itself.
+  const n1 = int(r, 16, 26);
+  const a1 = real(r, 3, 4.2);
+  const ropeCopies = [2, 3, 5, 8][tier]!;
+  const rope = polar((t) => 40.2 + a1 * Math.sin(n1 * t), pts(n1 * 16));
 
-  // Rosette: deep petals whose overlaps make the lattice of a banknote corner.
-  const n2 = int(r, 5, 9);
-  const a2 = real(r, 11, 15);
-  const q2 = real(r, 0.08, 0.2);
-  const rosette = polar((t) => 22 + a2 * Math.cos(n2 * t) * (1 - q2 + q2 * Math.cos(2 * n2 * t)), pts(n2 * 48));
-  const rosetteCopies = copies(int(r, 6, 9));
+  // Rosette: deep petals, and a fainter family offset by half a petal whose
+  // crossings make the lattice of a banknote corner.
+  const n2 = int(r, 5, 11);
+  const a2 = real(r, 10, 13.5);
+  const q2 = real(r, 0.08, 0.26);
+  const petal = (k: number, phase: number) => (t: number) =>
+    21.5 + a2 * k * Math.cos(n2 * t + phase) * (1 - q2 + q2 * Math.cos(2 * n2 * t));
+  const rosetteCopies = [3, 4, 5, 8][tier]!;
+  const rosetteStep = 360 / n2 / rosetteCopies;
 
-  // Core: a small star that sits inside the rosette's petals.
-  const n3 = int(r, 7, 13);
-  const a3 = real(r, 3, 5);
-  const core = polar((t) => 7.5 + a3 * Math.sin(n3 * t), pts(n3 * 18));
-  const coreCopies = copies(4);
+  // Core: a small star inside the petals.
+  const n3 = int(r, 8, 14);
+  const a3 = real(r, 1.8, 2.8);
+
+  const rings = [{ r: 48.6, opacity: 1, weight: tier === 0 ? 1.1 : 0.8 }];
+  if (tier >= 2) rings.push({ r: tier === 3 ? 45.6 : 46, opacity: 0.55, weight: 0.6 });
 
   return {
-    ink: int(r, 0, SEAL_INKS.length - 1),
     layers: [
-      { d: band, copies: bandCopies, step: 360 / n1 / bandCopies },
-      { d: rosette, copies: rosetteCopies, step: 360 / n2 / rosetteCopies },
-      { d: core, copies: coreCopies, step: 360 / n3 / coreCopies }
-    ]
+      { paths: [{ d: rope, copies: ropeCopies, step: 180 / n1 / ropeCopies, opacity: 0.55, weight: tier === 3 ? 0.55 : 0.7 }] },
+      {
+        paths: [
+          { d: polar(petal(1, 0), pts(n2 * 40)), copies: rosetteCopies, step: rosetteStep, opacity: 1, weight: tier === 3 ? 0.65 : 0.8 },
+          ...(tier >= 2
+            ? [{ d: polar(petal(0.72, Math.PI / n2), pts(n2 * 40)), copies: rosetteCopies, step: rosetteStep, opacity: 0.42, weight: 0.55 }]
+            : [])
+        ]
+      },
+      { paths: [{ d: polar((t) => 6 + a3 * Math.sin(n3 * t), pts(n3 * 14)), copies: 1, step: 0, opacity: 1, weight: 0.8 }] }
+    ],
+    frame: { rings, text: tier === 3 ? sealText(id) : null }
   };
+}
+
+// "MEMBERS ONLY • K3J9X0A1B2C4 • " repeated to go once around the rim.
+function sealText(id: string): string {
+  const unit = `MEMBERS ONLY • ${id.toUpperCase().slice(0, 24)} • `;
+  const reps = Math.max(1, Math.round((2 * Math.PI * SEAL_TEXT_RADIUS) / (unit.length * 1.62)));
+  return unit.repeat(reps);
+}
+
+// The seal as one standalone SVG string, for places without React: the OG
+// image, the artifact viewer's bar, static pages. `color` is any CSS colour.
+export function sealSvg(id: string, size: number, color: string): string {
+  const seal = makeSeal(id, size);
+  const units = (px: number) => ((px * 100) / size).toFixed(3);
+  let defs = "";
+  let body = "";
+  seal.layers.forEach((layer, i) =>
+    layer.paths.forEach((p, j) => {
+      const ref = `s${i}${j}`;
+      defs += `<path id="${ref}" d="${p.d}"/>`;
+      body += `<g stroke-opacity="${p.opacity}" stroke-width="${units(p.weight)}">`;
+      for (let k = 0; k < p.copies; k++) body += `<use href="#${ref}"${k ? ` transform="rotate(${(k * p.step).toFixed(3)} 50 50)"` : ""}/>`;
+      body += "</g>";
+    })
+  );
+  for (const ring of seal.frame.rings) body += `<circle cx="50" cy="50" r="${ring.r}" stroke-opacity="${ring.opacity}" stroke-width="${units(ring.weight)}"/>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 102 102" width="${size}" height="${size}" aria-hidden="true"><defs>${defs}</defs><g fill="none" stroke="${color}">${body}</g><circle cx="50" cy="50" r="1.8" fill="${color}"/></svg>`;
 }

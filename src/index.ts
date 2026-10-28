@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { isHttpError, registerApi } from "./api.ts";
+import { creationGate } from "./capacity.ts";
 import { getConfig } from "./config.ts";
 import { ensureSchema } from "./db.ts";
-import { renderNotFound } from "./render.ts";
 import { isSandboxRequest, registerSandbox } from "./sandbox.ts";
-import { registerServing } from "./serve.ts";
+import { notFound, registerServing } from "./serve.ts";
 import { probeStorage, storageKind } from "./storage.ts";
 import type { AppEnv, Env } from "./types.ts";
 import { registerWeb } from "./web.ts";
@@ -51,7 +51,7 @@ function baseApp(): Hono<AppEnv> {
   });
   app.get("/favicon.svg", (c) => c.body(FAVICON_SVG, 200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" }));
 
-  app.notFound((c) => c.html(renderNotFound(), 404));
+  app.notFound(notFound);
 
   app.onError((error, c) => {
     const status = (isHttpError(error) && error.status) || 500;
@@ -69,12 +69,15 @@ const app = baseApp();
 registerWebhooks(app);
 registerApi(app);
 registerServing(app);
+// The beta gate (src/capacity.ts) on the web's create form too; it runs
+// before the form's own handler (src/web.ts), which renders the closed state.
+app.post("/workspaces", creationGate);
 registerWeb(app);
 registerAssets(app);
 // Unknown app paths get the web app's page; artifact and API misses keep
 // the static one (serve.ts), which the sandbox origin shares.
 app.notFound((c) =>
-  c.req.path.startsWith("/api/") ? c.html(renderNotFound(), 404) : renderPage(c, { kind: "not-found", session: null }, 404)
+  c.req.path.startsWith("/api/") ? notFound(c) : renderPage(c, { kind: "not-found", session: null }, 404)
 );
 
 // No session cookie, no web or API routes: capability URLs only.

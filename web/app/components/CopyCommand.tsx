@@ -1,54 +1,32 @@
-import { useEffect, useRef, useState } from "react";
-import { cx } from "../lib/cx";
-import { CheckIcon, CopyIcon } from "./icons";
+import { useRef } from "react";
+import { CopyButton, useCopy } from "./Copy";
 
-// A shell command you can copy in one click. The icon morphs to a check
-// (blurred crossfade) and the status is announced.
-export function CopyCommand({
-  command,
-  className,
-  size = "md",
-  tone = "paper"
-}: {
-  command: string;
-  className?: string;
-  size?: "md" | "lg";
-  tone?: "paper" | "ink";
-}) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(command);
-    } catch {
-      return;
-    }
-    setCopied(true);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setCopied(false), 1600);
-  }
-
+// A shell command in a field, with a Copy control. The command breaks only
+// between words (never inside a flag or an invite code), so nothing that
+// matters is hidden. `large` is the landing's primary command.
+export function CopyCommand({ command, large = false, className }: { command: string; large?: boolean; className?: string }) {
+  const text = useRef<HTMLSpanElement>(null);
+  const [state, copy] = useCopy(command, text);
   return (
-    <button
-      type="button"
-      onClick={copy}
-      className={cx(
-        "press group inline-flex max-w-full items-center gap-3 rounded-full border text-left font-mono",
-        tone === "paper" ? "border-rule-2 bg-paper-2 text-ink hover:border-fog/60" : "border-white/15 bg-white/5 text-[#e7eaf4] hover:border-white/30",
-        size === "lg" ? "h-14 pl-6 pr-5 text-[15px] sm:text-base" : "h-10 pl-4 pr-3 text-[13px]",
-        className
-      )}
+    <div
+      className={`flex max-w-full items-center gap-3 rounded-control border border-border bg-card font-mono text-foreground ${large ? "min-h-12 py-1 pl-4 pr-2 text-[14px]" : "min-h-10 py-0.5 pl-3.5 pr-1 text-[13px]"} ${className ?? ""}`}
     >
-      <span className="sr-only">Copy command: </span>
-      <span aria-hidden className={tone === "paper" ? "text-fog" : "text-white/40"}>$</span>
-      <span className="min-w-0 truncate">{command}</span>
-      <span className="relative ml-1 grid size-4 shrink-0 place-items-center" aria-hidden>
-        <CopyIcon className={cx("col-start-1 row-start-1 transition-[opacity,filter,scale] duration-200 ease-out", copied ? "scale-75 opacity-0 blur-[2px]" : "opacity-60 group-hover:opacity-100")} />
-        <CheckIcon className={cx("col-start-1 row-start-1 transition-[opacity,filter,scale] duration-200 ease-out", copied ? "text-pass opacity-100" : "scale-75 opacity-0 blur-[2px]")} />
+      <span className="flex min-w-0 flex-1 items-baseline gap-2.5 py-1.5 leading-snug">
+        <span aria-hidden className="select-none text-faint">
+          $
+        </span>
+        <span ref={text} className="min-w-0">
+          <Words text={command} />
+        </span>
       </span>
-      <span className="sr-only" role="status">{copied ? "Copied" : ""}</span>
-    </button>
+      <CopyButton state={state} onCopy={copy} what="Command" accessibleLabel={`Copy command: ${command}`} compact />
+    </div>
+  );
+}
+
+// Words that wrap only at their spaces; one longer than the line still breaks.
+function Words({ text }: { text: string }) {
+  return text.split(/(\s+)/).map((part, i) =>
+    i % 2 ? part : part ? <span key={i} className="inline-block max-w-full [overflow-wrap:anywhere]">{part}</span> : null
   );
 }

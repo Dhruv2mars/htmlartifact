@@ -1,20 +1,25 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { cx } from "../lib/cx";
 
+// Controls: 8px corners, hairline edges, no shadows. The primary is the
+// text colour itself (light on dark, dark on light): there is no brand hue.
 const button = cva(
-  "press inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-full font-medium disabled:pointer-events-none disabled:opacity-50",
+  "press inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-control font-medium disabled:pointer-events-none disabled:opacity-60 aria-disabled:pointer-events-none aria-disabled:opacity-60",
   {
     variants: {
       tone: {
-        ink: "bg-ink text-paper hover:bg-ink-2",
-        intaglio: "bg-intaglio text-intaglio-ink hover:opacity-90",
-        line: "border border-rule-2 bg-paper-2 text-ink hover:border-fog/60",
-        ghost: "text-ink-2 hover:bg-wash hover:text-ink"
+        ink: "bg-foreground text-background hover:bg-foreground/85",
+        intaglio: "bg-foreground text-background hover:bg-foreground/85",
+        line: "border border-border bg-card text-foreground hover:bg-surface",
+        // Ends something for good (removing a person, deleting a workspace):
+        // red means "you lose access" here as it does on the 404.
+        danger: "border border-deny/45 bg-card text-deny hover:bg-deny-wash",
+        ghost: "text-muted hover:bg-surface hover:text-foreground"
       },
       size: {
-        sm: "h-8 px-3.5 text-[13px]",
-        md: "h-10 px-4.5 text-[15px]",
-        lg: "h-12 px-6 text-base"
+        sm: "h-8 px-3 text-[13.5px]",
+        md: "h-9 px-3.5 text-[14px]",
+        lg: "h-11 px-4.5 text-[15px]"
       }
     },
     defaultVariants: { tone: "ink", size: "md" }

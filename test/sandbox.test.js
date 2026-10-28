@@ -144,6 +144,13 @@ describe("app origin", () => {
   });
 });
 
+test("the wrapper's bar says who published the version and when, without script", async () => {
+  const { wrapper } = await frameOf(single.publicUrl);
+  assert.match(wrapper.text_, /<span class="meta"><span class="by"><span class="sr">Published by <\/span>Alice<\/span>/);
+  assert.match(wrapper.text_, /<time datetime="\d{4}-\d\d-\d\dT[^"]+" title="[^"]+ UTC">(just now|\d+ minutes? ago)<\/time>/);
+  assert.doesNotMatch(wrapper.text_, /<script/i, "the wrapper stays script-free");
+});
+
 describe("sandbox origin", () => {
   test("the capability URL serves the HTML, sandboxed, frameable only by the app", async () => {
     const { src } = await frameOf(single.publicUrl);
@@ -223,6 +230,15 @@ describe("sandbox origin", () => {
     assert.equal(expired.status, 410);
     assert.match(expired.text, /Reload the page/);
     assert.doesNotMatch(expired.text, new RegExp(MARKER));
+    // A viewer who still has access gets a way back to the same, pinned version.
+    assert.match(expired.text, new RegExp(`href="[^"]*/d/${single.draftId}/v/1"`));
+
+    // Someone who no longer has access gets the plain page: an old token says
+    // nothing about the artifact since (updated, deleted).
+    const outsider = await get(onSandbox(`/t/${signCapability({ ...claims, u: "user_no_longer_a_member", exp: now - 1 })}/`));
+    assert.equal(outsider.status, 410);
+    assert.match(outsider.text, /Reload the page/);
+    assert.doesNotMatch(outsider.text, new RegExp(`/d/${single.draftId}`));
   });
 
   test("the sandbox serves nothing but capability URLs", async () => {

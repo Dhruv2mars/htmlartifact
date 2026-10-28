@@ -26,6 +26,9 @@ export interface Receipt {
   versionUrl: string;
   contentHash: string;
   totalBytes: number;
+  // What the workspace's storage quota counts: the pages as stored,
+  // gzip-compressed. Null from servers that store HTML uncompressed.
+  storedBytes: number | null;
   account: string | null;
   workspace: string | null;
   pages: Array<{ path: string; url?: string }> | null;
@@ -34,6 +37,9 @@ export interface Receipt {
   changedFields: string[];
   updateCommand: string;
   warnings: string[];
+  // The same warnings with a stable code, when the server gives one (e.g.
+  // "cli_outdated", with the command that fixes it).
+  notices: Array<{ code: string; message: string; fix?: string }>;
 }
 
 // The workspace's storage line, from a server's `usage` (servers before it sent none).

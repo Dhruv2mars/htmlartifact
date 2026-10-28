@@ -931,11 +931,132 @@ const ROUTES = {
       for (const actor of webActors()) {
         const r = await actor.browser.post("/join", { code: A.usedCode, next: `/d/${A.plan.draftId}` });
         const m = await actor.browser.post("/join", { code: MISSING_CODE, next: `/d/${A.plan.draftId}` });
-        assertDenied(`${key} used-up A code as ${actor.name}`, { status: r.status, text: r.text_ }, {
+        // The form gives back what was sent (the typed code, and the link to
+        // return to), so the person can fix it and still land on their link.
+        // That is only the caller's own input: mask it, then the two answers
+        // must match byte for byte and carry nothing else of A's.
+        const next = `/d/${A.plan.draftId}`;
+        assert.ok(r.text_.includes(A.usedCode) && m.text_.includes(MISSING_CODE), `${key}: the typed code is given back`);
+        const own = (text, code) => text.replaceAll(code, "<typed>").replaceAll(next, "<next>");
+        assertDenied(`${key} used-up A code as ${actor.name}`, { status: r.status, text: own(r.text_, A.usedCode) }, {
           status: 404,
-          missing: { status: m.status, text: m.text_ }
+          missing: { status: m.status, text: own(m.text_, MISSING_CODE) }
         });
       }
+    }
+  },
+  "GET /people": {
+    kind: "list",
+    why: "the caller's workspace members (and, for admins, its invite links)",
+    async run(key) {
+      for (const actor of webActors()) {
+        const res = await actor.browser.get("/people");
+        assert.equal(res.status, 200, actor.name);
+        assertClean(`${key} as ${actor.name}`, res.text_);
+      }
+    }
+  },
+  "POST /people/invites": {
+    kind: "create",
+    why: "mints an invite link for the caller's workspace only, whatever the form says",
+    async run(key) {
+      for (const actor of webActors()) {
+        const res = await actor.browser.post("/people/invites", { organization_id: A.org.id, workspace: A.handle, days: "1", uses: "1" });
+        assertClean(`${key} as ${actor.name}`, res.text_);
+      }
+      const live = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/invites");
+      assert.deepEqual(live.body.invites.map((i) => i.code), [A.liveCode], "no new code in A");
+    }
+  },
+  "POST /people/invites/revoke": {
+    kind: "resource",
+    why: "takes an invite code; A's live code is not the caller's to revoke, and 'all' means the caller's workspace",
+    async run(key) {
+      for (const actor of webActors()) {
+        for (const target of [A.liveCode, "all"]) {
+          const res = await actor.browser.post("/people/invites/revoke", { code: target });
+          assertClean(`${key} ${target} as ${actor.name}`, res.text_);
+        }
+      }
+      const live = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/invites");
+      assert.ok(live.body.invites.some((i) => i.code === A.liveCode), "A's live code survives");
+    }
+  },
+  "GET /people/:userId/:change{make-admin|make-member|remove}": {
+    kind: "resource",
+    why: "a member's user ID: an outsider gets the same redirect for A's members as for nobody",
+    async run(key) {
+      const MISSING_USER = "user_01MISSING0000000000000000";
+      for (const actor of webActors()) {
+        for (const change of ["make-admin", "make-member", "remove"]) {
+          const m = await call(actor, "GET", `/people/${MISSING_USER}/${change}`);
+          assert.equal(m.status, 303, `${key} missing as ${actor.name}`);
+          for (const target of A.onlyMemberIds) {
+            const r = await call(actor, "GET", `/people/${target}/${change}`);
+            const label = `${key} ${change} ${target} as ${actor.name}`;
+            assert.equal(r.status, m.status, `${label}: A's member and a missing one answer differently`);
+            assert.equal(r.headers.get("location"), m.headers.get("location"), `${label}: A's member and a missing one answer differently`);
+            assertClean(label, r.text);
+          }
+        }
+      }
+    }
+  },
+  "POST /people/:userId/:change{make-admin|make-member|remove}": {
+    kind: "resource",
+    why: "a member's user ID: an outsider admin can't change or remove A's members",
+    async run(key) {
+      for (const actor of webActors()) {
+        for (const change of ["make-admin", "make-member", "remove"]) {
+          for (const target of A.onlyMemberIds) {
+            const res = await actor.browser.post(`/people/${target}/${change}`);
+            assertClean(`${key} ${change} ${target} as ${actor.name}`, res.text_);
+          }
+        }
+      }
+    }
+  },
+  "GET /settings": {
+    kind: "list",
+    why: "the caller's workspace: its storage and admins",
+    async run(key) {
+      for (const actor of webActors()) {
+        const res = await actor.browser.get("/settings");
+        assert.equal(res.status, 200, actor.name);
+        assertClean(`${key} as ${actor.name}`, res.text_);
+      }
+    }
+  },
+  "GET /settings/:change{leave|delete}": {
+    kind: "self",
+    why: "asks about the caller's own current workspace; takes no identifier",
+    async run(key) {
+      for (const actor of webActors()) {
+        for (const change of ["leave", "delete"]) {
+          const res = await actor.browser.get(`/settings/${change}`);
+          assertClean(`${key} ${change} as ${actor.name}`, res.text_);
+        }
+      }
+    }
+  },
+  "POST /settings/leave": {
+    kind: "self",
+    why: "leaves the caller's own current workspace (nora, its only admin, is refused); A untouched",
+    async run(key) {
+      const res = await B.noraBrowser.post("/settings/leave", { organization_id: A.org.id });
+      assertClean(key, res.text_);
+      assert.equal(new URL(res.finalUrl).pathname, "/settings", "the only admin can't leave");
+    }
+  },
+  "POST /settings/delete": {
+    kind: "self",
+    why: "deletes the caller's own current workspace, confirmed by its name: A's name deletes nothing",
+    async run(key) {
+      for (const actor of webActors()) {
+        const res = await actor.browser.post("/settings/delete", { confirm: A.workspace.name, organization_id: A.org.id });
+        assertClean(`${key} as ${actor.name}`, res.text_);
+      }
+      assert.equal((await callApi(stack, A.aliceToken, "GET", "/api/workspaces/members")).status, 200, "A still exists");
     }
   },
   "GET /auth/sign-in": {

@@ -71,7 +71,7 @@ describe("D1 write budget on admin routes", () => {
   let stack;
   let proxy;
   before(async () => {
-    stack = await startStack({ vars: { HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY: "40" } });
+    stack = await startStack({ vars: { HTMLARTIFACT_OPS_ROWS_PER_WORKSPACE_DAY: "40" } });
     proxy = await getPlatformProxy({ configPath: testConfigPath(), persist: { path: path.join(stack.tmp, "state", "v3") } });
   });
   after(async () => {

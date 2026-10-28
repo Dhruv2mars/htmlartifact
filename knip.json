@@ -27,7 +27,7 @@
     "bk"
   ],
   "ignoreDependencies": [
-    "@fontsource/archivo",
+    "@fontsource/geist",
     "cloudflare"
   ],
   "ignoreUnresolved": [

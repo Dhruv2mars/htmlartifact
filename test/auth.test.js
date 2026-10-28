@@ -158,6 +158,66 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     assert.match(joined.text_, /Nora plan/);
   });
 
+  test("switching workspace from the workspaces page goes back to the link you followed", async () => {
+    const link = new URL(acme.publicUrl).pathname;
+    const acmeOrg = await findOrganization(stack.emulator, "Acme");
+    const switchForm = async (browser, form) => {
+      const url = `${stack.baseUrl}/workspaces/switch`;
+      const response = await fetch(url, {
+        method: "POST",
+        redirect: "manual",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: stack.baseUrl, Cookie: browser.cookieHeader(url) },
+        body: new URLSearchParams(form).toString()
+      });
+      browser.store(url, response);
+      return response;
+    };
+
+    // max is in Acme and Other; signed in to Other, every switch form carries the link.
+    const max = new Browser(stack);
+    await max.signIn("max@both.test", { workspace: "Other" });
+    const page = await max.get(`/workspaces?next=${encodeURIComponent(link)}`);
+    assert.equal(page.status, 200);
+    const switches = page.text_.split('action="/workspaces/switch"').slice(1);
+    assert.ok(switches.length > 0);
+    for (const form of switches) assert.ok(form.split("</form>")[0].includes(`name="next" value="${link}"`), "switch form keeps next");
+    const switched = await switchForm(max, { id: acmeOrg.id, next: link });
+    assert.equal(switched.status, 302);
+    assert.equal(switched.headers.get("location"), link);
+    const opened = await max.get(link);
+    assert.equal(opened.status, 200);
+    assert.match(opened.text_, /Acme plan/);
+
+    // Not a member (or SSO needs a fresh login): sign-in into that workspace, keeping the link.
+    const olivia = new Browser(stack);
+    await olivia.signIn("olivia@other.test", { workspace: "Other" });
+    const refused = await switchForm(olivia, { id: acmeOrg.id, next: link });
+    assert.equal(refused.status, 302);
+    const location = new URL(refused.headers.get("location"), stack.baseUrl);
+    assert.equal(location.pathname, "/auth/sign-in");
+    assert.equal(location.searchParams.get("org"), acmeOrg.id);
+    assert.equal(location.searchParams.get("next"), link);
+    // An unsafe next never leaves the app.
+    const unsafe = await switchForm(max, { id: acmeOrg.id, next: "//evil.example/x" });
+    assert.equal(unsafe.headers.get("location"), "/");
+  });
+
+  test("a refused invite code comes back to the form, as typed, with the reason and the link", async () => {
+    const browser = new Browser(stack);
+    await browser.signIn("olivia@other.test", { workspace: "Other" });
+    const failed = await browser.post("/join", { code: "ha-zzzz-zzzz-zzzz", next: "/d/abcdefabcdef" });
+    assert.equal(failed.status, 404);
+    assert.equal(new URL(failed.finalUrl).pathname, "/join");
+    assert.match(failed.text_, /<h1[^>]*>Workspaces<\/h1>/);
+    assert.match(failed.text_, /<input[^>]*name="code"[^>]*>/);
+    const input = failed.text_.match(/<input[^>]*name="code"[^>]*>/)[0];
+    assert.match(input, /value="ha-zzzz-zzzz-zzzz"/);
+    assert.match(input, /aria-invalid="true"/);
+    assert.match(failed.text_, /That invite code is invalid, expired, or used up\. Check it for typos/);
+    assert.match(failed.text_, /name="next" value="\/d\/abcdefabcdef"/);
+    assert.doesNotMatch(failed.text_, /Invite not valid/);
+  });
+
   test("a join link works in the browser too", async () => {
     const invite = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", {});
     const browser = new Browser(stack);
@@ -197,6 +257,8 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     const page = await signedIn.get("/join/not-a-code");
     assert.equal(page.status, 404);
     assert.match(page.text_, /Invite not valid/);
+    // A way forward: another code on the workspaces page.
+    assert.match(page.text_, /href="\/workspaces"[^>]*>Enter another code</);
     // A live code signed out: the anonymous invite page, which names no workspace.
     const invite = await callApi(stack, nora.accessToken, "POST", "/api/workspaces/invites", {});
     const live = await new Browser(stack).get(`/join/${invite.body.code}`);

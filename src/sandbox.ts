@@ -1,6 +1,7 @@
 import type { Context, Hono } from "hono";
 import { userStillMember } from "./auth.ts";
-import { capabilityExpired, verifyCapability } from "./capability.ts";
+import { expiredCapability, verifyCapability, type Capability } from "./capability.ts";
+import { renderExpired } from "./render.ts";
 import { notFound, resolvePage, segmentsBelow, sendPage } from "./serve.ts";
 import type { AppEnv, DraftRow, VersionRow } from "./types.ts";
 
@@ -27,16 +28,29 @@ export function registerSandbox(app: Hono<AppEnv>): void {
   app.get("/t/:token", (c) => serveCapability(c, c.req.param("token")));
 }
 
+// Where an expired view's reader picks up again: the same artifact version
+// on the app, pinned so it is the version they were reading. Only for a
+// viewer who still has access (the checks a live token gets: membership and
+// revocation); anyone else gets the plain expired page, so an old token says
+// nothing about later updates or deletion. The token is signature-checked.
+async function reopenUrl(c: Context<AppEnv>, claims: Capability): Promise<string | null> {
+  const app = c.get("config").publicBaseUrl;
+  if (!app || !(await userStillMember(c, claims.u, claims.o, claims.s))) return null;
+  const row = await c.env.DB.prepare(
+    `SELECT v.version_number FROM draft_versions v JOIN drafts d ON d.id = v.draft_id
+     WHERE v.id = ? AND d.id = ? AND d.organization_id = ? AND d.deleted_at IS NULL`
+  )
+    .bind(claims.v, claims.d, claims.o)
+    .first<{ version_number: number }>();
+  return row ? `${app}/d/${claims.d}/v/${Number(row.version_number)}` : null;
+}
+
 // Every failure is the same 404: a token URL never says why it stopped working.
 async function serveCapability(c: Context<AppEnv>, token: string): Promise<Response> {
   const config = c.get("config");
   const claims = verifyCapability(config.cookiePassword, token);
-  if (!claims && capabilityExpired(config.cookiePassword, token)) {
-    return c.html(
-      '<!doctype html><meta charset="utf-8"><title>Expired</title><p style="font:16px system-ui;margin:2rem">This view expired. Reload the page to keep reading.</p>',
-      410
-    );
-  }
+  const expired = claims ? null : expiredCapability(config.cookiePassword, token);
+  if (expired) return c.html(renderExpired(await reopenUrl(c, expired)), 410);
   if (!claims || !config.publicBaseUrl) return notFound(c);
   const segments = segmentsBelow(c, 2);
   if (!segments) return notFound(c);

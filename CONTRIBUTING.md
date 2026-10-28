@@ -110,7 +110,10 @@ gitHead` is the commit the latest version was built from).
    npm asks for your 2FA code. `release` refuses a version npm already has; if
    the publish worked but the tag push didn't, run it again and it only tags
    the commit npm recorded (`gitHead`).
-3. The release notes are that CHANGELOG section
+3. Raise `HTMLARTIFACT_LATEST_CLI_VERSION` in deploy/app/wrangler.toml to
+   the published version (on a trail), so older CLIs get the `cli_outdated`
+   notice once it ships; never before it is on npm.
+4. The release notes are that CHANGELOG section
    (`bun scripts/changelog.ts notes X.Y.Z`).
 
 Releases up to 0.2.2 have npm provenance. Later ones don't: npm can only sign

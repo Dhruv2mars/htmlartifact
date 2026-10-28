@@ -1,49 +1,70 @@
-// Renders the social preview (web/public/og.png) with Satori: the hero's
-// headline and seal. Run after changing either: bun scripts/og.tsx
+// Renders the social preview (web/public/og.png) with Satori, and the site
+// icon (src/favicon.ts), both from the seal generator. Run after changing
+// the landing's hero or web/app/lib/seal.ts: bun scripts/og.tsx
 import { Resvg } from "@resvg/resvg-js";
 import { readFile } from "node:fs/promises";
 import satori from "satori";
-import { makeSeal } from "../web/app/lib/seal.ts";
+import { makeSeal, sealSvg } from "../web/app/lib/seal.ts";
 
 const root = new URL("..", import.meta.url).pathname;
-const font = (weight: number) => readFile(`${root}node_modules/@fontsource/archivo/files/archivo-latin-${weight}-normal.woff`);
+const font = (weight: number) => readFile(`${root}node_modules/@fontsource/geist/files/geist-latin-${weight}-normal.woff`);
+const dataUri = (svg: string) => `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 
-function sealSvg(id: string, color: string, px: number): string {
-  const seal = makeSeal(id, 1);
-  const width = (0.9 * 100) / px;
-  const defs = seal.layers.map((l, i) => `<path id="l${i}" d="${l.d}"/>`).join("");
-  const uses = seal.layers
-    .map((l, i) => Array.from({ length: l.copies }, (_, k) => `<use href="#l${i}" transform="rotate(${(k * l.step).toFixed(3)} 50 50)"/>`).join(""))
-    .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 100" width="${px}" height="${px}"><defs>${defs}</defs><g fill="none" stroke="${color}" stroke-width="${width}">${uses}</g></svg>`;
+// The house mark (web/app/components/Logo.tsx): the "htmlartifact" seal's
+// rosette knocked out of a disc. `dark` adds a dark-scheme swap for the icon.
+function markSvg(px: number | null, disc: string, knock: string, dark = false): string {
+  const rosette = makeSeal("htmlartifact", 24).layers[1]!.paths[0]!;
+  const step = rosette.step * (rosette.copies / 3);
+  const uses = [0, 1, 2].map((k) => `<use href="#r"${k ? ` transform="rotate(${(k * step).toFixed(3)} 50 50)"` : ""}/>`).join("");
+  const size = px ? ` width="${px}" height="${px}"` : "";
+  const style = dark ? `<style>@media (prefers-color-scheme: dark){.d{fill:${knock}}.k{stroke:${disc}}.c{fill:${disc}}}</style>` : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"${size}>${style}<circle class="d" cx="50" cy="50" r="50" fill="${disc}"/><defs><path id="r" d="${rosette.d}"/></defs><g class="k" fill="none" stroke="${knock}" stroke-width="3.4">${uses}</g><circle class="c" cx="50" cy="50" r="6" fill="${knock}"/></svg>`;
 }
 
-const seal = `data:image/svg+xml;base64,${Buffer.from(sealSvg("k3j9x0a1b2c4", "#2337c6", 520)).toString("base64")}`;
-const mark = `data:image/svg+xml;base64,${Buffer.from(sealSvg("htmlartifact", "#2337c6", 44)).toString("base64")}`;
+// The hero's seal in hairline zinc, with the foil sheen baked in.
+const FOIL = `<defs><linearGradient id="foil" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#a1a1aa"/><stop offset="0.35" stop-color="#c4b5fd"/><stop offset="0.5" stop-color="#99f6e4"/><stop offset="0.65" stop-color="#fde68a"/><stop offset="1" stop-color="#a1a1aa"/></linearGradient></defs>`;
+const seal = dataUri(sealSvg("k3j9x0a1b2c4", 400, "url(#foil)").replace(/(<svg[^>]*>)/, `$1${FOIL}`));
+const mark = dataUri(markSvg(40, "#fafafa", "#09090b"));
+const line = "#1f1f23";
 
 const svg = await satori(
-  <div style={{ width: 1200, height: 630, display: "flex", background: "#f5f6f8", position: "relative", fontFamily: "Archivo", color: "#121a33" }}>
-    <img src={seal} width={520} height={520} style={{ position: "absolute", right: 40, top: 55 }} />
-    <div style={{ display: "flex", flexDirection: "column", padding: "64px 72px", width: 760 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <img src={mark} width={44} height={44} />
-        <span style={{ fontSize: 30, fontWeight: 800, letterSpacing: -0.6 }}>htmlartifact</span>
-      </div>
-      <div style={{ fontSize: 132, fontWeight: 800, letterSpacing: -6, lineHeight: 0.92, marginTop: 92 }}>Members only.</div>
-      <div style={{ fontSize: 32, fontWeight: 500, lineHeight: 1.35, color: "#2b3452", marginTop: 36, width: 660 }}>
+  <div style={{ width: 1200, height: 630, display: "flex", background: "#09090b", position: "relative", fontFamily: "Geist", color: "#fafafa" }}>
+    <div style={{ position: "absolute", left: 80, top: 0, width: 1, height: 630, background: line, display: "flex" }} />
+    <div style={{ position: "absolute", right: 80, top: 0, width: 1, height: 630, background: line, display: "flex" }} />
+    <div style={{ position: "absolute", left: 0, top: 96, width: 1200, height: 1, background: line, display: "flex" }} />
+    <div style={{ position: "absolute", left: 0, bottom: 72, width: 1200, height: 1, background: line, display: "flex" }} />
+    <div style={{ position: "absolute", left: 740, top: 96, width: 1, height: 462, background: line, display: "flex" }} />
+    <div style={{ position: "absolute", left: 80, top: 0, height: 96, display: "flex", alignItems: "center", gap: 14, paddingLeft: 40 }}>
+      <img src={mark} width={40} height={40} />
+      <span style={{ fontSize: 30, fontWeight: 500, letterSpacing: -0.8 }}>htmlartifact</span>
+    </div>
+    <div style={{ position: "absolute", left: 120, top: 150, display: "flex", flexDirection: "column", width: 600 }}>
+      <div style={{ fontSize: 108, fontWeight: 500, letterSpacing: -5, lineHeight: 1 }}>Members only.</div>
+      <div style={{ fontSize: 28, fontWeight: 400, lineHeight: 1.45, color: "#a1a1aa", marginTop: 28 }}>
         Private links for the HTML your coding agents write. Only your workspace can open them.
       </div>
+    </div>
+    <img src={seal} width={330} height={330} style={{ position: "absolute", left: 785, top: 162 }} />
+    <div style={{ position: "absolute", left: 120, bottom: 0, height: 72, display: "flex", alignItems: "center", fontSize: 22, color: "#71717a" }}>
+      npx htmlartifact login
     </div>
   </div>,
   {
     width: 1200,
     height: 630,
     fonts: [
-      { name: "Archivo", data: await font(800), weight: 800, style: "normal" },
-      { name: "Archivo", data: await font(500), weight: 500, style: "normal" }
+      { name: "Geist", data: await font(500), weight: 500, style: "normal" },
+      { name: "Geist", data: await font(400), weight: 400, style: "normal" }
     ]
   }
 );
 const png = new Resvg(svg, { fitTo: { mode: "width", value: 1200 } }).render().asPng();
 await Bun.write(`${root}web/public/og.png`, png);
 console.log(`web/public/og.png (${(png.length / 1024).toFixed(0)} KiB)`);
+
+const favicon = markSvg(null, "#09090b", "#fafafa", true);
+await Bun.write(
+  `${root}src/favicon.ts`,
+  `// The site icon: the house mark (web/app/components/Logo.tsx), the rosette of\n// the "htmlartifact" seal knocked out of a disc that follows the system theme.\n// Generated by scripts/og.tsx; inlined so any bundler ships it without a\n// text-module rule.\nexport const FAVICON_SVG = ${JSON.stringify(favicon)};\n`
+);
+console.log(`src/favicon.ts (${favicon.length} B)`);
