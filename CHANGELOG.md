@@ -18,12 +18,10 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   even when exactly one was left. `workspace leave` now continues in the only
   one left, and a browser session whose workspace is gone (left, removed or
   deleted) moves into the only one left; with several, you still pick.
-
 - `login` in several workspaces, without `--workspace`, threw away the
   finished browser sign-in and saved nothing. At a terminal it now asks which
   workspace; elsewhere (and under `--json`, which lists them) it keeps the
   sign-in, and `login --workspace <name>` completes it without the browser.
-
 - `bun run dev:local`: the WorkOS emulator approved every CLI sign-in as its
   first seeded user (Alice), so testing several people locally silently
   signed everyone in as Alice. The CLI's sign-in link now opens a local page
@@ -31,6 +29,10 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ### Changed
 
+- The source moved to <https://entire.com/et/dhruv2mars/htmlartifact>. Report
+  bugs by email to Dhruv2mars@gmail.com, and security problems as SECURITY.md
+  says. Releases from now on have no npm provenance (CONTRIBUTING.md →
+  Releasing).
 - `workspace leave` asks before leaving at a terminal, and needs `--yes`
   elsewhere (scripts, agents, `--json`). `--workspace <name>` leaves another
   of your workspaces without changing the current one.
@@ -254,10 +256,10 @@ First release.
   HTML stored in D1), with per-workspace and database quotas and rate limits
   sized to them.
 
-[Unreleased]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.2...HEAD
-[0.2.2]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.1...v0.2.2
-[0.2.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.2...v0.2.0
-[0.1.2]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/Dhruv2mars/htmlartifact/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/Dhruv2mars/htmlartifact/releases/tag/v0.1.0
+[Unreleased]: https://entire.com/et/dhruv2mars/htmlartifact/commits
+[0.2.2]: https://www.npmjs.com/package/htmlartifact/v/0.2.2
+[0.2.1]: https://www.npmjs.com/package/htmlartifact/v/0.2.1
+[0.2.0]: https://www.npmjs.com/package/htmlartifact/v/0.2.0
+[0.1.2]: https://www.npmjs.com/package/htmlartifact/v/0.1.2
+[0.1.1]: https://www.npmjs.com/package/htmlartifact/v/0.1.1
+[0.1.0]: https://www.npmjs.com/package/htmlartifact/v/0.1.0

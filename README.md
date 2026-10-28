@@ -149,9 +149,11 @@ bun run build:web   # web/build: the SSR bundle the Worker imports, plus static 
 bun run typecheck && bun run typecheck:cli && bun run typecheck:web
 bun run lint        # knip: unused files, exports and dependencies
 bun run test        # builds the CLI, then the full suite twice: D1 storage, then R2 (real Worker + official WorkOS emulator)
+bun run check       # the merge gate: all of the above and the built CLI on Node 20.10
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+The source is at <https://entire.com/et/dhruv2mars/htmlartifact>. See
+[CONTRIBUTING.md](CONTRIBUTING.md) before sending a change.
 
 `dev:local` seeds `alice@`, `bob@` and `carol@example.com`. Sign in with any of
 them on the emulator's login page. The CLI's sign-in link opens a local page
@@ -197,9 +199,26 @@ guarantees $0.
 
 ## Deploying
 
-Production deploys from `main` through GitHub Actions (`.github/workflows/deploy.yml`),
-once CI has passed on the pushed commit; `staging` deploys to
-https://staging.htmlartifact.pages.dev the same way. To run your own copy:
+Production (https://htmlartifact.pages.dev) runs `main`. A maintainer ships it
+from a local checkout once a trail is merged:
+
+```sh
+git fetch origin && git switch --detach origin/main
+bun run ship   # bun run check (skipped if it passed on this commit), deploy:all, smoke
+```
+
+`ship` refuses unless HEAD is exactly `origin/main` with a clean tree, and
+prints the commit of the last production deployment before it deploys (Pages
+records the commit of each deployment; the ops Worker version is tagged with
+it). It needs
+Cloudflare credentials: `bunx wrangler login`, or `CLOUDFLARE_API_TOKEN` (Pages,
+Workers Scripts and D1 Edit) and `CLOUDFLARE_ACCOUNT_ID`. `bun run ship --
+--staging` does the same for `origin/staging` and
+https://staging.htmlartifact.pages.dev. If smoke fails, roll back: Cloudflare
+dashboard → Workers & Pages → each Pages project → Deployments → Rollback,
+and `bunx wrangler rollback` in `deploy/ops`.
+
+To run your own copy:
 
 1. Cloudflare: create two Pages projects (the app and the sandbox for artifact
    HTML) and a D1 database. Every name and URL of a deployment lives in
@@ -224,7 +243,7 @@ https://staging.htmlartifact.pages.dev the same way. To run your own copy:
 
 The CLI defaults to `https://htmlartifact.pages.dev` (`DEFAULT_API_URL` in
 `cli/env.ts`); point it elsewhere with `HTMLARTIFACT_API_URL`. Releases are
-published to npm by CI ([CONTRIBUTING.md](CONTRIBUTING.md#releasing)).
+published to npm with `bun run release` ([CONTRIBUTING.md](CONTRIBUTING.md#releasing)).
 
 ## Credits
 

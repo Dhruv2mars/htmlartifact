@@ -3,8 +3,11 @@
 Thanks for helping. Bug reports, fixes, docs and ideas are all welcome.
 By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-- **Questions and ideas:** [Discussions](https://github.com/Dhruv2mars/htmlartifact/discussions).
-- **Bugs and feature requests:** [open an issue](https://github.com/Dhruv2mars/htmlartifact/issues/new/choose).
+- **Source:** <https://entire.com/et/dhruv2mars/htmlartifact> (public, on
+  [Entire](https://docs.entire.com)). Clone it with the Entire CLI:
+  `entire repo clone /et/dhruv2mars/htmlartifact`.
+- **Bugs, feature requests, questions and patches:** email
+  Dhruv2mars@gmail.com. For a patch, attach `git format-patch origin/main`.
 - **Security problems:** never in public. Follow [SECURITY.md](SECURITY.md).
 
 ## Ground rules
@@ -31,24 +34,48 @@ bun run dev:local   # WorkOS emulator + Worker at http://localhost:8787, fully o
 `dev:local` needs no accounts or keys. See the README's Development section for
 the CLI and web app loops.
 
-## Before you open a pull request
+## The merge gate
 
-Run what CI runs:
+Changes land on `main` through an Entire trail (a branch plus
+`entire trail create`). `bun run check` is the merge gate. It runs everything
+the old GitHub Actions CI ran, in order, and stops at the first failure.
+Buildkite runs the same command on every push (`.buildkite/pipeline.yml`, the
+free hosted `linux-small` queue) and reports it on the trail as a gate:
 
-```sh
-bun run typecheck && bun run typecheck:cli && bun run typecheck:web
-bun run lint                     # knip: unused files, exports, dependencies
-bun scripts/changelog.ts check   # CHANGELOG.md documents the package version
-bun run test                     # full suite on D1, then on R2 (local only)
-```
+| Step | What |
+|---|---|
+| install | `bun install --frozen-lockfile` |
+| typecheck | `bun run typecheck`, `typecheck:cli`, `typecheck:web` |
+| lint | `bun run lint` under Bun (knip: unused files, exports, dependencies) |
+| changelog | `bun scripts/changelog.ts check` (CHANGELOG.md documents the package version) |
+| test | `bun run test`: builds the CLI and web app, then the full suite on D1, then on R2 (local only) |
+| cli | the built CLI (`--version`, `--help`, `check` on a two-page site) on your Node and on Node 20.10, the `engines` minimum (downloaded once from nodejs.org and checked against its SHASUMS256.txt) |
 
-Then:
+Buildkite covers Linux; run it locally for macOS. Windows is no longer
+tested. Buildkite's Free plan (no card) includes 2,000 Linux vCPU-minutes a
+month and a run uses about 25 (11 minutes on 2 vCPUs), so about 80 pushes a
+month across all branches; push finished work, not every commit. A trail merges only when, on its latest commit, rebased on `main`:
 
-- Add a test that fails without your change, for bug fixes.
-- Add a line under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for
-  anything a user of the CLI or the service would notice.
-- Fill in the pull request template. `main` is protected: CI must pass before
-  a pull request can merge.
+- Buildkite's `bun run check` passed, so `entire trail merge --dry-run`
+  passes, and every finding from the trail's review agents is fixed or
+  dismissed with a reason.
+- Bug fixes come with a test that fails without the fix.
+- New routes are in the isolation route table (`test/isolation.test.js`).
+- `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) has a line for anything a
+  user of the CLI or the service would notice.
+- It stays on free tiers.
+
+Then `entire trail approve` and `entire trail merge`. Deploying is a separate
+step (README → Deploying).
+
+## Dependencies
+
+Nothing opens dependency updates any more. Every few weeks, run `bun outdated`,
+update with `bun update` (minor and patch together), and merge it through the
+gate like any change. `parse5` and `entities` stay pinned on purpose: the CLI
+validator (parse5) and the server validator (HTMLRewriter + entities, the
+version parse5 decodes with) are proven equivalent for those exact versions, so
+upgrade them by hand only.
 
 ## Repository layout
 
@@ -63,28 +90,30 @@ Then:
 
 ## Releasing
 
-Maintainers only. Tags, GitHub releases and npm versions always match because
-CI derives all three from `package.json`:
+Maintainers only. The tag, the npm version and `package.json` always match.
+Release when `main` has CLI changes that npm doesn't (`npm view htmlartifact
+gitHead` is the commit the latest version was built from).
 
-1. Open a pull request that bumps `version` in `package.json` and renames
-   `## [Unreleased]` in CHANGELOG.md to `## [X.Y.Z] - YYYY-MM-DD` (add a fresh
-   empty `## [Unreleased]` above it and update the compare links).
-2. Merge it. `.github/workflows/release.yml` runs on `main`: if the tag
-   `vX.Y.Z` does not exist yet, it runs the checks, publishes `htmlartifact@X.Y.Z`
-   to npm (trusted publishing, with provenance), then creates the tag and a
-   GitHub release whose notes are that CHANGELOG section.
+1. On a trail, bump `version` in `package.json` and rename `## [Unreleased]`
+   in CHANGELOG.md to `## [X.Y.Z] - YYYY-MM-DD` (add a fresh empty
+   `## [Unreleased]` above it, and an `[X.Y.Z]:` link to the version's npm page
+   at the bottom). Merge it.
+2. Log in to npm as an owner of the package (`npm login`), then publish from
+   exactly `origin/main`:
 
-The very first publish is manual, because npm trusted publishing is set up
-in a package's settings on npmjs.com, so the package has to exist:
+   ```sh
+   git fetch origin && git switch --detach origin/main
+   bun run release -- --dry-run   # the gate, then npm publish --dry-run: lists the tarball
+   bun run release                # the gate (skipped if it passed on this commit), npm publish, tag vX.Y.Z on origin
+   ```
 
-1. From an up-to-date `main`, run `npm publish --access public` (the
-   `prepublishOnly` script builds the CLI), then run the Release workflow
-   (Actions → Release → Run workflow). It sees the version on npm and only
-   creates the tag and GitHub release.
-2. Add the trusted publisher just before the next release, not earlier: a new
-   configuration expires unless its first publish succeeds within 2 days. On
-   npmjs.com → htmlartifact → Settings → Trusted publishing, add GitHub
-   Actions with this repository and workflow `release.yml`, and allow direct
-   `npm publish` (new configurations allow only `npm stage publish` by
-   default). Then merge the version bump; the Release workflow's publish
-   validates the configuration.
+   npm asks for your 2FA code. `release` refuses a version npm already has; if
+   the publish worked but the tag push didn't, run it again and it only tags
+   the commit npm recorded (`gitHead`).
+3. The release notes are that CHANGELOG section
+   (`bun scripts/changelog.ts notes X.Y.Z`).
+
+Releases up to 0.2.2 have npm provenance. Later ones don't: npm can only sign
+provenance for builds on a cloud-hosted GitHub Actions or GitLab CI/CD runner,
+and this repository has neither. The trusted publisher for GitHub Actions on
+npmjs.com is unused now.

@@ -1,6 +1,6 @@
 // CHANGELOG.md helper for CI and releases.
 //   bun scripts/changelog.ts check            -> fails unless CHANGELOG.md has a section for package.json's version
-//   bun scripts/changelog.ts notes <version>  -> prints that version's section (GitHub release notes)
+//   bun scripts/changelog.ts notes <version>  -> prints that version's section (the release notes)
 const root = new URL("..", import.meta.url).pathname;
 const changelog = await Bun.file(`${root}CHANGELOG.md`).text();
 const { version } = await Bun.file(`${root}package.json`).json();

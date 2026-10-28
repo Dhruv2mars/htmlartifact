@@ -8,10 +8,13 @@ const flag = process.argv.indexOf("--branch");
 const branch = flag > 0 ? process.argv[flag + 1]! : "main";
 const production = branch === "main";
 const wrangler = `${root}node_modules/.bin/wrangler`;
+// Tags the ops Worker version with the commit, as Pages records it for its deployments.
+const commit = (await $`git rev-parse --short HEAD`.cwd(root).quiet().text()).trim();
 
 await $`bun ${root}scripts/build-pages.ts`;
-if (production) await $`${wrangler} deploy --env=`.cwd(`${root}deploy/ops`);
-else await $`${wrangler} deploy --env staging`.cwd(`${root}deploy/ops`);
+const version = ["--tag", commit, "--message", `${branch} ${commit}`];
+if (production) await $`${wrangler} deploy --env= ${version}`.cwd(`${root}deploy/ops`);
+else await $`${wrangler} deploy --env staging ${version}`.cwd(`${root}deploy/ops`);
 for (const project of ["app", "usercontent"]) {
   await $`${wrangler} pages deploy --no-bundle --branch ${branch} --commit-dirty=true`.cwd(`${root}deploy/${project}`);
 }
