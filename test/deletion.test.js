@@ -898,6 +898,7 @@ describe("review round 10", () => {
     const code = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
     const sam = await findUser(stack.emulator, "sam@new.test");
     assert.equal(await count("SELECT COUNT(*) FROM removals WHERE user_id = ?", sam.id), 1, "Sam's removal (and Allow back) is recorded");
+    console.log("DIAG", JSON.stringify({ joins: await rows("SELECT * FROM joins WHERE user_id = ?", sam.id), memberships: await rows("SELECT * FROM memberships WHERE user_id = ?", sam.id), removals: await rows("SELECT * FROM removals WHERE user_id = ?", sam.id) }));
     const r = await sendWebhook(stack, {
       id: "event_sam_deleted",
       event: "user.deleted",
