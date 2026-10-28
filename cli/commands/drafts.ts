@@ -24,7 +24,16 @@ import { api, httpError, rejectedEnvToken, requestJson } from "../http.ts";
 import { resolveWorkspace } from "./workspace.ts";
 import { collectCiMetadata, collectGitMetadata } from "../metadata.ts";
 import { readUploadSource, type UploadSource } from "../source.ts";
-import { findDraftMapping, removeDraftMappings, saveDraftMapping, sha256, type DraftMapping, type Json } from "../state.ts";
+import {
+  findApiKeyWorkspace,
+  findDraftMapping,
+  removeDraftMappings,
+  saveApiKeyWorkspace,
+  saveDraftMapping,
+  sha256,
+  type DraftMapping,
+  type Json
+} from "../state.ts";
 
 const DRAFT_ID_PATTERN = /^[a-z0-9]{12}$/;
 
@@ -129,7 +138,7 @@ export const upload = Command.make(
           "--new cannot be combined with --draft or --slug: those name an existing draft. Use an unused slug to create a new draft at a custom URL."
       });
     }
-    const { apiUrl, apiKey, workspaceKey } = yield* getAuth(Option.getOrUndefined(options.apiUrl));
+    const { apiUrl, apiKey, organizationId } = yield* getAuth(Option.getOrUndefined(options.apiUrl));
     const source = yield* readUploadSource(options.target);
     // Check the markup locally first: parse5 reports each problem with its
     // line and column (the server reports none), and a page that fails here
@@ -151,7 +160,7 @@ export const upload = Command.make(
     }
     // A slug names the draft by itself, so the saved mapping for this path is
     // only used without one. `--draft <id> --slug <name>` renames a draft.
-    const mapping = options.new || draft ? null : yield* findDraftMapping(apiUrl, workspaceKey, source.resolved);
+    const mapping = options.new || draft ? null : yield* findDraftMapping(apiUrl, source.resolved, uploadWorkspace(apiUrl, apiKey, organizationId));
     const mappedDraftId = slug === undefined ? mapping?.draftId || null : null;
     const draftId = draft || mappedDraftId;
     // `--slug` updates whichever artifact the slug names. Name the one this
@@ -278,21 +287,39 @@ export const upload = Command.make(
     yield* options.json ? printJson(receipt) : printReceipt(receipt);
     if (keepMapping) return;
 
-    yield* saveDraftMapping(apiUrl, workspaceKey, source.resolved, {
+    const workspaceId: string | null = body.workspace?.id || organizationId;
+    if (!workspaceId) return;
+    yield* saveDraftMapping(apiUrl, workspaceId, source.resolved, {
       draftId: receipt.draftId,
       slug: receipt.slug,
       publicUrl: receipt.url,
       rawUrl: receipt.rawUrl,
       latestVersionNumber: receipt.versionNumber,
-      workspaceId: body.workspace?.id ?? null,
       workspaceName: receipt.workspace
     }).pipe(
+      Effect.andThen(envToken() && body.workspace?.id ? saveApiKeyWorkspace(apiUrl, apiKey, body.workspace.id) : Effect.void),
       Effect.catch((error) =>
         Console.error(`Warning: published, but could not save the local path mapping: ${error.message}`)
       )
     );
   })
 ).pipe(Command.withDescription("Publish an artifact, or a new version of one."));
+
+// The workspace an upload goes to, for its path's binding: the saved
+// sign-in's, or the one HTMLARTIFACT_TOKEN's key belongs to (remembered from
+// an earlier answer, else asked once). Null when it can't be told: the path
+// then counts as not published in this workspace.
+const uploadWorkspace = (apiUrl: string, apiKey: string, organizationId: string | null) =>
+  organizationId
+    ? Effect.succeed(organizationId)
+    : Effect.gen(function* () {
+        const known = yield* findApiKeyWorkspace(apiUrl, apiKey);
+        if (known) return known;
+        const me = yield* api(apiUrl, "/api/me", { apiKey });
+        const id: string | null = me.workspace?.id || null;
+        if (id) yield* saveApiKeyWorkspace(apiUrl, apiKey, id);
+        return id;
+      }).pipe(Effect.orElseSucceed(() => null));
 
 // What to do when the artifact a path was published to is not in the current
 // workspace. A mapping saved by this CLI is per workspace, so it was deleted;

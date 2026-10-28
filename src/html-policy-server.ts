@@ -91,9 +91,9 @@ import {
 //      is checked where it appears, so nothing parse5 checks is skipped.
 //      Counts can differ (parse5 also counts reconstructed formatting
 //      elements), the first <title> is the first in source order, and the
-//      text of a <title> holding markup inside SVG is approximated. So is an
-//      <h1>'s (what looks like a tag is dropped, even inside a <script> or
-//      CDATA in it), and only the first 16 <h1>s are read.
+//      text of a <title> holding markup inside SVG is approximated. Only the
+//      first 16 <h1>s are read, and text in a <script> or <style> inside one
+//      has its references decoded.
 //   6. A refused page (ambiguous-markup, too-deep, parse-failed) counts as
 //      having scripts, and may miss findings after the point of refusal.
 //   7. Limits. parse5's depth (512) and attribute (1000) limits protect its
@@ -594,6 +594,35 @@ async function laterTitle(html: string, restore: (text: string) => string): Prom
   return null;
 }
 
+// The text of an element's content (an <h1>'s), as parse5 reads it: text
+// outside inert <template>s, references decoded. HTMLRewriter reads the
+// markup, so a ">" in a quoted attribute stays in its tag.
+async function contentText(html: string): Promise<string> {
+  let text = "";
+  let templates = 0;
+  await new HTMLRewriter()
+    .on("template", {
+      element(element) {
+        templates++;
+        try {
+          element.onEndTag(() => {
+            templates--;
+          });
+        } catch {
+          templates--; // self-closed (in SVG/MathML): holds nothing
+        }
+      }
+    })
+    .onDocument({
+      text(chunk) {
+        if (!templates) text += chunk.text;
+      }
+    })
+    .transform(new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } }))
+    .arrayBuffer();
+  return decodeHTML(normalizeSource(text));
+}
+
 const AMBIGUOUS_FIX = "Close the <select> before it, and keep it out of <frameset> pages and <template> column groups.";
 const ambiguous = (tag: string) => `Blocked <${tag}> where browsers can read the markup after it in two ways.`;
 const FOREIGN_FIX = "Keep SVG and MathML well-formed: close every element, and put HTML only inside <foreignObject>.";
@@ -780,16 +809,17 @@ async function readPage(html: string, restore: (text: string) => string = (text)
     }
   }
   const markerLength = (id: number) => nonce.length + String(id).length + 2;
-  const between = (id: number, foreign: boolean, decode: boolean) => {
+  // An element's source between its markers, without the nested ones.
+  const inside = (id: number) => {
     const from = starts[id];
     if (from === undefined) return "";
     const to = ends[id];
-    let text = output.slice(from + markerLength(id), to).replace(markers, "");
+    const text = output.slice(from + markerLength(id), to).replace(markers, "");
     // No end marker: the element ran to the end of the page, where an end tag
     // cut off mid-tag ("</title x") is not text (parse5 drops it).
-    if (to === undefined) text = text.replace(/<\/(?:title|script)(?=[\t\n\f\r />]|$)[\s\S]*$/i, "");
-    return sourceText(text, foreign, decode);
+    return to === undefined ? text.replace(/<\/(?:title|script)(?=[\t\n\f\r />]|$)[\s\S]*$/i, "") : text;
   };
+  const between = (id: number, foreign: boolean, decode: boolean) => sourceText(inside(id), foreign, decode);
   for (const script of output ? scripts : []) {
     const text = between(script.id, script.foreign, false);
     for (const api of SANDBOX_APIS) if (api.pattern.test(text)) sandbox.add(api.code);
@@ -824,10 +854,9 @@ async function readPage(html: string, restore: (text: string) => string = (text)
       hasScripts = true;
     }
   }
-  // An <h1> holds markup: its text is what remains without tags and comments.
   let heading: string | null = null;
   for (const id of output && !title ? headings : []) {
-    const text = between(id, true, true);
+    const text = await contentText(inside(id));
     if (/\S/.test(text)) {
       heading = headingText(text);
       break;

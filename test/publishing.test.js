@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
-import { Browser, accessToken, callApi, page, startStack, writeHtml } from "./helpers.js";
+import { Browser, CI_KEY, accessToken, callApi, page, startStack, writeHtml } from "./helpers.js";
 
 // Publishing as agents do it, through the built CLI (dist/htmlartifact.js),
 // against a local Worker with a sandbox origin and the WorkOS emulator. Each
@@ -209,6 +209,22 @@ test("--slug on a file that is already published gives that artifact the slug, n
   const separate = await json(["upload", other, "--slug", "weekly-new", "--force"]);
   assert.notEqual(separate.draftId, named.draftId);
   assert.equal(separate.slug, "weekly-new");
+});
+
+test("a path's artifact is found by workspace, whichever credential publishes there (a rotated API key, then a sign-in)", async () => {
+  const alice = await accessToken(stack, "alice@acme.test", "Acme");
+  const rotated = await callApi(stack, alice, "POST", "/api/workspaces/api-keys", { name: "Rotated CI" });
+  assert.equal(rotated.status, 201, JSON.stringify(rotated.body));
+  const file = writeHtml(stack.tmp, "nightly-bench.html", page("Nightly bench", "<p>1</p>"));
+  const first = await json(["upload", file], { HTMLARTIFACT_TOKEN: CI_KEY });
+  assert.equal(first.action, "created");
+  writeHtml(stack.tmp, "nightly-bench.html", page("Nightly bench", "<p>2</p>"));
+  const second = await json(["upload", file], { HTMLARTIFACT_TOKEN: rotated.body.token });
+  assert.equal(second.draftId, first.draftId, "the rotated key updates the same artifact");
+  assert.equal(second.action, "updated");
+  writeHtml(stack.tmp, "nightly-bench.html", page("Nightly bench", "<p>3</p>"));
+  const third = await json(["upload", file]);
+  assert.equal(third.draftId, first.draftId, "so does the saved sign-in, in the same workspace");
 });
 
 test("a deleted artifact: the path's upload says it was deleted and that --new publishes it again", async () => {
