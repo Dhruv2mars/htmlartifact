@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Effect } from "effect";
 
-import { CREDENTIALS_PATH, DRAFT_BINDINGS_DIR, HTMLARTIFACT_DIR, PENDING_LOGIN_PATH } from "./env.ts";
+import { API_KEY_WORKSPACES_DIR, CREDENTIALS_PATH, DRAFT_BINDINGS_DIR, HTMLARTIFACT_DIR, PENDING_LOGIN_PATH } from "./env.ts";
 import { attempt, reason, type FileError, type CliError } from "./errors.ts";
 
 // Loosely typed JSON from disk or the server.
@@ -24,6 +24,8 @@ export interface DraftMapping {
   publicUrl: string;
   rawUrl: string;
   latestVersionNumber: number;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
   apiUrl?: string;
   file?: string;
   updatedAt?: string;
@@ -181,18 +183,62 @@ const releaseLock = (held: boolean) =>
 export const withCredentialsLock = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.acquireUseRelease(acquireLock, () => effect, releaseLock);
 
-// Each (API URL, path) binding is its own file, so concurrent uploads and
-// uploads to different APIs never rewrite each other's mappings.
-function draftBindingPath(apiUrl: string, file: string): string {
-  return path.join(DRAFT_BINDINGS_DIR, `${sha256(`${apiUrl}\n${file}`)}.json`);
+// A path's bindings live in a directory of their own, one file per
+// workspace (by its ID), so concurrent uploads, and uploads to other APIs or
+// workspaces, never rewrite each other's mappings: a file published in two
+// workspaces is two artifacts. The directory also says, with no request,
+// whether the path was published at all.
+function pathBindingsDir(apiUrl: string, file: string): string {
+  return path.join(DRAFT_BINDINGS_DIR, sha256(`${apiUrl}\n${file}`));
 }
 
-// Finds the draft a path was last published to on this API.
-export const findDraftMapping = (apiUrl: string, file: string) =>
-  readStateJson<DraftMapping>(draftBindingPath(apiUrl, file));
+function draftBindingPath(apiUrl: string, workspaceId: string, file: string): string {
+  return path.join(pathBindingsDir(apiUrl, file), `${sha256(workspaceId)}.json`);
+}
 
-export const saveDraftMapping = (apiUrl: string, file: string, entry: DraftMapping) =>
-  writeJson(draftBindingPath(apiUrl, file), { ...entry, apiUrl, file, updatedAt: new Date().toISOString() });
+// Bindings saved by CLIs up to 0.2.2: one per (API URL, path), workspace unknown.
+function legacyBindingPath(apiUrl: string, file: string): string {
+  return `${pathBindingsDir(apiUrl, file)}.json`;
+}
+
+// Finds the draft a path was last published to in the workspace `workspace`
+// resolves (asked only when the path has bindings); failing that, an older
+// CLI's binding for the path (`legacy`: it may name an artifact in another
+// workspace).
+export const findDraftMapping = <E>(apiUrl: string, file: string, workspace: Effect.Effect<string | null, E>) =>
+  Effect.gen(function* () {
+    if (fs.existsSync(pathBindingsDir(apiUrl, file))) {
+      const workspaceId = yield* workspace;
+      const own = workspaceId ? yield* readStateJson<DraftMapping>(draftBindingPath(apiUrl, workspaceId, file)) : null;
+      if (own) return { ...own, legacy: false };
+    }
+    const legacy = yield* readStateJson<DraftMapping>(legacyBindingPath(apiUrl, file));
+    return legacy ? { ...legacy, legacy: true } : null;
+  });
+
+// Saves the binding, and drops an older CLI's binding for the path once it
+// is known to name this artifact, so it can't stand in for another workspace.
+export const saveDraftMapping = (apiUrl: string, workspaceId: string, file: string, entry: DraftMapping) =>
+  writeJson(draftBindingPath(apiUrl, workspaceId, file), { ...entry, workspaceId, apiUrl, file, updatedAt: new Date().toISOString() }).pipe(
+    Effect.andThen(
+      attempt(() => {
+        const legacy = legacyBindingPath(apiUrl, file);
+        if (readJson<Partial<DraftMapping> | null>(legacy, null)?.draftId === entry.draftId) fs.rmSync(legacy, { force: true });
+      })
+    )
+  );
+
+// The workspace an API key (HTMLARTIFACT_TOKEN) publishes to, as remembered
+// from the server's answers: a key belongs to one workspace for good.
+function apiKeyWorkspacePath(apiUrl: string, token: string): string {
+  return path.join(API_KEY_WORKSPACES_DIR, `${sha256(`${apiUrl}\n${token}`)}.json`);
+}
+
+export const findApiKeyWorkspace = (apiUrl: string, token: string) =>
+  readStateJson<{ workspaceId: string }>(apiKeyWorkspacePath(apiUrl, token)).pipe(Effect.map((entry) => entry?.workspaceId || null));
+
+export const saveApiKeyWorkspace = (apiUrl: string, token: string, workspaceId: string) =>
+  writeJson(apiKeyWorkspacePath(apiUrl, token), { workspaceId });
 
 // Forgets every local path that was published to `draftId` on this API.
 // Returns how many mappings were removed.
@@ -205,10 +251,18 @@ export const removeDraftMappings = (apiUrl: string, draftId: string): Effect.Eff
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
       throw error;
     }
+    // A path's directory of per-workspace bindings, or an older CLI's file.
+    const files = names.flatMap((name) => {
+      const full = path.join(DRAFT_BINDINGS_DIR, name);
+      if (name.endsWith(".json")) return [full];
+      try {
+        return fs.readdirSync(full).filter((inner) => inner.endsWith(".json")).map((inner) => path.join(full, inner));
+      } catch {
+        return [];
+      }
+    });
     let removed = 0;
-    for (const name of names) {
-      if (!name.endsWith(".json")) continue;
-      const file = path.join(DRAFT_BINDINGS_DIR, name);
+    for (const file of files) {
       const entry = readJson<Partial<DraftMapping> | null>(file, null);
       if (entry?.apiUrl === apiUrl && entry.draftId === draftId) {
         fs.rmSync(file, { force: true });

@@ -214,7 +214,12 @@ describe("artifact deletion", () => {
     const olivia = await accessToken(stack, "olivia@other.test", "Other");
     assert.equal((await callApi(stack, olivia, "DELETE", `/api/drafts/${bobs.body.draftId}`)).status, 404);
 
-    const byAdmin = await callApi(stack, alice, "DELETE", `/api/drafts/${bobs.body.draftId}`);
+    // An admin confirms with the artifact's ID (the CLI's --yes): it is someone else's work.
+    const unconfirmed = await callApi(stack, alice, "DELETE", `/api/drafts/${bobs.body.draftId}`);
+    assert.equal(unconfirmed.status, 409);
+    assert.equal(unconfirmed.body.code, "confirm_teammate_artifact");
+    assert.equal((await r2Keys(prefix)).length, 1, "still there");
+    const byAdmin = await callApi(stack, alice, "DELETE", `/api/drafts/${bobs.body.draftId}`, { confirm: bobs.body.draftId });
     assert.equal(byAdmin.status, 200, JSON.stringify(byAdmin.body));
     assert.deepEqual(await r2Keys(prefix), []);
     assert.deepEqual(await draftRows(bobs.body.draftId), { drafts: 0, versions: 0, pages: 0 });

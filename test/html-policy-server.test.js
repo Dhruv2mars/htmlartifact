@@ -217,3 +217,36 @@ describe("title regressions (Opus review)", () => {
     });
   }
 });
+
+// A page with no <title> is named by its first <h1> with text, the same way
+// on both validators (a feed of "out.html" said nothing about the page).
+describe("an <h1> names a page with no <title>", () => {
+  const cases = [
+    ["plain", "<!doctype html><h1>Q3 incident retro</h1><p>x</p>", "Q3 incident retro"],
+    ["markup and line breaks inside", "<h1>Q3 <em>incident</em>\n   retro</h1>", "Q3 incident retro"],
+    ["character references", "<h1>R&amp;D &lt;plan&gt;</h1>", "R&D <plan>"],
+    ["a comment inside", "<h1><!-- draft -->Commented</h1>", "Commented"],
+    ["a > in a quoted attribute inside", '<h1>A<span title="x>y">B</span>C</h1>', "ABC"],
+    ["a <template> inside is not text", "<h1>Report<template>Hidden</template></h1>", "Report"],
+    ["an SVG <template> inside is ordinary text", "<h1>A<svg><template>hidden</template><text>B</text></svg>C</h1>", "AhiddenBC"],
+    ["an empty <h1> first", "<h1> </h1><h1>Second heading</h1>", "Second heading"],
+    ["not one in a <template>", "<template><h1>Hidden</h1></template><h1>Shown</h1>", "Shown"],
+    ["inside <noscript> (no-JavaScript readers see it)", "<noscript><h1>No JS</h1></noscript><p>x</p>", "No JS"],
+    ["a <title> wins over an earlier <h1>", "<h1>Heading</h1><title>Late title</title>", "Late title"],
+    ["a <title> wins over a later <h1>", "<!doctype html><title>Real</title><h1>Heading</h1>", "Real"],
+    ["an <h2> does not count", "<h2>Section</h2>", null]
+  ];
+  for (const [name, html, title] of cases) {
+    test(name, async () => {
+      const mine = validateHtml(html);
+      assert.equal(mine.title, title, "parse5");
+      const res = await callApi(stack, tokens[calls++ % tokens.length], "POST", "/api/check", { html });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.pages[0].title, title, "server");
+      // No <title>: still a warning (browsers show the file name in the tab), which says what is used instead.
+      const warning = res.body.issues.find((issue) => issue.code === "no-title");
+      assert.equal(Boolean(warning), !/<title>/.test(html));
+      if (warning && title) assert.match(warning.message, /first <h1>/);
+    });
+  }
+});

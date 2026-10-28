@@ -13,11 +13,13 @@ import {
   checkElementRules,
   createIssueList,
   htmlResult,
+  NO_TITLE_HEADING_MESSAGE,
   NO_TITLE_MESSAGE,
   parseFailed,
   precheckHtml,
   runUpload,
   SANDBOX_APIS,
+  headingText,
   titleText,
   uploadSteps,
   type HtmlValidation,
@@ -64,7 +66,7 @@ interface WalkNode {
   shadow: boolean; // in a declarative shadow root, outside the document tree
   visited: boolean;
   location: Token.ElementLocation | null;
-  sinks: TextSink[] | null; // <script>/<title> ancestors collecting their text
+  sinks: TextSink[] | null; // <script>/<title>/<h1> ancestors collecting their text
   content: WalkNode | null; // a <template>'s content fragment
   attrNames: Set<string> | null; // names in attrs, once attributes are merged in
   mode: spec.DOCUMENT_MODE;
@@ -183,6 +185,8 @@ function validateHtmlPass(html: unknown, options: { maxBytes?: number }, locatio
   // after one that already has text cannot win, so they are not collected.
   const titles: { node: WalkNode; sink: TextSink }[] = [];
   let firstTitleWithText: WalkNode | null = null;
+  // Each <h1>, for a page with no <title>: the first with text names it.
+  const headings: { node: WalkNode; sink: TextSink }[] = [];
   // Code the sandbox checks read. Scripts keep a sink their text streams
   // into; handler attributes are complete when seen, so only the first match
   // per API (in document order) is kept.
@@ -214,6 +218,13 @@ function validateHtmlPass(html: unknown, options: { maxBytes?: number }, locatio
         if (node.shadow || (firstTitleWithText && order(firstTitleWithText, node) < 0)) return;
         const sink = { text: "", title: node };
         titles.push({ node, sink });
+        collectInto(node, sink);
+      },
+      heading: () => {
+        // Like titles, one in a shadow root does not name the document.
+        if (node.shadow) return;
+        const sink = { text: "" };
+        headings.push({ node, sink });
         collectInto(node, sink);
       },
       imageHost: (host) => externalImageHosts.add(host)
@@ -341,11 +352,13 @@ function validateHtmlPass(html: unknown, options: { maxBytes?: number }, locatio
 
   const first = titles.filter(({ sink }) => /\S/.test(sink.text)).sort((a, b) => order(a.node, b.node))[0];
   const title = first ? titleText(first.sink.text) : null;
-  if (!title) issues.warning("no-title", NO_TITLE_MESSAGE);
+  const firstHeading = headings.filter(({ sink }) => /\S/.test(sink.text)).sort((a, b) => order(a.node, b.node))[0];
+  const heading = firstHeading ? headingText(firstHeading.sink.text) : null;
+  if (!title) issues.warning("no-title", heading ? NO_TITLE_HEADING_MESSAGE : NO_TITLE_MESSAGE);
 
   return htmlResult({
     issues,
-    title,
+    title: title ?? heading,
     hasScripts,
     bytes,
     externalImageHosts: [...externalImageHosts].sort()

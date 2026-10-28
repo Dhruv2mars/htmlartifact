@@ -14,8 +14,9 @@ type DraftRef = { id: string } | { handle: string; slug: string };
 // Artifact URLs serve the uploaded HTML to members only: browsers with a
 // session, CLI/agents with a bearer token.
 //   /d/<draft id>[/...]            /w/<workspace handle>/<slug>[/...]
-// Below the root: "v/<n>/" pins a version, "raw" names the index page, and
-// anything else names a page of a multi-page artifact.
+// Below the root: "v/<n>/" pins a version, "raw" names the index page (its
+// source, in a browser), and anything else names a page of a multi-page
+// artifact.
 //
 // With a sandbox origin configured, browsers get a wrapper page that frames
 // the artifact from that cross-site origin (src/sandbox.ts), so artifact HTML
@@ -51,13 +52,16 @@ async function serve(c: Context<AppEnv>, ref: DraftRef) {
   if (!draft || !viewer || access !== "member") return notFound(c);
 
   const version = await findVersion(c, draft, versionNumber);
-  if (!version) return notFound(c);
+  if (!version) return versionNumber ? missingVersion(c, draft, versionNumber, bearer) : notFound(c);
+  const raw = parts[0] === "raw" && (parts.length === 1 || (parts.length === 2 && parts[1] === ""));
   const resolved = await resolvePage(c, version, parts);
   if (!resolved) return notFound(c);
   if ("redirect" in resolved) return resolved.redirect;
 
   const sandboxOrigin = c.get("config").sandboxOrigin;
-  if (!sandboxOrigin || bearer) return sendPage(c, draft, version, resolved.page);
+  if (bearer) return sendPage(c, draft, version, resolved.page);
+  if (raw) return sendSource(c, draft, version, resolved.page);
+  if (!sandboxOrigin) return sendPage(c, draft, version, resolved.page);
 
   const token = mintCapability(c.get("config").cookiePassword, {
     d: draft.id,
@@ -169,6 +173,39 @@ export async function sendPage(
   // Artifacts are private: never let a shared cache keep one.
   c.header("Cache-Control", "private, no-store");
   return c.html(html);
+}
+
+// "Raw HTML" opened in a browser: the page's source, as stored. As text/plain
+// with nosniff it never runs on the app origin, and the sandbox CSP holds
+// even if a browser rendered it anyway. (Bearer requests get the HTML.)
+async function sendSource(c: Context<AppEnv>, draft: DraftRow, version: VersionRow, page: VersionRow | PageRow): Promise<Response> {
+  const html = await getHtmlObject(c.env, page.object_key);
+  c.header("Content-Type", "text/plain; charset=utf-8");
+  c.header("X-Content-Type-Options", "nosniff");
+  c.header("Content-Security-Policy", "default-src 'none'; sandbox");
+  c.header("Referrer-Policy", "no-referrer");
+  c.header("X-Htmlartifact-Draft-Id", draft.id);
+  c.header("X-Htmlartifact-Draft-Version", String(version.version_number));
+  c.header("Cache-Control", "private, no-store");
+  return c.body(html);
+}
+
+// A member asked for a version that isn't there, so the 404 that suggests
+// asking for an invite would mislead. Version numbers only grow and pruning
+// keeps the latest, so one below it was pruned. Browsers go to the history
+// page, which lists the versions left; agents get the reason as text.
+async function missingVersion(c: Context<AppEnv>, draft: DraftRow, wanted: number, bearer: boolean): Promise<Response> {
+  if (!bearer) return c.redirect(`/history/${encodeURIComponent(draft.id)}?missing=${wanted}`, 302);
+  const latest = await c.env.DB.prepare("SELECT version_number, page_count FROM draft_versions WHERE id = ?")
+    .bind(draft.current_version_id)
+    .first<Pick<VersionRow, "version_number" | "page_count">>();
+  if (!latest) return notFound(c);
+  const number = Number(latest.version_number);
+  const url = `${c.get("origin")}/d/${draft.id}/v/${number}${Number(latest.page_count || 1) > 1 ? "/" : ""}`;
+  const why = wanted < number ? `Version ${wanted} of ${draft.id} was deleted (pruned).` : `${draft.id} has no version ${wanted}.`;
+  c.header("X-Htmlartifact-Latest-Version", String(number));
+  c.header("Cache-Control", "private, no-store");
+  return c.text(`${why} The latest is version ${number}: ${url}\n`, 404);
 }
 
 // Script-free pages get script-src 'none'. Scripted pages run sandboxed

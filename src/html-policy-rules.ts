@@ -194,6 +194,8 @@ export const SANDBOX_APIS: { code: string; pattern: RegExp; message: string; fix
 ];
 
 export const NO_TITLE_MESSAGE = "No <title> found; htmlartifact will use a generic title.";
+// No <title>, but an <h1> with text: the page is named after that.
+export const NO_TITLE_HEADING_MESSAGE = "No <title> found; htmlartifact will name the page after its first <h1>.";
 
 // Multi-page uploads map each page path to a URL on the draft's host. These
 // first segments are taken by the /v/<n> and /raw aliases and by service
@@ -223,6 +225,8 @@ export interface RuleSink {
   handler(attr: string, value: string): void;
   // The element is a <title>.
   title(): void;
+  // The element is an <h1>: the first with text names a page with no <title>.
+  heading(): void;
   imageHost(host: string): void;
 }
 
@@ -260,7 +264,7 @@ export function checkElementRules(rawTagName: string, attrs: readonly Attribute[
       });
     } else if (!/^https:\/\//i.test(attributes.get("href") || "")) {
       sink.error("link-href", "Linked stylesheets and icons must use https URLs.", {
-        fix: "Inline the CSS in a <style> block, or host the file (for example with file-upload) and use its https URL."
+        fix: "Inline the CSS in a <style> block, or host the file anywhere that serves https (a CDN, a public bucket, your own site) and link to that URL."
       });
     }
   }
@@ -278,7 +282,7 @@ export function checkElementRules(rawTagName: string, attrs: readonly Attribute[
       if (value && isLocalReference(value)) {
         sink.warning("relative-asset", `"${value}" will not load. htmlartifact only hosts HTML pages.`, {
           attr: name,
-          fix: "Upload the file (for example with file-upload) and use its https URL, or inline it as a data: URL."
+          fix: "Host the file anywhere that serves https (a CDN, a public bucket, your own site) and use that URL, or inline it as a data: URL."
         });
       }
     }
@@ -297,6 +301,7 @@ export function checkElementRules(rawTagName: string, attrs: readonly Attribute[
   }
 
   if (tagName === "title") sink.title();
+  if (tagName === "h1") sink.heading();
 }
 
 // Attribute checks, separate so parse5's validator can check attributes a
@@ -440,6 +445,11 @@ export function parseFailed(bytes: number): HtmlValidation {
 // The document title from the text of a <title>: trimmed, at most 140 characters.
 export function titleText(text: string): string | null {
   return text.trim().slice(0, 140) || null;
+}
+
+// The same from an <h1>'s text, which may span lines and elements.
+export function headingText(text: string): string | null {
+  return titleText(text.replace(/[\t\n\f\r ]+/g, " "));
 }
 
 // A page of an oversized upload, sized but never parsed: the upload-wide

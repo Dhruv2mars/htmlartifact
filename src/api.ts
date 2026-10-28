@@ -413,6 +413,13 @@ export function registerApi(app: Hono<AppEnv>): void {
         403
       );
     }
+    // An admin deleting someone else's artifact erases their work for
+    // everyone at once: it takes the artifact's ID back as confirmation (the
+    // CLI's --yes), like deleting a workspace takes its name.
+    if (draft.account_id !== viewer.account_id) {
+      const body = await readJson(c, 16 * 1024);
+      if (body.confirm !== draft.id) return confirmTeammateDelete(c, draft);
+    }
     // R2 is purged before responding; if it fails, the queued prefix is retried by the cron.
     await purgeDraft(c.env, viewer.organization_id, draft.id);
     return c.json({ ok: true, draftId: draft.id });
@@ -1128,6 +1135,9 @@ async function requireAdmin(c: Context<MemberEnv>, next: Next): Promise<Response
   return next();
 }
 
+// The artifact fields an upload can change besides publishing a version.
+const CHANGEABLE_FIELDS = ["title", "description", "slug"] as const;
+
 async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const viewer = c.get("viewer");
   const db = c.env.DB;
@@ -1173,6 +1183,30 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       409
     );
   }
+  // `--slug` on a file published without one: the slug names nothing yet, so
+  // it goes to the artifact the file was published to, rather than making a
+  // second one; if that has another custom URL already, the caller chooses.
+  let adopted: DraftRow | null = null;
+  if (slug && !slugDraft && expected && !draftId) {
+    const target = await db
+      .prepare("SELECT * FROM drafts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL")
+      .bind(expected, viewer.organization_id)
+      .first<DraftRow>();
+    if (target?.slug && canUpdateDraft(viewer, target)) {
+      return c.json(
+        {
+          ok: false,
+          code: "artifact_has_another_slug",
+          draftId: target.id,
+          slug: target.slug,
+          title: target.title,
+          error: `This file was published to artifact ${target.id} ("${target.title || "Untitled"}"), whose custom URL is "${target.slug}". To move it to "${slug}", upload with --draft ${target.id} --slug ${slug}. To publish a separate artifact at "${slug}", re-run with --force.`
+        },
+        409
+      );
+    }
+    if (target && canUpdateDraft(viewer, target)) adopted = target;
+  }
   if (slugDraft && draftId && slugDraft.id !== draftId) {
     return c.json(
       { ok: false, error: `The custom URL "${slug}" already names artifact ${slugDraft.id}. Upload with --slug alone to update it.` },
@@ -1181,6 +1215,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   }
   const existing =
     slugDraft ||
+    adopted ||
     (draftId
       ? await db
           .prepare("SELECT * FROM drafts WHERE id = ? AND organization_id = ? AND deleted_at IS NULL")
@@ -1203,6 +1238,9 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const id = existing?.id || newDraftId();
   const observedVersionId = existing?.current_version_id ?? null;
   const title = validation.title || existing?.title || filename || "Untitled";
+  // A description string sets it, and an empty one clears it; without one
+  // (no --description) the artifact keeps the description it has.
+  const setDescription = typeof description === "string";
   const cleanDescription = cleanText(description, 1000);
   let versionId = current?.id;
   // Prefix of the R2 objects this upload writes; deleted again if its rows are
@@ -1364,7 +1402,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   statements.push(
     db
       .prepare(
-        `UPDATE drafts SET current_version_id = ?, title = ?, description = COALESCE(?, description),
+        `UPDATE drafts SET current_version_id = ?, title = ?, description = CASE WHEN ? THEN ? ELSE description END,
            repo_org = COALESCE(?, repo_org), repo_name = COALESCE(?, repo_name), repo_host = COALESCE(?, repo_host),
            slug = COALESCE(?, slug), updated_at = CASE WHEN ? THEN updated_at ELSE unixepoch() END
          WHERE id = ? AND current_version_id IS ? AND EXISTS (SELECT 1 FROM draft_versions WHERE id = ?)`
@@ -1372,6 +1410,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       .bind(
         versionId,
         title,
+        setDescription ? 1 : 0,
         cleanDescription,
         cleanText(metadata.repoOrg),
         cleanText(metadata.repoName),
@@ -1419,8 +1458,19 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const publicUrl = draftUrl(origin, draft, viewer.workspace.handle);
   const multiPage = validation.pages.length > 1;
   const warnings = [...validation.warnings];
+  // What else this upload changed on an existing artifact: identical content
+  // publishes no version, but can still set its description or slug.
+  const changedFields = existing ? CHANGEABLE_FIELDS.filter((field) => existing[field] !== draft[field]) : [];
   // An admin (or a CI key) publishing over a teammate's artifact: say so,
   // since the artifact keeps its author.
+  // A page with a different title at a reused path is most likely another
+  // document: say so (it is still published; titles change between runs of
+  // one report too). A title that was only a file name is not a change.
+  if (existing && !unchanged && validation.title && existing.title !== validation.title && (await hadRealTitle(db, existing))) {
+    warnings.push(
+      `The title changed from "${existing.title}" to "${validation.title}". If this is a different document, publish it separately with --new (this upload is version ${version.version_number} of ${id}).`
+    );
+  }
   if (existing && !unchanged && existing.account_id !== viewer.account_id) {
     const author = await db.prepare("SELECT name FROM accounts WHERE id = ?").bind(existing.account_id).first<{ name: string }>();
     const name = author?.name || "a teammate";
@@ -1431,6 +1481,7 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       ok: true,
       created: !existing,
       unchanged,
+      changedFields,
       draftId: id,
       slug: draft.slug,
       versionId,
@@ -1449,6 +1500,43 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
     },
     existing ? 200 : 201
   );
+}
+
+// The refusal for deleting someone else's artifact unconfirmed: whose it
+// is and how much would go, so the caller can decide.
+async function confirmTeammateDelete(c: Context<MemberEnv>, draft: Pick<DraftRow, "id" | "account_id">): Promise<Response> {
+  const about = await c.env.DB.prepare(
+    `SELECT d.title, a.name AS author, (SELECT COUNT(*) FROM draft_versions v WHERE v.draft_id = d.id) AS versions
+     FROM drafts d LEFT JOIN accounts a ON a.id = d.account_id WHERE d.id = ?`
+  )
+    .bind(draft.id)
+    .first<{ title: string; author: string | null; versions: number }>();
+  const author = about?.author || (draft.account_id.startsWith("api_key_") ? "a workspace API key" : "a teammate");
+  const versions = Number(about?.versions ?? 0);
+  const title = about?.title || "Untitled";
+  return c.json(
+    {
+      ok: false,
+      code: "confirm_teammate_artifact",
+      draftId: draft.id,
+      title,
+      author,
+      versionCount: versions,
+      error: `Artifact ${draft.id} ("${title}", ${versions} version${versions === 1 ? "" : "s"}) was published by ${author}. Deleting it erases every version for everyone. To delete it, run: htmlartifact delete ${draft.id} --yes`
+    },
+    409
+  );
+}
+
+// Whether an artifact's title came from its pages, not the fallbacks of an
+// upload without one ("Untitled", or a version's file name).
+async function hadRealTitle(db: D1Database, draft: DraftRow): Promise<boolean> {
+  if (draft.title === "Untitled") return false;
+  const named = await db
+    .prepare("SELECT 1 FROM draft_versions WHERE draft_id = ? AND original_filename = ? LIMIT 1")
+    .bind(draft.id, draft.title)
+    .first();
+  return !named;
 }
 
 // A read-only preflight: what the caller can publish, and whether a given

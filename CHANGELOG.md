@@ -7,6 +7,39 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+### Added
+
+- `upload` receipts list `changedFields` ("title", "description", "slug"):
+  what an upload changed besides publishing a version.
+- `delete --yes`: an admin deleting an artifact someone else published must
+  confirm (the server refuses with `confirm_teammate_artifact` otherwise).
+- Stable `code`s for `upload` refusals: `artifact_has_another_slug`,
+  `mapped_artifact_not_found` (and `slug_names_another_artifact` now carries
+  its code in `--json` too). README lists them.
+
+### Changed
+
+- The source moved to <https://entire.com/et/dhruv2mars/htmlartifact>. Report
+  bugs by email to Dhruv2mars@gmail.com, and security problems as SECURITY.md
+  says. Releases from now on have no npm provenance (CONTRIBUTING.md →
+  Releasing).
+- `workspace leave` asks before leaving at a terminal, and needs `--yes`
+  elsewhere (scripts, agents, `--json`). `--workspace <name>` leaves another
+  of your workspaces without changing the current one.
+- The CLI remembers a file's artifact per workspace and path. Publishing a
+  file in a second workspace no longer breaks plain uploads in the first.
+- `upload <path> --slug <name>` on a path already published gives that
+  artifact the slug instead of publishing a second artifact. When it already
+  has another slug, the upload is refused with the ways on.
+- Git metadata describes the uploaded files: the commit that last changed
+  them, or, for files not committed as uploaded, no commit subject (the
+  history page used HEAD's message as the version's title) and dirty.
+- A page with no `<title>` is named after its first `<h1>`.
+- A new version whose page title changed warns (another document at a
+  reused path is still published).
+- The Raw HTML URL shows the page's source in a browser (`text/plain`);
+  token requests still get the HTML.
+
 ### Fixed
 
 - Leaving a workspace (`workspace leave`) revoked every live invite code in
@@ -26,16 +59,15 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
   first seeded user (Alice), so testing several people locally silently
   signed everyone in as Alice. The CLI's sign-in link now opens a local page
   where you pick the user and confirm the code.
-
-### Changed
-
-- The source moved to <https://entire.com/et/dhruv2mars/htmlartifact>. Report
-  bugs by email to Dhruv2mars@gmail.com, and security problems as SECURITY.md
-  says. Releases from now on have no npm provenance (CONTRIBUTING.md →
-  Releasing).
-- `workspace leave` asks before leaving at a terminal, and needs `--yes`
-  elsewhere (scripts, agents, `--json`). `--workspace <name>` leaves another
-  of your workspaces without changing the current one.
+- `--description` on unchanged content said "Unchanged" but changed the
+  description; `--description ""` could not clear one.
+- The 404 hint for a path's missing artifact said `--new`, which made a
+  duplicate when the artifact was in another workspace.
+- A pruned version's link told members the artifact was in another
+  workspace. Agents now get a 404 saying it was pruned, with the latest
+  version; members' browsers go to the artifact's history.
+- Validation fix texts pointed to "file-upload", a tool htmlartifact doesn't
+  have.
 
 ## [0.2.2] - 2026-10-21
 

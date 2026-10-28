@@ -15,6 +15,7 @@ export const CREDENTIALS_PATH = path.join(HTMLARTIFACT_DIR, "credentials.json");
 // A finished browser sign-in still waiting for its workspace to be picked.
 export const PENDING_LOGIN_PATH = path.join(HTMLARTIFACT_DIR, "pending-login.json");
 export const DRAFT_BINDINGS_DIR = path.join(HTMLARTIFACT_DIR, "drafts");
+export const API_KEY_WORKSPACES_DIR = path.join(HTMLARTIFACT_DIR, "api-keys");
 
 export const USER_AGENT = `htmlartifact/${VERSION}`;
 
