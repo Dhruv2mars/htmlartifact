@@ -182,6 +182,8 @@ body:has(.toggle:focus-visible) .hide, .toggle:focus-visible + .show { outline: 
   font-size: 13px; font-weight: 500; translate: 0 calc(-100% - 12px); opacity: 0;
 }
 .skip:focus { translate: 0 0; opacity: 1; }
+/* Inside its own box: over a hidden bar the page behind is the artifact. */
+.skip:focus-visible { outline-offset: -3px; }
 body:has(.toggle:checked) .bar { display: none; }
 .toggle:checked + .show { display: flex; }
 main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
