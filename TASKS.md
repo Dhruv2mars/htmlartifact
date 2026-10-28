@@ -1,5 +1,16 @@
 # htmlartifact — GA checklist
 
+## Removed people stay out (2026-10-28, branch feat/removal-record)
+Source: product plan v2 (/tmp/ha-design/product/plan-v2.md) G4 (e), journey L7: Tom was removed and walked back in with the next team link.
+Done = a removed person (admin removal, or a non-departure membership.deleted webhook) gets exactly the invalid-link 404 from any later team link, with no use taken, until an admin allows them back; leaving records nothing; the record is purged with the workspace, on user.deleted and carried by restore-reconcile; tests for each fail on fbacdf8 and pass here; typecheck, lint, Buildkite green; Trail reviewed by Sol and merged.
+- [x] `removals` table (user, org, removed_ms, allowed_ms; later time wins) in src/db.ts; recorded in endMembership right before the WorkOS delete (removal only), and by the membership.deleted webhook (not a departure, our undo, a pending membership, or a deleted user), dated by the event
+- [x] joinWithCode: a recorded user gets the invalid-code answer before any use is reserved; a removal recorded mid-join undoes the join; the webhook undoes any rejoin made while the removal stands
+- [x] `listRemoved(c)` / `allowBack(c, userId)` exported (Outcome shape, @public for knip); `GET /api/workspaces/removed`, `DELETE /api/workspaces/removed/:userId`; CLI `workspace removed`, `workspace allow-back <email>`; isolation ROUTES
+- [x] Purge: deleteWorkspaceStatements, scrubUserStatements, restore-reconcile (carried with MAX); SECURITY.md "What we store" and offboarding; README; CHANGELOG
+- [ ] Tests: focused suites green; new tests fail on fbacdf8
+- [ ] Trail, Sol, Buildkite, merge (after merging origin/main with design/overhaul)
+- [ ] Follow-up (web, not this branch): People page "Removed" list with "Allow back", on listRemoved/allowBack
+
 ## Membership and login bugs from simulated users (2026-10-27, branch fix/membership-login)
 Source: /tmp/ha-design/product/bugs-membership.md (agents simulating real users on the local stack).
 Done = each bug below is either fixed with a test that fails on main and passes here (test named next to it) or rejected with the reason; typecheck, lint and `bun run test` green locally and on Buildkite; Trail reviewed by Sol (sol-loop) and merged. No edits to web/app/**, src/render-web.ts, src/render.ts, src/web.ts (frontend thread owns them): web changes are described in the Trail instead.
