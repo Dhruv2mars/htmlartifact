@@ -55,7 +55,7 @@ function Hero() {
             Read the docs
           </a>
           <a href={REPO_URL} className="text-muted underline decoration-control underline-offset-4 transition-colors duration-150 hover:text-foreground hover:decoration-foreground">
-            Source on GitHub
+            Source on Entire
           </a>
         </p>
         <MarginNote side="right" className="top-2">

@@ -72,7 +72,7 @@ export function Workspaces({
     </FormPanel>
   );
   const createPanel = (
-    <FormPanel id="create-title" title="Create a workspace" description="You'll be its admin, and can invite people from a terminal.">
+    <FormPanel id="create-title" title="Create a workspace" description="You'll be its admin, and can invite your team with a link.">
       <form method="post" action="/workspaces">
         <Field label="Workspace name" name="name" required maxLength={100} autoComplete="off" hint="Usually your team or company, like Northwind." />
         <Submit tone={joinFirst ? "line" : "ink"} pending="Creating workspace…" className="mt-4 w-full sm:w-auto">
@@ -162,7 +162,8 @@ export function Workspaces({
         </Rule>
         <Rule width="app" inner="">
           <dl className="divide-y divide-line">
-            {COMMANDS.filter(([what]) => canSwitch || what !== "Switch").map(([what, command]) => (
+            {/* Inviting is for the current workspace's admins only. */}
+            {COMMANDS.filter(([what]) => (canSwitch || what !== "Switch") && (session.role === "admin" || what !== "Invite")).map(([what, command]) => (
               <div key={what} className="grid gap-1.5 px-4 py-2.5 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-center sm:gap-4 sm:px-5">
                 <dt className="text-[13.5px] text-muted">{what}</dt>
                 <dd className="min-w-0">

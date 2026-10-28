@@ -1,7 +1,7 @@
 import { Fragment, useRef, type ReactNode } from "react";
 import { CopyText } from "../components/CopyText";
 import { Facts, Fact, H3, ReadingPage, Section, type Toc } from "../components/ReadingPage";
-import { REPO_URL } from "../components/SiteHeader";
+import { REPO_URL, SECURITY_URL } from "../components/SiteHeader";
 import { cx } from "../lib/cx";
 import type { Session } from "../page";
 
@@ -58,7 +58,15 @@ const COMMAND_GROUPS: Array<{ id: string; title: string; note?: string; commands
       { names: ["workspace list"], body: "List your workspaces. The current one is marked with an asterisk." },
       { names: ["workspace switch <name>"], body: "Make another of your workspaces the current one." },
       { names: ["workspace members"], body: "List the members of the current workspace." },
-      { names: ["workspace leave"], body: "Leave the current workspace. Its last admin must promote someone else first." }
+      {
+        names: [`workspace leave [--workspace${NB}<name>]`],
+        body: (
+          <>
+            Leave the current workspace, or the one named. It asks first; <code>--yes</code> skips the question (needed when no one is
+            at a terminal). Your artifacts stay for the team. Its last admin must make someone else an admin first.
+          </>
+        )
+      }
     ]
   },
   {
@@ -107,7 +115,7 @@ const COMMAND_GROUPS: Array<{ id: string; title: string; note?: string; commands
   {
     id: "automation",
     title: "CI and automation",
-    note: "Workspace admins only.",
+    note: "Workspace admins only. Inviting, roles, removing people and deleting the workspace are also on the web: People and Settings, in the workspace menu.",
     commands: [
       {
         names: ["workspace api-key create"],
@@ -234,7 +242,8 @@ export function Docs({ session }: { session: Session | null }) {
               commands={["npx htmlartifact login", 'npx htmlartifact workspace create "Northwind"', "npx htmlartifact workspace invite"]}
               note={
                 <>
-                  <code>invite</code> prints a code like <code>HA-7KQ2-MX9P-4TRA</code> and a join link. Send either one to your team.
+                  <code>invite</code> prints a code like <code>HA-7KQ2-MX9P-4TRA</code> and a join link. Send either one to your team. On the
+                  web, People makes the same link and a message to paste in chat.
                 </>
               }
             />
@@ -351,7 +360,7 @@ export function Docs({ session }: { session: Session | null }) {
           </Fact>
         </Facts>
         <p>
-          <a href={`${REPO_URL}/blob/main/SECURITY.md`}>SECURITY.md</a> has the details: where each item is stored, how deletion works
+          <a href={SECURITY_URL}>SECURITY.md</a> has the details: where each item is stored, how deletion works
           and how incidents are handled.
         </p>
       </Section>
@@ -414,12 +423,13 @@ export function Docs({ session }: { session: Session | null }) {
           The CLI uses the hosted service at htmlartifact.pages.dev. You can also run your own: htmlartifact is open source (MIT), one
           Worker bundle on Cloudflare (Pages and D1) with WorkOS AuthKit for accounts and workspaces, built to stay on free tiers. The{" "}
           <a href={`${REPO_URL}#deploying`}>README</a> walks through deploying it, and{" "}
-          <a href={`${REPO_URL}/blob/main/SECURITY.md`}>SECURITY.md</a> covers data handling.
+          <a href={SECURITY_URL}>SECURITY.md</a> covers data handling. The source is on <a href={REPO_URL}>Entire</a>; clone it with
+          the <a href="https://docs.entire.com">Entire CLI</a>.
         </p>
         <Code
           label="Terminal"
           name="Commands to run htmlartifact locally"
-          commands={[`git clone ${REPO_URL}`, "cd htmlartifact", "bun install", "bun run dev:local"]}
+          commands={["entire repo clone /et/dhruv2mars/htmlartifact", "cd htmlartifact", "bun install", "bun run dev:local"]}
           note={
             <>
               <code>dev:local</code> starts a WorkOS emulator and the Worker at <code>http://localhost:8787</code>, fully offline.

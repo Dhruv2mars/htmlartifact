@@ -3,7 +3,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { createRequestHandler, RouterContextProvider, type ServerBuild } from "react-router";
 import * as build from "../web/build/server/index.js";
 import staticPages, { ORIGIN_TOKEN } from "../web/build/server/static-pages.js";
-import type { ArtifactSummary, ArtifactVersion, Page, Session } from "../web/app/page.ts";
+import type { ArtifactSummary, ArtifactVersion, Notice, Page, Session } from "../web/app/page.ts";
 import type { DraftSummary, DraftWithVersions } from "./drafts.ts";
 import type { AppEnv, Viewer } from "./types.ts";
 
@@ -62,14 +62,16 @@ function staticPage(page: Page): string | null {
   return null;
 }
 
-export function toSession(viewer: Viewer | null | undefined): Session | null {
+export function toSession(viewer: Viewer | null | undefined, notice: Notice | null = null): Session | null {
   if (!viewer) return null;
   return {
     name: viewer.account_name,
     email: viewer.email,
     workspace: viewer.workspace
       ? { id: viewer.workspace.organization_id, name: viewer.workspace.name, handle: viewer.workspace.handle }
-      : null
+      : null,
+    role: viewer.workspace ? (viewer.role === "admin" ? "admin" : "member") : null,
+    notice
   };
 }
 

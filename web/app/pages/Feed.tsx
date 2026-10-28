@@ -14,7 +14,7 @@ export function Feed({ session, artifacts, older }: { session: Session; artifact
       <PageHead title={name} count={artifacts.length || undefined}>
         Everything published in {name}, newest first. Only members can open these links.
       </PageHead>
-      {artifacts.length ? <Listing artifacts={artifacts} older={older} /> : <FirstArtifact workspace={name} />}
+      {artifacts.length ? <Listing artifacts={artifacts} older={older} /> : <FirstArtifact workspace={name} admin={session.role === "admin"} />}
       <Fill />
     </AppShell>
   );
@@ -33,8 +33,10 @@ export function Mine({ session, artifacts, older }: { session: Session; artifact
   );
 }
 
-// An empty workspace: the two commands that fill it, in full.
-function FirstArtifact({ workspace, mine = false }: { workspace: string; mine?: boolean }) {
+// An empty workspace: the commands that fill it, in full (the CLI publishes
+// to its own current workspace, which may not be this one), and, for an
+// admin, the way to bring the team in.
+function FirstArtifact({ workspace, mine = false, admin = false }: { workspace: string; mine?: boolean; admin?: boolean }) {
   return (
     <Rule as="section" width="app" labelledBy="first" inner="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
       <div className="border-b border-line px-4 py-8 sm:px-5 lg:border-b-0 lg:border-r">
@@ -45,9 +47,16 @@ function FirstArtifact({ workspace, mine = false }: { workspace: string; mine?: 
           Publish any HTML file your agent wrote: a plan, a review, a report. It appears here, and only people in {workspace} can
           open its link.
         </p>
-        <ButtonLink href="/docs#agents" tone="line" size="sm" className="mt-5">
-          Let your agent publish
-        </ButtonLink>
+        <div className="mt-5 flex flex-wrap gap-2">
+          {admin && (
+            <ButtonLink href="/people#links" size="sm">
+              Invite your team
+            </ButtonLink>
+          )}
+          <ButtonLink href="/docs#agents" tone="line" size="sm">
+            Let your agent publish
+          </ButtonLink>
+        </div>
       </div>
       <ol className="space-y-5 bg-surface/50 px-4 py-8 sm:px-5">
         <li>
@@ -55,7 +64,11 @@ function FirstArtifact({ workspace, mine = false }: { workspace: string; mine?: 
           <CommandBlock commands={["npx htmlartifact login"]} />
         </li>
         <li>
-          <p className="mb-2 font-mono text-[12.5px] text-muted">02 Publish a file</p>
+          <p className="mb-2 font-mono text-[12.5px] text-muted">02 In more than one workspace? Publish to this one</p>
+          <CommandBlock commands={[`npx htmlartifact workspace switch ${shellWord(workspace)}`]} />
+        </li>
+        <li>
+          <p className="mb-2 font-mono text-[12.5px] text-muted">03 Publish a file</p>
           <CommandBlock
             commands={["npx htmlartifact upload plan.html"]}
             note="Replace plan.html with your file, or a folder with an index.html. Upload the same path again to publish a new version at the same link."
@@ -65,6 +78,9 @@ function FirstArtifact({ workspace, mine = false }: { workspace: string; mine?: 
     </Rule>
   );
 }
+
+// A workspace name as one shell word: bare when it is safe, else single-quoted.
+const shellWord = (word: string) => (/^[\w.@%+=:,/-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`);
 
 // The rails run to the bottom of the screen on short pages.
 function Fill() {

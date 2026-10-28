@@ -1,4 +1,4 @@
-import { REPO_URL } from "../components/SiteHeader";
+import { SECURITY_URL } from "../components/SiteHeader";
 import type { Session } from "../page";
 import { Fact, Facts, ReadingPage, Section } from "../components/ReadingPage";
 
@@ -93,7 +93,7 @@ export function Privacy({ session }: { session: Session | null }) {
           <code>htmlartifact workspace delete</code>.
         </p>
         <p>
-          <a href={`${REPO_URL}/blob/main/SECURITY.md`}>SECURITY.md</a> has the full detail: where each item is stored, how deletion
+          <a href={SECURITY_URL}>SECURITY.md</a> has the full detail: where each item is stored, how deletion
           works, and how we respond to incidents.
         </p>
       </Section>

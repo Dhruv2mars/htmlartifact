@@ -220,102 +220,20 @@ export function registerApi(app: Hono<AppEnv>): void {
     return c.json({ ok: true, workspace: { id: organization.id, name, handle, role: "admin" } }, 201);
   });
 
-  // An invite code for the caller's current workspace. Admins only: a code
-  // is a key to every artifact in the workspace.
+  // ---- Workspace admin. Each route is a thin JSON wrapper around a function
+  // the browser pages call too (src/web.ts), so both stay one code path.
   app.post("/api/workspaces/invites", requireMember, requireAdmin, perUser("invite", 30), writeBudget(GRANT_ROWS), async (c) => {
-    const viewer = c.get("viewer");
-    const { invites } = c.get("config");
     const body = await readJson(c, 16 * 1024);
-    const maxUses = rangeInt(body.maxUses, 1, invites.maxUses, invites.maxUses);
-    const ttlDays = rangeInt(body.ttlDays, 1, MAX_INVITE_DAYS, invites.ttlDays);
-    if (maxUses === null) return c.json({ ok: false, error: `maxUses must be a whole number from 1 to ${invites.maxUses}.` }, 422);
-    if (ttlDays === null) return c.json({ ok: false, error: `ttlDays must be a whole number from 1 to ${MAX_INVITE_DAYS}.` }, 422);
-    const code = newInviteCode();
-    const expiresAt = Math.floor(Date.now() / 1000) + ttlDays * 86400;
-    await c.env.DB.prepare(
-      "INSERT INTO invites (code, organization_id, created_by, expires_at, max_uses) VALUES (?, ?, ?, ?, ?)"
-    )
-      .bind(code, viewer.organization_id, viewer.account_id, expiresAt, maxUses)
-      .run();
-    // The admin check above may be from cache or from before this request's
-    // body arrived. A removal or demotion that ran meanwhile has revoked the
-    // codes it could see but not this one: re-check live now that it exists.
-    if (!(await stillAdmin(c, viewer))) {
-      await c.env.DB.prepare("UPDATE invites SET revoked_at = unixepoch() WHERE code = ?").bind(code).run();
-      return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
-    }
-    return c.json(
-      {
-        ok: true,
-        code,
-        workspace: workspaceJson(viewer.workspace),
-        expiresAt: new Date(expiresAt * 1000).toISOString(),
-        maxUses,
-        joinUrl: `${c.get("origin")}/join/${code}`
-      },
-      201
-    );
+    return send(c, await createInvite(c, body));
   });
 
-  // The workspace's live invite codes (admins only). ?all=1 adds spent,
-  // expired and revoked codes, each with its status and who joined with it.
-  app.get("/api/workspaces/invites", requireMember, requireAdmin, async (c) => {
-    const viewer = c.get("viewer");
-    const db = c.env.DB;
-    const all = c.req.query("all") === "1";
-    const { results } = await db
-      .prepare(
-        `SELECT code, created_at, expires_at, max_uses, uses, revoked_at FROM invites
-         WHERE organization_id = ?${all ? "" : " AND revoked_at IS NULL AND expires_at > unixepoch() AND uses < max_uses"}
-         ORDER BY created_at DESC LIMIT 100`
-      )
-      .bind(viewer.organization_id)
-      .all<{ code: string; created_at: number; expires_at: number; max_uses: number; uses: number; revoked_at: number | null }>();
-    const joined = new Map<string, { name: string | null; email: string | null; joinedAt: string }[]>();
-    if (all) {
-      const { results: rows } = await db
-        .prepare(
-          `SELECT j.code, j.joined_at, a.name, a.email FROM invite_joins j LEFT JOIN accounts a ON a.id = j.user_id
-           WHERE j.organization_id = ? ORDER BY j.joined_at`
-        )
-        .bind(viewer.organization_id)
-        .all<{ code: string; joined_at: number; name: string | null; email: string | null }>();
-      for (const row of rows) {
-        joined.set(row.code, [...(joined.get(row.code) || []), { name: row.name, email: row.email, joinedAt: iso(row.joined_at) }]);
-      }
-    }
-    const status = (i: (typeof results)[number]) =>
-      i.revoked_at ? "revoked" : i.uses >= i.max_uses ? "used up" : i.expires_at <= now() ? "expired" : "live";
-    return c.json({
-      ok: true,
-      invites: results.map((i) => ({
-        code: i.code,
-        createdAt: iso(i.created_at),
-        expiresAt: iso(i.expires_at),
-        uses: i.uses,
-        maxUses: i.max_uses,
-        ...(all ? { status: status(i), joined: joined.get(i.code) || [] } : {})
-      }))
-    });
-  });
+  // ?all=1 adds spent, expired and revoked codes, each with its status and
+  // who joined with it.
+  app.get("/api/workspaces/invites", requireMember, requireAdmin, async (c) => send(c, await listInvites(c, { all: c.req.query("all") === "1" })));
 
-  // Revokes one invite code (admins only); "all" revokes every live code.
-  app.delete("/api/workspaces/invites/:code", requireMember, requireAdmin, perUser("invite-revoke", 30), async (c) => {
-    const viewer = c.get("viewer");
-    const param = c.req.param("code") || "";
-    if (param.toLowerCase() === "all") {
-      await revokeAllInvites(c.env.DB, viewer.organization_id);
-      return c.json({ ok: true });
-    }
-    const code = normalizeInviteCode(param);
-    const result = code
-      ? await c.env.DB.prepare("UPDATE invites SET revoked_at = unixepoch() WHERE code = ? AND organization_id = ? AND revoked_at IS NULL")
-          .bind(code, viewer.organization_id)
-          .run()
-      : null;
-    if (!result?.meta.changes) return c.json({ ok: false, error: "No such live invite code in this workspace." }, 404);
-    return c.json({ ok: true });
-  });
+  app.delete("/api/workspaces/invites/:code", requireMember, requireAdmin, perUser("invite-revoke", 30), async (c) =>
+    send(c, await revokeInvite(c, c.req.param("code") || ""))
+  );
 
   // Workspace CI keys (admins only): HTMLARTIFACT_TOKEN for CI. The secret is
   // returned once, at creation; only its hash is stored (src/db.ts).
@@ -381,134 +299,22 @@ export function registerApi(app: Hono<AppEnv>): void {
     return c.json(result.body, result.status);
   });
 
-  app.get("/api/workspaces/members", requireMember, perUser("members", 60), async (c) => {
-    const viewer = c.get("viewer");
-    const { client } = workos(c.get("config"));
-    const organizationId = viewer.organization_id;
-    const [users, memberships] = await Promise.all([
-      allPages((after) => client.userManagement.listUsers({ organizationId, limit: 100, after })),
-      activeMemberships(c, organizationId)
-    ]);
-    const roles = new Map(memberships.map((m) => [m.userId, m.role?.slug || null]));
-    return c.json({
-      ok: true,
-      members: users
-        .filter((u) => roles.has(u.id))
-        .map((u) => ({ id: u.id, name: displayName(u), email: u.email, role: roles.get(u.id) }))
-    });
-  });
+  app.get("/api/workspaces/members", requireMember, perUser("members", 60), async (c) => send(c, await listMembers(c)));
 
-  // Removes a member (admins only). Access ends on their next request, and
-  // every invite code issued until now is revoked (they may hold one).
-  // Not budgeted (src/budget.ts), so an admin can always remove someone: a
-  // refusal is answered before the lock, and so writes nothing.
-  app.delete("/api/workspaces/members/:userId", requireMember, requireAdmin, perUser("member-remove", 30), async (c) => {
-    const viewer = c.get("viewer");
-    const userId = c.req.param("userId");
-    // The route always captures :userId; the check satisfies the types.
-    if (!userId) return c.json({ ok: false, error: "Not a member." }, 404);
-    if (userId === viewer.account_id) {
-      return c.json({ ok: false, error: "You cannot remove yourself. To leave this workspace, run: htmlartifact workspace leave" }, 422);
-    }
-    const refuse = (members: Membership[]): Response | null => {
-      if (!isAdminIn(members, viewer.account_id)) return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
-      const membership = members.find((m) => m.userId === userId);
-      if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
-      if (membership.role?.slug === "admin" && !hasOtherAdmin(members, userId)) {
-        return c.json({ ok: false, error: "That is the workspace's last admin. Make someone else an admin first." }, 422);
-      }
-      return null;
-    };
-    const refused = refuse(await activeMemberships(c, viewer.organization_id));
-    if (refused) return refused;
-    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
-      const refusedNow = refuse(members);
-      if (refusedNow) return refusedNow;
-      const membership = members.find((m) => m.userId === userId)!;
-      await endMembership(c, userId, viewer.organization_id, membership.id, hold);
-      return c.json({ ok: true, invitesRevoked: true });
-    });
-  });
+  app.delete("/api/workspaces/members/:userId", requireMember, requireAdmin, perUser("member-remove", 30), async (c) =>
+    send(c, await removeMember(c, c.req.param("userId") || ""))
+  );
 
-  // Makes a member an admin, or an admin a member (admins only). A workspace
-  // always keeps at least one admin.
   app.patch("/api/workspaces/members/:userId", requireMember, requireAdmin, perUser("member-role", 30), writeBudget(MEMBER_CHANGE_ROWS), async (c) => {
-    const viewer = c.get("viewer");
-    const userId = c.req.param("userId");
-    if (!userId) return c.json({ ok: false, error: "Not a member." }, 404);
     const body = await readJson(c, 16 * 1024);
-    const role = body.role;
-    if (role !== "admin" && role !== "member") return c.json({ ok: false, error: 'role must be "admin" or "member".' }, 422);
-    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
-      if (!isAdminIn(members, viewer.account_id)) return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
-      const membership = members.find((m) => m.userId === userId);
-      if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
-      const unchanged = (membership.role?.slug || "member") === role;
-      if (!unchanged && role === "member" && !hasOtherAdmin(members, userId)) {
-        return c.json({ ok: false, error: "That is the workspace's last admin. Make someone else an admin first." }, 422);
-      }
-      const config = c.get("config");
-      const db = c.env.DB;
-      if (!unchanged) {
-        await hold();
-        await workos(config).client.userManagement.updateOrganizationMembership(membership.id, { roleSlug: role });
-        // After the change: a re-check that started earlier may not cache the old role.
-        await bumpMembershipEpoch(db, userId, viewer.organization_id);
-      }
-      if (role === "member") {
-        // What only an admin could create ends with the role. Also when
-        // unchanged: a retry finishes what a failed demotion left.
-        await revokeInvitesBy(db, userId, viewer.organization_id);
-        await revokeCiKeysBy(db, userId, viewer.organization_id);
-        await revokePortalLinks(config, viewer.organization_id, userId);
-      }
-      return c.json({ ok: true, role, unchanged });
-    });
+    return send(c, await setMemberRole(c, c.req.param("userId") || "", body.role));
   });
 
-  // Leaves the caller's current workspace. Its last admin cannot leave: they
-  // make someone else an admin first, or delete the workspace.
-  app.post("/api/workspaces/leave", requireMember, perUser("leave", 10), async (c) => {
-    const viewer = c.get("viewer");
-    if (viewer.is_api_key) return c.json({ ok: false, error: "API keys cannot leave workspaces." }, 403);
-    return withAdminLock(c, viewer.organization_id, async (members, hold) => {
-      const membership = members.find((m) => m.userId === viewer.account_id);
-      if (!membership) return c.json({ ok: false, error: "Not a member." }, 404);
-      if (membership.role?.slug === "admin" && !hasOtherAdmin(members, viewer.account_id)) {
-        return c.json(
-          {
-            ok: false,
-            error: `You are the last admin of "${viewer.workspace.name}". Make someone else an admin first (htmlartifact workspace promote <email>), or delete the workspace (htmlartifact workspace delete).`
-          },
-          422
-        );
-      }
-      const yourInvitesRevoked = await endMembership(c, viewer.account_id, viewer.organization_id, membership.id, hold, { leaving: true });
-      return c.json({ ok: true, workspace: workspaceJson(viewer.workspace), yourInvitesRevoked });
-    });
-  });
+  app.post("/api/workspaces/leave", requireMember, perUser("leave", 10), async (c) => send(c, await leaveWorkspace(c)));
 
-  // Deletes the caller's current workspace (admins only), confirmed by its
-  // exact name: access ends at once (the tombstone is written in the same D1
-  // transaction that drops every row), then R2 and the WorkOS organization
-  // are deleted in this request. Anything that fails stays queued for the
-  // ops Worker's cron.
   app.delete("/api/workspaces/current", requireMember, requireAdmin, perUser("workspace-delete", 5), async (c) => {
-    const viewer = c.get("viewer");
-    const { workspace } = viewer;
     const body = await readJson(c, 16 * 1024);
-    if (body.confirm !== workspace.name) {
-      return c.json(
-        {
-          ok: false,
-          error: `To delete this workspace and every artifact in it, send {"confirm": ${JSON.stringify(workspace.name)}} (its exact name). This cannot be undone.`
-        },
-        400
-      );
-    }
-    await c.env.DB.batch(deleteWorkspaceStatements(c.env.DB, viewer.organization_id));
-    await runWorkspaceDeletions(c.env, viewer.organization_id);
-    return c.json({ ok: true, workspace: workspaceJson(workspace) });
+    return send(c, await deleteWorkspace(c, body.confirm));
   });
 
   // A WorkOS Admin Portal link for the caller's workspace (admins only): an IT
@@ -760,6 +566,294 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
   };
 }
 
+// ---- Workspace admin, shared by the API routes and the browser pages. Each
+// returns the status and body the API answers with; the pages turn it into a
+// notice. Admin-only ones check the (cached) role themselves, as requireAdmin
+// does for the API, and keep every live re-check, lock and revocation.
+
+// The status and JSON body of a workspace action.
+export type Outcome<T extends object = object> = { status: ContentfulStatusCode; body: ({ ok: true } & T) | { ok: false; error: string } };
+
+// Where a request came from, for the few refusals that name the next step.
+export type Surface = "cli" | "web";
+
+const refusal = (status: ContentfulStatusCode, error: string) => ({ status, body: { ok: false as const, error } });
+const ADMINS_ONLY = "Only workspace admins can do that.";
+const LAST_ADMIN = "That is the workspace's last admin. Make someone else an admin first.";
+
+const send = <E extends AppEnv>(c: Context<E>, outcome: Outcome): Response => c.json(outcome.body, outcome.status);
+
+export interface InviteInfo {
+  code: string;
+  createdAt: string;
+  expiresAt: string;
+  uses: number;
+  maxUses: number;
+  createdBy: { id: string; name: string | null };
+  status?: "live" | "revoked" | "used up" | "expired";
+  joined?: { name: string | null; email: string | null; joinedAt: string }[];
+}
+
+// An invite code for the caller's current workspace. Admins only: a code is
+// a key to every artifact in the workspace.
+export async function createInvite(
+  c: Context<MemberEnv>,
+  input: { maxUses?: unknown; ttlDays?: unknown }
+): Promise<Outcome<{ code: string; workspace: ReturnType<typeof workspaceJson>; expiresAt: string; maxUses: number; joinUrl: string }>> {
+  const viewer = c.get("viewer");
+  if (viewer.role !== "admin") return refusal(403, ADMINS_ONLY);
+  const { invites } = c.get("config");
+  const maxUses = rangeInt(input.maxUses, 1, invites.maxUses, invites.maxUses);
+  const ttlDays = rangeInt(input.ttlDays, 1, MAX_INVITE_DAYS, invites.ttlDays);
+  if (maxUses === null) return refusal(422, `maxUses must be a whole number from 1 to ${invites.maxUses}.`);
+  if (ttlDays === null) return refusal(422, `ttlDays must be a whole number from 1 to ${MAX_INVITE_DAYS}.`);
+  const code = newInviteCode();
+  const expiresAt = Math.floor(Date.now() / 1000) + ttlDays * 86400;
+  await c.env.DB.prepare(
+    "INSERT INTO invites (code, organization_id, created_by, expires_at, max_uses) VALUES (?, ?, ?, ?, ?)"
+  )
+    .bind(code, viewer.organization_id, viewer.account_id, expiresAt, maxUses)
+    .run();
+  // The admin check above may be from cache or from before this request's
+  // body arrived. A removal or demotion that ran meanwhile has revoked the
+  // codes it could see but not this one: re-check live now that it exists.
+  if (!(await stillAdmin(c, viewer))) {
+    await c.env.DB.prepare("UPDATE invites SET revoked_at = unixepoch() WHERE code = ?").bind(code).run();
+    return refusal(403, ADMINS_ONLY);
+  }
+  return {
+    status: 201,
+    body: {
+      ok: true,
+      code,
+      workspace: workspaceJson(viewer.workspace),
+      expiresAt: new Date(expiresAt * 1000).toISOString(),
+      maxUses,
+      joinUrl: `${c.get("origin")}/join/${code}`
+    }
+  };
+}
+
+// The workspace's live invite codes, newest first (admins only). `all` adds
+// spent, expired and revoked codes, each with its status and who joined with it.
+export async function listInvites(c: Context<MemberEnv>, { all = false }: { all?: boolean } = {}): Promise<Outcome<{ invites: InviteInfo[] }>> {
+  const viewer = c.get("viewer");
+  if (viewer.role !== "admin") return refusal(403, ADMINS_ONLY);
+  const db = c.env.DB;
+  const { results } = await db
+    .prepare(
+      `SELECT i.code, i.created_at, i.expires_at, i.max_uses, i.uses, i.revoked_at, i.created_by, a.name AS creator_name
+       FROM invites i LEFT JOIN accounts a ON a.id = i.created_by
+       WHERE i.organization_id = ?${all ? "" : " AND i.revoked_at IS NULL AND i.expires_at > unixepoch() AND i.uses < i.max_uses"}
+       ORDER BY i.created_at DESC LIMIT 100`
+    )
+    .bind(viewer.organization_id)
+    .all<{
+      code: string;
+      created_at: number;
+      expires_at: number;
+      max_uses: number;
+      uses: number;
+      revoked_at: number | null;
+      created_by: string;
+      creator_name: string | null;
+    }>();
+  const joined = new Map<string, { name: string | null; email: string | null; joinedAt: string }[]>();
+  if (all) {
+    const { results: rows } = await db
+      .prepare(
+        `SELECT j.code, j.joined_at, a.name, a.email FROM invite_joins j LEFT JOIN accounts a ON a.id = j.user_id
+         WHERE j.organization_id = ? ORDER BY j.joined_at`
+      )
+      .bind(viewer.organization_id)
+      .all<{ code: string; joined_at: number; name: string | null; email: string | null }>();
+    for (const row of rows) {
+      joined.set(row.code, [...(joined.get(row.code) || []), { name: row.name, email: row.email, joinedAt: iso(row.joined_at) }]);
+    }
+  }
+  const status = (i: (typeof results)[number]) =>
+    i.revoked_at ? "revoked" : i.uses >= i.max_uses ? "used up" : i.expires_at <= now() ? "expired" : "live";
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      invites: results.map((i) => ({
+        code: i.code,
+        createdAt: iso(i.created_at),
+        expiresAt: iso(i.expires_at),
+        uses: i.uses,
+        maxUses: i.max_uses,
+        createdBy: { id: i.created_by, name: i.creator_name },
+        ...(all ? { status: status(i), joined: joined.get(i.code) || [] } : {})
+      }))
+    }
+  };
+}
+
+// Revokes one invite code (admins only); "all" revokes every live code.
+export async function revokeInvite(c: Context<MemberEnv>, param: string): Promise<Outcome> {
+  const viewer = c.get("viewer");
+  if (viewer.role !== "admin") return refusal(403, ADMINS_ONLY);
+  if (param.toLowerCase() === "all") {
+    await revokeAllInvites(c.env.DB, viewer.organization_id);
+    return { status: 200, body: { ok: true } };
+  }
+  const code = normalizeInviteCode(param);
+  const result = code
+    ? await c.env.DB.prepare("UPDATE invites SET revoked_at = unixepoch() WHERE code = ? AND organization_id = ? AND revoked_at IS NULL")
+        .bind(code, viewer.organization_id)
+        .run()
+    : null;
+  if (!result?.meta.changes) return refusal(404, "No such live invite code in this workspace.");
+  return { status: 200, body: { ok: true } };
+}
+
+export interface MemberInfo {
+  id: string;
+  name: string;
+  email: string;
+  role: string | null;
+  joinedAt: string | null;
+}
+
+// Everyone in the caller's workspace, live from WorkOS. Any member may list
+// them (they share every artifact anyway).
+export async function listMembers(c: Context<MemberEnv>): Promise<Outcome<{ members: MemberInfo[] }>> {
+  const viewer = c.get("viewer");
+  const { client } = workos(c.get("config"));
+  const organizationId = viewer.organization_id;
+  const [users, memberships] = await Promise.all([
+    allPages((after) => client.userManagement.listUsers({ organizationId, limit: 100, after })),
+    activeMemberships(c, organizationId)
+  ]);
+  const byUser = new Map(memberships.map((m) => [m.userId, m]));
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      members: users
+        .filter((u) => byUser.has(u.id))
+        .map((u) => ({ id: u.id, name: displayName(u), email: u.email, role: byUser.get(u.id)?.role?.slug || null, joinedAt: byUser.get(u.id)?.createdAt || null }))
+    }
+  };
+}
+
+// Removes a member (admins only). Access ends on their next request, and
+// every invite code issued until now is revoked (they may hold one).
+// Not budgeted (src/budget.ts), so an admin can always remove someone: a
+// refusal is answered before the lock, and so writes nothing.
+export async function removeMember(c: Context<MemberEnv>, userId: string, surface: Surface = "cli"): Promise<Outcome<{ invitesRevoked: true }>> {
+  const viewer = c.get("viewer");
+  if (viewer.role !== "admin") return refusal(403, ADMINS_ONLY);
+  if (!userId) return refusal(404, "Not a member.");
+  if (userId === viewer.account_id) {
+    return refusal(
+      422,
+      surface === "web"
+        ? "You cannot remove yourself. To leave this workspace, use Leave workspace in its settings."
+        : "You cannot remove yourself. To leave this workspace, run: htmlartifact workspace leave"
+    );
+  }
+  const refuse = (members: Membership[]) => {
+    if (!isAdminIn(members, viewer.account_id)) return refusal(403, ADMINS_ONLY);
+    const membership = members.find((m) => m.userId === userId);
+    if (!membership) return refusal(404, "Not a member.");
+    if (membership.role?.slug === "admin" && !hasOtherAdmin(members, userId)) return refusal(422, LAST_ADMIN);
+    return null;
+  };
+  const refused = refuse(await activeMemberships(c, viewer.organization_id));
+  if (refused) return refused;
+  return withAdminLock(c, viewer.organization_id, async (members, hold): Promise<Outcome<{ invitesRevoked: true }>> => {
+    const refusedNow = refuse(members);
+    if (refusedNow) return refusedNow;
+    const membership = members.find((m) => m.userId === userId)!;
+    await endMembership(c, userId, viewer.organization_id, membership.id, hold);
+    return { status: 200, body: { ok: true, invitesRevoked: true } };
+  });
+}
+
+// Makes a member an admin, or an admin a member (admins only). A workspace
+// always keeps at least one admin.
+export async function setMemberRole(c: Context<MemberEnv>, userId: string, role: unknown): Promise<Outcome<{ role: "admin" | "member"; unchanged: boolean }>> {
+  const viewer = c.get("viewer");
+  if (viewer.role !== "admin") return refusal(403, ADMINS_ONLY);
+  if (!userId) return refusal(404, "Not a member.");
+  if (role !== "admin" && role !== "member") return refusal(422, 'role must be "admin" or "member".');
+  return withAdminLock(c, viewer.organization_id, async (members, hold): Promise<Outcome<{ role: "admin" | "member"; unchanged: boolean }>> => {
+    if (!isAdminIn(members, viewer.account_id)) return refusal(403, ADMINS_ONLY);
+    const membership = members.find((m) => m.userId === userId);
+    if (!membership) return refusal(404, "Not a member.");
+    const unchanged = (membership.role?.slug || "member") === role;
+    if (!unchanged && role === "member" && !hasOtherAdmin(members, userId)) return refusal(422, LAST_ADMIN);
+    const config = c.get("config");
+    const db = c.env.DB;
+    if (!unchanged) {
+      await hold();
+      await workos(config).client.userManagement.updateOrganizationMembership(membership.id, { roleSlug: role });
+      // After the change: a re-check that started earlier may not cache the old role.
+      await bumpMembershipEpoch(db, userId, viewer.organization_id);
+    }
+    if (role === "member") {
+      // What only an admin could create ends with the role. Also when
+      // unchanged: a retry finishes what a failed demotion left.
+      await revokeInvitesBy(db, userId, viewer.organization_id);
+      await revokeCiKeysBy(db, userId, viewer.organization_id);
+      await revokePortalLinks(config, viewer.organization_id, userId);
+    }
+    return { status: 200, body: { ok: true, role, unchanged } };
+  });
+}
+
+// Leaves the caller's current workspace. Its last admin cannot leave: they
+// make someone else an admin first, or delete the workspace.
+export async function leaveWorkspace(
+  c: Context<MemberEnv>,
+  surface: Surface = "cli"
+): Promise<Outcome<{ workspace: ReturnType<typeof workspaceJson>; yourInvitesRevoked: number }>> {
+  const viewer = c.get("viewer");
+  if (viewer.is_api_key) return refusal(403, "API keys cannot leave workspaces.");
+  return withAdminLock(c, viewer.organization_id, async (members, hold): Promise<Outcome<{ workspace: ReturnType<typeof workspaceJson>; yourInvitesRevoked: number }>> => {
+    const membership = members.find((m) => m.userId === viewer.account_id);
+    if (!membership) return refusal(404, "Not a member.");
+    if (membership.role?.slug === "admin" && !hasOtherAdmin(members, viewer.account_id)) {
+      return refusal(
+        422,
+        surface === "web"
+          ? `You are the last admin of "${viewer.workspace.name}". Make someone else an admin first, or delete the workspace.`
+          : `You are the last admin of "${viewer.workspace.name}". Make someone else an admin first (htmlartifact workspace promote <email>), or delete the workspace (htmlartifact workspace delete).`
+      );
+    }
+    const yourInvitesRevoked = await endMembership(c, viewer.account_id, viewer.organization_id, membership.id, hold, { leaving: true });
+    return { status: 200, body: { ok: true, workspace: workspaceJson(viewer.workspace), yourInvitesRevoked } };
+  });
+}
+
+// Deletes the caller's current workspace (admins only), confirmed by its
+// exact name: access ends at once (the tombstone is written in the same D1
+// transaction that drops every row), then R2 and the WorkOS organization
+// are deleted in this request. Anything that fails stays queued for the
+// ops Worker's cron.
+export async function deleteWorkspace(
+  c: Context<MemberEnv>,
+  confirm: unknown,
+  surface: Surface = "cli"
+): Promise<Outcome<{ workspace: ReturnType<typeof workspaceJson> }>> {
+  const viewer = c.get("viewer");
+  if (viewer.role !== "admin") return refusal(403, ADMINS_ONLY);
+  const { workspace } = viewer;
+  if (confirm !== workspace.name) {
+    return refusal(
+      400,
+      surface === "web"
+        ? `Type the workspace's exact name, ${workspace.name}, to delete it and every artifact in it.`
+        : `To delete this workspace and every artifact in it, send {"confirm": ${JSON.stringify(workspace.name)}} (its exact name). This cannot be undone.`
+    );
+  }
+  await c.env.DB.batch(deleteWorkspaceStatements(c.env.DB, viewer.organization_id));
+  await runWorkspaceDeletions(c.env, viewer.organization_id);
+  return { status: 200, body: { ok: true, workspace: workspaceJson(workspace) } };
+}
+
 // requireUser and requireMember set `viewer`; their context types tell the
 // handlers after them that it is there (UserEnv, MemberEnv).
 async function requireUser(c: Context<UserEnv>, next: Next): Promise<Response | void> {
@@ -899,11 +993,11 @@ class LeaseLost extends Error {}
 // wedge the workspace; `run` calls `hold()`
 // right before each WorkOS change, which renews the lease or, if it lapsed
 // (another request may have acted since), stops the change with a 409.
-async function withAdminLock<E extends AppEnv>(
+async function withAdminLock<E extends AppEnv, T extends object>(
   c: Context<E>,
   organizationId: string,
-  run: (members: Membership[], hold: () => Promise<void>) => Promise<Response>
-): Promise<Response> {
+  run: (members: Membership[], hold: () => Promise<void>) => Promise<Outcome<T>>
+): Promise<Outcome<T>> {
   const db = c.env.DB;
   const holder = crypto.randomUUID();
   const deadline = Date.now() + ADMIN_LOCK_WAIT_MS;
@@ -919,7 +1013,7 @@ async function withAdminLock<E extends AppEnv>(
       .first<{ holder: string }>();
     if (claimed?.holder === holder) break;
     if (Date.now() >= deadline) {
-      return c.json({ ok: false, error: "Another member change in this workspace is in progress. Try again in a moment." }, 409);
+      return refusal(409, "Another member change in this workspace is in progress. Try again in a moment.");
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(100 * 2 ** attempt, 800) * (0.5 + Math.random())));
   }
@@ -942,7 +1036,7 @@ async function withAdminLock<E extends AppEnv>(
     return await run(await activeMemberships(c, organizationId), hold);
   } catch (error) {
     if (!(error instanceof LeaseLost)) throw error;
-    return c.json({ ok: false, error: "That took too long and another member change may have happened meanwhile. Try again." }, 409);
+    return refusal(409, "That took too long and another member change may have happened meanwhile. Try again.");
   } finally {
     clearInterval(heartbeat);
     // A failed release only delays the next change until the lease expires.
@@ -1025,7 +1119,7 @@ async function stillAdmin(c: Context<MemberEnv>, viewer: MemberViewer): Promise<
 
 async function requireAdmin(c: Context<MemberEnv>, next: Next): Promise<Response | void> {
   if (c.get("viewer").role !== "admin") {
-    return c.json({ ok: false, error: "Only workspace admins can do that." }, 403);
+    return c.json({ ok: false, error: ADMINS_ONLY }, 403);
   }
   return next();
 }
@@ -1418,7 +1512,7 @@ function uploadRows(c: Context<MemberEnv>, pages: { bytes: number }[]): number {
  * Why `rows` more D1 rows don't fit today's budgets (the workspace's share
  * first, when there is a workspace), or null once they are reserved.
  */
-async function overDailyBudget<E extends AppEnv>(c: Context<E>, organizationId: string | null, rows: number, what: string): Promise<string | null> {
+export async function overDailyBudget<E extends AppEnv>(c: Context<E>, organizationId: string | null, rows: number, what: string): Promise<string | null> {
   const { workspaceRowsPerDay, rowsPerDay } = c.get("config").limits;
   if (organizationId && !(await reserveBudget(c.env.DB, `d1:rows:${organizationId}`, rows, workspaceRowsPerDay))) {
     return `This workspace has reached today's ${what} limit.`;
@@ -1438,9 +1532,9 @@ function dailyBudgetSpent<E extends AppEnv>(c: Context<E>, over: string): Respon
 // budget rows included): a grant (an invite or a CI key, and the re-check's
 // revoke), a new workspace, a role change (lock, epoch, cache, revocations)
 // and a join (epoch, cache, join and invite rows).
-const GRANT_ROWS = 2 * (2 + 2);
+export const GRANT_ROWS = 2 * (2 + 2);
 export const WORKSPACE_ROWS = 2 * (1 + 2);
-const MEMBER_CHANGE_ROWS = 2 * (8 + 2);
+export const MEMBER_CHANGE_ROWS = 2 * (8 + 2);
 const JOIN_ROWS = 2 * (6 + 2);
 
 /**
@@ -1477,7 +1571,7 @@ async function storageFull(c: Context<MemberEnv>, bytes: number): Promise<Respon
   return reading;
 }
 
-async function workspaceUsage<E extends AppEnv>(c: Context<E>, organizationId: string): Promise<WorkspaceUsage> {
+export async function workspaceUsage<E extends AppEnv>(c: Context<E>, organizationId: string): Promise<WorkspaceUsage> {
   const limitBytes = c.get("config").limits.workspaceBytes;
   const storedBytes = await workspaceStoredBytes(c.env.DB, organizationId);
   return { storedBytes, limitBytes, remainingBytes: Math.max(0, limitBytes - storedBytes) };

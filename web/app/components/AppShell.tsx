@@ -3,19 +3,24 @@ import { Menu } from "@base-ui/react/menu";
 import { Command, useCommandState } from "cmdk";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "../lib/cx";
+import { matchesAll, words } from "../lib/search";
 import type { ArtifactSummary, Session } from "../page";
 import { ChevronUpDown, CloseIcon, SearchIcon } from "./icons";
 import { Logo } from "./Logo";
+import { menuItem, menuPopup } from "./menu";
+import { Notice } from "./Notice";
 import { Seal } from "./Seal";
 import { Rule } from "./Sheet";
 import { REPO_URL } from "./SiteHeader";
 import { SkipLink } from "./SkipLink";
 import { ThemeToggle } from "./ThemeToggle";
 
-type Section = "feed" | "mine" | "workspaces" | null;
+type Section = "feed" | "mine" | "workspaces" | "people" | "settings" | null;
 
-// Signed-in pages: the workspace you're in, its two views (everything, and
-// yours), search, and the account menu. Pages render inside <main id="main">.
+// Signed-in pages: the workspace you're in (its menu: people, settings,
+// switching), its two views (everything, and yours), search, and the account
+// menu. Pages render inside <main id="main">, under a one-time notice when
+// the server sent one.
 export function AppShell({
   session,
   section,
@@ -72,7 +77,7 @@ export function AppShell({
               <span aria-hidden className="mx-2 text-[18px] font-light text-border">
                 /
               </span>
-              <WorkspacePill name={workspace.name} id={workspace.id} current={section === "workspaces"} />
+              <WorkspaceMenu session={session} section={section} />
             </div>
           )}
           <nav aria-label="Workspace" className="ml-4 hidden h-full items-stretch gap-1 md:flex">
@@ -108,7 +113,7 @@ export function AppShell({
           <div className="mx-auto flex h-11 max-w-[1040px] items-stretch gap-3 border-x border-line px-4">
             {workspace && (
               <div className="flex min-w-0 flex-1 items-center">
-                <WorkspacePill name={workspace.name} id={workspace.id} current={section === "workspaces"} compact />
+                <WorkspaceMenu session={session} section={section} compact />
               </div>
             )}
             <nav aria-label="Workspace" className="flex shrink-0 items-stretch gap-1">
@@ -118,6 +123,7 @@ export function AppShell({
         </div>
       </header>
       <main id="main" tabIndex={-1} className="flex flex-1 flex-col outline-none">
+        {session.notice && <Notice notice={session.notice} />}
         {children}
       </main>
       <Palette open={paletteOpen} onOpenChange={setPaletteOpen} artifacts={artifacts} session={session} section={section} />
@@ -125,29 +131,60 @@ export function AppShell({
   );
 }
 
-// The workspace you're in; opens the list to switch, create or join.
-// `compact` (the phone row): no divider and no seal, so the name gets the room.
-function WorkspacePill({ name, id, current, compact = false }: { name: string; id: string; current: boolean; compact?: boolean }) {
+// The workspace you're in, and everything about it: its people (and, for
+// admins, inviting), its settings, and the way to another workspace.
+// `compact` (the phone row): no seal, so the name gets the room.
+function WorkspaceMenu({ session, section, compact = false }: { session: Session; section: Section; compact?: boolean }) {
+  const workspace = session.workspace!;
+  const here = section === "people" || section === "settings" || section === "workspaces";
   return (
-    <a
-      href="/workspaces"
-      aria-current={current ? "page" : undefined}
-      title="Switch workspace"
-      className="press group -ml-1.5 flex h-8 min-w-0 max-w-full items-center gap-2 rounded-control px-1.5 text-[14px] text-foreground hover:bg-surface aria-[current=page]:bg-surface md:max-w-[15rem]"
-    >
-      {!compact && <Seal id={id} size={16} />}
-      <span className="truncate">{name}</span>
-      <span className="sr-only">: switch workspace</span>
-      <ChevronUpDown className="size-3.5 shrink-0 text-faint group-hover:text-foreground" />
-    </a>
+    <Menu.Root>
+      <Menu.Trigger
+        data-current={here || undefined}
+        className="press group -ml-1.5 flex h-8 min-w-0 max-w-full items-center gap-2 rounded-control px-1.5 text-[14px] text-foreground hover:bg-surface data-current:bg-surface data-popup-open:bg-surface md:max-w-[15rem]"
+      >
+        {!compact && <Seal id={workspace.id} size={16} />}
+        <span className="truncate">{workspace.name}</span>
+        <span className="sr-only">: workspace menu</span>
+        <ChevronUpDown className="size-3.5 shrink-0 text-faint group-hover:text-foreground" />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner sideOffset={8} align="start" className="z-40 outline-none">
+          <Menu.Popup className={cx(menuPopup, "w-64")}>
+            <div className="flex items-start gap-2.5 px-2.5 pb-2 pt-1.5">
+              <Seal id={workspace.id} size={20} />
+              <div className="min-w-0">
+                <p className="text-[14px] font-medium leading-snug text-foreground [overflow-wrap:anywhere]">{workspace.name}</p>
+                <p className="font-mono text-[12px] text-muted">{session.role === "admin" ? "You're an admin" : "You're a member"}</p>
+              </div>
+            </div>
+            <Menu.Separator className="-mx-1 my-1 h-px bg-line" />
+            {session.role === "admin" && (
+              <Menu.LinkItem href="/people#links" className={menuItem}>
+                Invite people
+              </Menu.LinkItem>
+            )}
+            <Menu.LinkItem href="/people" aria-current={section === "people" ? "page" : undefined} className={menuItem}>
+              People
+            </Menu.LinkItem>
+            <Menu.LinkItem href="/settings" aria-current={section === "settings" ? "page" : undefined} className={menuItem}>
+              Settings
+            </Menu.LinkItem>
+            <Menu.Separator className="-mx-1 my-1 h-px bg-line" />
+            <Menu.LinkItem href="/workspaces" aria-current={section === "workspaces" ? "page" : undefined} className={menuItem}>
+              Switch, create or join a workspace
+            </Menu.LinkItem>
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
   );
 }
 
 function AccountMenu({ session }: { session: Session }) {
   const signOut = useRef<HTMLFormElement>(null);
   const initial = (session.name || session.email || "?").trim().charAt(0).toUpperCase();
-  const item =
-    "flex h-8 cursor-default select-none items-center rounded-[6px] px-2.5 text-[14px] text-muted outline-none data-highlighted:bg-surface data-highlighted:text-foreground forced-colors:data-highlighted:outline-2 forced-colors:data-highlighted:outline-solid forced-colors:data-highlighted:-outline-offset-2 forced-colors:data-highlighted:outline-[Highlight]";
+  const item = menuItem;
   return (
     <>
       <form ref={signOut} method="post" action="/auth/sign-out" hidden />
@@ -160,7 +197,7 @@ function AccountMenu({ session }: { session: Session }) {
         </Menu.Trigger>
         <Menu.Portal>
           <Menu.Positioner sideOffset={8} align="end" className="z-40 outline-none">
-            <Menu.Popup className="max-h-[var(--available-height)] w-60 origin-[var(--transform-origin)] overflow-y-auto rounded-card bg-card p-1 shadow-pop outline-none forced-colors:border forced-colors:border-[CanvasText] transition-[scale,opacity] duration-150 ease-out data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0">
+            <Menu.Popup className={cx(menuPopup, "w-60")}>
               <div className="px-2.5 pb-2 pt-1.5">
                 <p className="text-[14px] font-medium text-foreground [overflow-wrap:anywhere]">{session.name}</p>
                 {session.email && <p className="font-mono text-[12px] text-muted [overflow-wrap:anywhere]">{session.email}</p>}
@@ -173,7 +210,7 @@ function AccountMenu({ session }: { session: Session }) {
                 Docs
               </Menu.LinkItem>
               <Menu.LinkItem href={REPO_URL} className={item}>
-                GitHub
+                Source
               </Menu.LinkItem>
               <Menu.Separator className="-mx-1 my-1 h-px bg-line" />
               <Menu.Item className={item} onClick={() => signOut.current?.requestSubmit()}>
@@ -231,7 +268,7 @@ function Palette({
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/40 dark:bg-black/60" />
         <Dialog.Popup initialFocus={input} className="fixed left-1/2 top-[max(12px,12vh)] z-50 w-[min(560px,calc(100vw-24px))] -translate-x-1/2 overflow-hidden rounded-card bg-card shadow-pop outline-none forced-colors:border forced-colors:border-[CanvasText]">
           <Dialog.Title className="sr-only">Search artifacts</Dialog.Title>
-          <Command label="Search artifacts" loop>
+          <Command label="Search artifacts" loop filter={(value, search, keywords) => (matchesAll(words(search), [value, ...(keywords ?? [])]) ? 1 : 0)}>
             <div className="flex items-center gap-3 border-b border-line px-4">
               <SearchIcon className="size-4 shrink-0 text-muted" />
               <Command.Input
@@ -256,7 +293,13 @@ function Palette({
               {artifacts && artifacts.length > 0 && (
                 <Command.Group heading={section === "mine" ? "Your artifacts on this page" : "Artifacts on this page"} className={heading}>
                   {artifacts.map((a) => (
-                    <Command.Item key={a.id} value={`${a.title} ${a.author ?? ""} ${a.repo ?? ""} ${a.id}`} onSelect={() => go(a.url)} className={item}>
+                    <Command.Item
+                      key={a.id}
+                      value={a.id}
+                      keywords={[a.title, a.description ?? "", a.author ?? "", a.repo ?? ""]}
+                      onSelect={() => go(a.url)}
+                      className={item}
+                    >
                       <Seal id={a.id} size={22} />
                       <span className="min-w-0 flex-1 truncate">{a.title || "Untitled"}</span>
                       {a.author && <span className="max-w-[40%] shrink-0 truncate text-[12.5px] text-muted">{a.author}</span>}
@@ -264,9 +307,9 @@ function Palette({
                   ))}
                 </Command.Group>
               )}
-              {!artifacts && workspace && query.trim() && (
-                <Command.Group heading="Artifacts" className={heading}>
-                  <Command.Item value={`search ${query}`} onSelect={() => go(`/?q=${encodeURIComponent(query.trim())}`)} className={cx(item, "h-auto min-h-11 py-2")}>
+              {(!artifacts || section === "mine") && workspace && query.trim() && (
+                <Command.Group heading={artifacts ? "Everyone's artifacts" : "Artifacts"} className={heading} forceMount>
+                  <Command.Item value="search-workspace" forceMount onSelect={() => go(`/?q=${encodeURIComponent(query.trim())}`)} className={cx(item, "h-auto min-h-11 py-2")}>
                     <SearchIcon className="size-4 shrink-0 text-muted" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate">Filter newest artifacts for “{query.trim()}”</span>
@@ -287,6 +330,16 @@ function Palette({
                 {workspace && (
                   <Command.Item value="mine my artifacts" onSelect={() => go("/mine")} className={item}>
                     My artifacts
+                  </Command.Item>
+                )}
+                {workspace && (
+                  <Command.Item value="people members team invite admins roles" onSelect={() => go("/people")} className={item}>
+                    People
+                  </Command.Item>
+                )}
+                {workspace && (
+                  <Command.Item value="settings storage leave delete workspace" onSelect={() => go("/settings")} className={item}>
+                    Settings
                   </Command.Item>
                 )}
                 <Command.Item value="workspaces switch create join" onSelect={() => go("/workspaces")} className={item}>

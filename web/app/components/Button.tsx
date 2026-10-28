@@ -11,6 +11,9 @@ const button = cva(
         ink: "bg-foreground text-background hover:bg-foreground/85",
         intaglio: "bg-foreground text-background hover:bg-foreground/85",
         line: "border border-border bg-card text-foreground hover:bg-surface",
+        // Ends something for good (removing a person, deleting a workspace):
+        // red means "you lose access" here as it does on the 404.
+        danger: "border border-deny/45 bg-card text-deny hover:bg-deny-wash",
         ghost: "text-muted hover:bg-surface hover:text-foreground"
       },
       size: {

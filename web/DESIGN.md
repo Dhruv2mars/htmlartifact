@@ -11,7 +11,12 @@ Read before touching anything in `web/`, `src/render-web.ts` or `src/render.ts`.
   specs; they trust precision and distrust decoration.
 - **Job.** Landing: in five seconds, "my agent's HTML becomes a private link for
   my team, in one command", then copy `npx htmlartifact login`. App: find the
-  artifact, open it, see its versions, share the link. Nothing else competes.
+  artifact, open it, see its versions, share the link; and, for whoever runs
+  the workspace, get people in and out (invite links, roles, leaving) without
+  a terminal. Nothing else competes.
+- **Changes that end something** (a role, a membership, a workspace) get their
+  own page first: what will happen, from live counts, then one button. What a
+  change did is said once, in a ruled notice row under the header.
 
 ## Philosophy: under seal
 

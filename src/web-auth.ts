@@ -1,13 +1,16 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Context } from "hono";
+import type { Notice } from "../web/app/page.ts";
 import type { AppEnv } from "./types.ts";
 
 export const SESSION_COOKIE = "htmlartifact_session";
 const AUTH_STATE_COOKIE = "htmlartifact_auth_state";
+const NOTICE_COOKIE = "htmlartifact_notice";
 // The cookie only carries the WorkOS sealed session; WorkOS decides how long
 // the session really lives.
 const SESSION_COOKIE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const AUTH_STATE_TTL_SECONDS = 10 * 60;
+const NOTICE_TTL_SECONDS = 60;
 
 // The sign-in state carried through the WorkOS redirect.
 export interface AuthState {
@@ -65,6 +68,24 @@ export function clearAuthStateCookie(secure: boolean): string {
 export function readAuthState<E extends AppEnv>(c: Context<E>, secret: string): AuthState | null {
   const token = readCookie(c, AUTH_STATE_COOKIE);
   return token ? verifyToken<AuthState>(token, secret) : null;
+}
+
+// What a form post did, said once on the page it redirects to ("Priya is now
+// an admin."). Signed, so a page only ever shows this server's words, and
+// bound to the account, so nobody else signing in on that browser sees it.
+
+export function noticeCookie(notice: Notice, accountId: string, secret: string, secure: boolean): string {
+  return serializeCookie(NOTICE_COOKIE, signToken({ ...notice, to: accountId }, secret, NOTICE_TTL_SECONDS), NOTICE_TTL_SECONDS, secure);
+}
+
+// The notice for this account, if any, cleared as it is read.
+export function takeNotice<E extends AppEnv>(c: Context<E>, accountId: string, secret: string, secure: boolean): Notice | null {
+  const token = readCookie(c, NOTICE_COOKIE);
+  if (!token) return null;
+  c.header("Set-Cookie", serializeCookie(NOTICE_COOKIE, "", 0, secure), { append: true });
+  const notice = verifyToken<Notice & { to: string }>(token, secret);
+  if (!notice || notice.to !== accountId || (notice.tone !== "done" && notice.tone !== "problem") || typeof notice.text !== "string") return null;
+  return { tone: notice.tone, text: notice.text, ...(typeof notice.fresh === "string" ? { fresh: notice.fresh } : {}) };
 }
 
 export function readCookie<E extends AppEnv>(c: Context<E>, name: string): string | null {

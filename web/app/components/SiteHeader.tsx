@@ -1,12 +1,13 @@
 import type { Session } from "../page";
 import { ButtonLink } from "./Button";
-import { GitHubIcon } from "./icons";
 import { Logo } from "./Logo";
 import { Rule, type SheetWidth } from "./Sheet";
 import { SkipLink } from "./SkipLink";
 import { ThemeToggle } from "./ThemeToggle";
 
-export const REPO_URL = "https://github.com/Dhruv2mars/htmlartifact";
+// The source lives on Entire (public, browsable signed out).
+export const REPO_URL = "https://entire.com/et/dhruv2mars/htmlartifact";
+export const SECURITY_URL = `${REPO_URL}/files/SECURITY.md`;
 
 // The public pages' header (landing, docs, privacy): the sheet's first ruled
 // row, sticky, so sign-in and the theme stay in reach on long pages.
@@ -37,9 +38,8 @@ export function SiteHeader({
           <a href="/docs" aria-current={current === "docs" ? "page" : undefined} className={`${link} max-[359px]:hidden`}>
             Docs
           </a>
-          <a href={REPO_URL} className={`${link} hidden items-center gap-1.5 sm:inline-flex`}>
-            <GitHubIcon className="size-3.5" />
-            GitHub
+          <a href={REPO_URL} className={`${link} hidden sm:inline-flex`}>
+            Source
           </a>
         </nav>
         <div className="ml-auto flex items-center gap-1">
@@ -66,9 +66,9 @@ export function SiteFooter({ width = "site" }: { width?: SheetWidth }) {
       <Logo />
       <nav aria-label="Footer" className="flex flex-wrap gap-x-5 gap-y-2 sm:ml-4">
         <a className={link} href="/docs">Docs</a>
-        <a className={link} href={REPO_URL}>GitHub</a>
+        <a className={link} href={REPO_URL}>Source</a>
         <a className={link} href="https://www.npmjs.com/package/htmlartifact">npm</a>
-        <a className={link} href={`${REPO_URL}/blob/main/SECURITY.md`}>Security</a>
+        <a className={link} href={SECURITY_URL}>Security</a>
         <a className={link} href="/privacy">Privacy</a>
       </nav>
       <p className="font-mono text-[12.5px] text-muted sm:ml-auto">MIT licensed</p>

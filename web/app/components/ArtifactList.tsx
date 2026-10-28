@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { matchesAll, words } from "../lib/search";
 import type { ArtifactSummary } from "../page";
 import { SearchIcon } from "./icons";
 import { Seal } from "./Seal";
@@ -32,10 +33,9 @@ export function ArtifactList({
   // browser renders the rest right after hydration.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
-  const q = useDeferredValue(query.trim().toLowerCase());
-  const shown = q
-    ? artifacts.filter((a) => [a.title, a.description, a.author, a.repo, a.id].some((v) => v?.toLowerCase().includes(q)))
-    : artifacts;
+  const q = useDeferredValue(query.trim());
+  const terms = words(q);
+  const shown = terms.length ? artifacts.filter((a) => matchesAll(terms, [a.title, a.description, a.author, a.repo, a.id])) : artifacts;
   const rows = hydrated ? shown : shown.slice(0, SERVER_ROWS);
   const field = useRef<HTMLInputElement>(null);
 
