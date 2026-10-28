@@ -44,8 +44,9 @@ export interface Env {
   HTMLARTIFACT_ENGAGE_ROWS_PER_WORKSPACE_DAY?: string;
   HTMLARTIFACT_OPS_ROWS_PER_DAY?: string;
   HTMLARTIFACT_OPS_ROWS_PER_WORKSPACE_DAY?: string;
-  // The oldest CLI that may upload (src/cli-version.ts).
+  // The oldest CLI that may upload, and the newest on npm (src/cli-version.ts).
   HTMLARTIFACT_MIN_CLI_VERSION?: string;
+  HTMLARTIFACT_LATEST_CLI_VERSION?: string;
   // Service binding to the ops Worker's `Ops` entrypoint (src/ops.ts). When
   // absent (local dev, tests), rate limits fall back to an in-memory window.
   OPS?: OpsService;
@@ -80,6 +81,7 @@ export interface Config {
     budgets: Record<BudgetScope, ScopeBudget>;
   };
   minCliVersion: string;
+  latestCliVersion: string;
   workos: {
     apiKey: string;
     clientId: string;

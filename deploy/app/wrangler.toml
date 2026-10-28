@@ -10,6 +10,9 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 HTMLARTIFACT_PUBLIC_BASE_URL = "https://htmlartifact.pages.dev"
 HTMLARTIFACT_SANDBOX_ORIGIN = "https://htmlartifact-usercontent.pages.dev"
+# The newest CLI on npm: older ones get a `cli_outdated` notice. Raise it once
+# a release is published (CONTRIBUTING.md: Releasing).
+HTMLARTIFACT_LATEST_CLI_VERSION = "0.2.2"
 
 [[d1_databases]]
 binding = "DB"
@@ -31,6 +34,7 @@ entrypoint = "Ops"
 [env.preview.vars]
 HTMLARTIFACT_PUBLIC_BASE_URL = "https://staging.htmlartifact.pages.dev"
 HTMLARTIFACT_SANDBOX_ORIGIN = "https://staging.htmlartifact-usercontent.pages.dev"
+HTMLARTIFACT_LATEST_CLI_VERSION = "0.2.2"
 
 [[env.preview.d1_databases]]
 binding = "DB"

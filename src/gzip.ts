@@ -84,9 +84,8 @@ function gunzipMember(bytes: Uint8Array, maxBytes: number): Uint8Array | "too-la
   const trailer = new DataView(bytes.buffer, bytes.byteOffset + end, 8);
   const crc = trailer.getUint32(0, true);
   const size = trailer.getUint32(4, true);
-  // The trailer's length (mod 2^32) is checked again below; an honest stream
-  // that is too large is refused before inflating anything.
-  if (size > maxBytes) return "too-large";
+  // The trailer's length is not trusted for the limit (trailing junk would
+  // read as one): inflating stops at maxBytes instead.
   let inflated: Uint8Array;
   let consumed: number;
   try {

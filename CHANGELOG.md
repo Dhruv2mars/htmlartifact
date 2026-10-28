@@ -9,6 +9,15 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ### Added
 
+- `upload` sends pages gzip-compressed, and the server stores them that way:
+  a workspace's storage holds 3–7× more. The receipt has `storedBytes` (what
+  the quota counts). Uploads to servers that read no gzip fall back to plain
+  HTML.
+- Typed `notices` in the `upload` receipt, starting with `cli_outdated` (a
+  newer CLI exists). Servers refuse uploads from CLIs below their floor with
+  `cli_too_old` (HTTP 426, exit 1).
+- Workspace creation can close while the service is full for new teams
+  (`creation_closed`, HTTP 507); joining with an invite still works.
 - `upload` receipts list `changedFields` ("title", "description", "slug"):
   what an upload changed besides publishing a version.
 - `delete --yes`: an admin deleting an artifact someone else published must
@@ -19,6 +28,9 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ### Changed
 
+- Daily D1 write budgets count the rows D1 reports written, in three scopes
+  (uploads, social writes, admin changes), each with a per-workspace share:
+  spending one no longer stops the others.
 - The source moved to <https://entire.com/et/dhruv2mars/htmlartifact>. Report
   bugs by email to Dhruv2mars@gmail.com, and security problems as SECURITY.md
   says. Releases from now on have no npm provenance (CONTRIBUTING.md →

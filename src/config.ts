@@ -1,4 +1,4 @@
-import { MIN_CLI_VERSION } from "./cli-version.ts";
+import { LATEST_CLI_VERSION, MIN_CLI_VERSION } from "./cli-version.ts";
 import type { Config, Env } from "./types.ts";
 
 // Worker configuration, read from bindings (wrangler.toml vars + secrets).
@@ -82,8 +82,9 @@ export function getConfig(env: Env): Config {
           maxPages: Number(env.MAX_PAGES_PER_UPLOAD || 10)
         })
     },
-    // The oldest CLI that may upload (src/cli-version.ts).
+    // The oldest CLI that may upload, and the newest (src/cli-version.ts).
     minCliVersion: env.HTMLARTIFACT_MIN_CLI_VERSION || MIN_CLI_VERSION,
+    latestCliVersion: env.HTMLARTIFACT_LATEST_CLI_VERSION || LATEST_CLI_VERSION,
     workos: {
       apiKey,
       clientId,

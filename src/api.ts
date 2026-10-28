@@ -8,7 +8,7 @@ import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 import { formatBytes, formatIssue, type Issue, type PageInput } from "./html-policy-rules.ts";
 import { decodePages, type StoredBody } from "./gzip.ts";
 import { creationGate } from "./capacity.ts";
-import { LATEST_CLI_VERSION, cliVersion, compareVersions } from "./cli-version.ts";
+import { cliVersion, compareVersions } from "./cli-version.ts";
 import { validateUpload } from "./html-policy-server.ts";
 import { CI_KEY_PREFIX, newCiKeyId, newDraftId, newInternalId, newInviteCode, normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { draftUrl, slugProblem } from "./public-url.ts";
@@ -1408,10 +1408,11 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
   const warnings = [...validation.warnings];
   // Typed warnings for agents; each is in `warnings` too, which older CLIs print.
   const notices: { code: string; message: string; fix: string }[] = [];
-  if (client && compareVersions(client, LATEST_CLI_VERSION) < 0) {
+  const latest = c.get("config").latestCliVersion;
+  if (client && compareVersions(client, latest) < 0) {
     notices.push({
       code: "cli_outdated",
-      message: `htmlartifact ${client} is out of date: this server is ${LATEST_CLI_VERSION}.`,
+      message: `htmlartifact ${client} is out of date: the latest is ${latest}.`,
       fix: "npx htmlartifact@latest (or npm install -g htmlartifact@latest)"
     });
   }
@@ -1572,11 +1573,15 @@ function dailyBudgetSpent<E extends AppEnv>(c: Context<E>, over: string): Respon
   return c.json({ ok: false, code: "daily_budget", error: `${over} Try again after 00:00 UTC.` }, 429);
 }
 
-// D1 rows written per action, as measured locally (index entries and the
-// budget's own rows included; test/capacity.test.js measures them again and
-// fails if they drift). They are only what each action reserves up front:
-// the budget then settles to what D1 measured for that request.
-const MEASURED_UPLOAD_ROWS = { base: 6, newVersion: 14, page: 6, chunk: 3 };
+// D1 rows each action reserves up front (index entries and the budget's own
+// rows included); the budget then settles to what D1 measured for that
+// request, so these only decide what is refused before it runs.
+// An upload, as measured locally (test/capacity.test.js fails if it drifts;
+// 2026-10-28): 7 rows with unchanged content; a new artifact 12 more on D1
+// (19 in all: 10 for the version, 2 per extra page, 2 per D1 chunk), a new
+// version of one 14. A workspace's first upload of the day writes 4 more (its
+// budget and storage rows are new), so a new version reserves 14 + chunks.
+const MEASURED_UPLOAD_ROWS = { base: 7, newVersion: 14, page: 2, chunk: 2 };
 const GRANT_ROWS = 8;
 export const WORKSPACE_ROWS = 6;
 const MEMBER_CHANGE_ROWS = 20;

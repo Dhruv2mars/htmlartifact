@@ -7,7 +7,9 @@ import pkg from "../package.json" with { type: "json" };
 // header can be spoofed, so this only steers honest clients; other clients
 // (no such User-Agent) are not checked.
 
-// The version this server was built with: the newest CLI it knows.
+// The newest CLI: the version this server was built with, unless
+// HTMLARTIFACT_LATEST_CLI_VERSION says which is on npm (a server deployed
+// before its CLI is published must not send people to update to it).
 export const LATEST_CLI_VERSION: string = pkg.version;
 
 // The oldest CLI that may upload (HTMLARTIFACT_MIN_CLI_VERSION overrides it).

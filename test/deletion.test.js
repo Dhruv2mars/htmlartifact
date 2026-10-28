@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { gzipSync as zlibGzip } from "node:zlib";
 import { after, before, describe, test } from "node:test";
 import { getPlatformProxy, unstable_dev } from "wrangler";
 import {
@@ -1235,5 +1236,123 @@ describe("D1 Free quotas", () => {
     const [rewritten] = await rows("SELECT name, updated_at FROM accounts WHERE id = ?", alice.id);
     assert.equal(rewritten.name, profile.name);
     assert.ok(rewritten.updated_at > marker);
+  });
+});
+
+// The purge list (product plan v2: "every new table"): each table the app
+// keeps, and how a deletion reaches it. A table added without an entry here
+// fails the first test; each deletion is then checked by scanning every
+// column of every table for the deleted thing's ID, so a new table that
+// holds one and is missed by the purge fails too.
+const PURGE_LIST = {
+  accounts: "a user's cached profile: scrubbed by user.deleted (the row stays as the author of their artifacts)",
+  workspaces: "deleted with the workspace",
+  invites: "deleted with the workspace",
+  memberships: "deleted with the workspace; a removal deletes the user's row",
+  membership_epochs: "deleted with the workspace",
+  joins: "deleted with the workspace",
+  invite_joins: "deleted with the workspace",
+  workspace_usage: "deleted with the workspace; artifact deletes and prunes subtract from it",
+  revocations: "deleted with the workspace; a deleted user's stays (it is what keeps their old tokens out)",
+  drafts: "deleted with the artifact and the workspace",
+  draft_versions: "deleted with the artifact, the workspace, and by prune",
+  draft_pages: "deleted with their version",
+  ci_keys: "deleted with the workspace",
+  admin_locks: "deleted with the workspace; expires after 30 s",
+  departures: "deleted with the workspace; dropped after 5 min",
+  deleted_workspaces: "kept: the tombstone that stops a deleted workspace coming back",
+  daily_budget: "per day, not per thing: the cron drops days that are over",
+  pending_deletions: "the retry queue for objects: emptied once each deletion succeeds",
+  blobs: "artifact HTML on D1 storage: deleted with its version"
+};
+// Columns that may still name a deleted thing, and why.
+const KEPT = {
+  workspace: { deleted_workspaces: "the tombstone", daily_budget: "today's budget, keyed by workspace; dropped by the cron after the day" },
+  user: {
+    accounts: "the scrubbed author row",
+    drafts: "authorship of the workspace's artifacts",
+    draft_versions: "authorship",
+    revocations: "keeps their old tokens out"
+  }
+};
+
+describe("purge list", () => {
+  const tables = async () =>
+    (await rows("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' AND name <> 'd1_migrations'")).map(
+      (r) => r.name
+    );
+  // Rows per table with `needle` anywhere in any column.
+  async function mentions(needle) {
+    const found = {};
+    for (const table of await tables()) {
+      const columns = await rows("SELECT name FROM pragma_table_info(?)", table);
+      const where = columns.map((c) => `instr(CAST("${c.name}" AS TEXT), ?1) > 0`).join(" OR ");
+      const n = await count(`SELECT COUNT(*) FROM "${table}" WHERE ${where}`, needle);
+      if (n) found[table] = n;
+    }
+    return found;
+  }
+  const leftovers = async (needle, kept = {}) => Object.fromEntries(Object.entries(await mentions(needle)).filter(([table]) => !(table in kept)));
+
+  test("every table is on the purge list", async () => {
+    assert.deepEqual((await tables()).sort(), Object.keys(PURGE_LIST).sort(), "add the new table to PURGE_LIST, and its rows to the deletions that must remove them");
+  });
+
+  test("deleting an artifact, pruning, deleting a workspace (API and WorkOS) and user.deleted leave nothing behind", async () => {
+    let owner = await signInTokens(stack, "sam@new.test");
+    const created = await callApi(stack, owner.accessToken, "POST", "/api/workspaces", { name: "Purge Co" });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const org = created.body.workspace.id;
+    owner = await refreshInto(stack, owner, org);
+    const token = owner.accessToken;
+    // Something in every table a workspace has: artifacts with versions and
+    // pages, an invite used by a joiner, a CI key, a role change.
+    const invite = await callApi(stack, token, "POST", "/api/workspaces/invites", {});
+    let joiner = await signInTokens(stack, "nora@new.test");
+    assert.equal((await callApi(stack, joiner.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 200);
+    joiner = await refreshInto(stack, joiner, org);
+    const joinerUser = await findUser(stack.emulator, "nora@new.test");
+    assert.equal((await callApi(stack, token, "PATCH", `/api/workspaces/members/${joinerUser.id}`, { role: "admin" })).status, 200);
+    assert.equal((await callApi(stack, token, "POST", "/api/workspaces/api-keys", { name: "purge ci" })).status, 201);
+    const deck = (await upload(token, multiPage("Purge deck"))).body;
+    for (const n of [2, 3]) assert.equal((await upload(token, { ...multiPage(`Purge deck v${n}`), draftId: deck.draftId })).status, 200);
+    const gone = (await upload(joiner.accessToken, { gzip: Buffer.from(zlibGzip(page("Purge me"))).toString("base64") })).body;
+
+    // An artifact.
+    assert.ok(Object.keys(await mentions(gone.draftId)).length > 0);
+    assert.equal((await callApi(stack, joiner.accessToken, "DELETE", `/api/drafts/${gone.draftId}`)).status, 200);
+    assert.deepEqual(await leftovers(gone.draftId), {}, "an artifact delete");
+
+    // Pruned versions.
+    const versions = await rows("SELECT id FROM draft_versions WHERE draft_id = ? AND version_number < 3", deck.draftId);
+    assert.equal(versions.length, 2);
+    assert.equal((await callApi(stack, token, "DELETE", `/api/drafts/${deck.draftId}/versions?keepLatest=1`)).status, 200);
+    for (const { id } of versions) assert.deepEqual(await leftovers(id), {}, "a pruned version");
+
+    // The workspace.
+    assert.equal((await callApi(stack, token, "DELETE", "/api/workspaces/current", { confirm: "Purge Co" })).status, 200);
+    await eventually(async () => (await count("SELECT COUNT(*) FROM pending_deletions WHERE target LIKE ?", `%${org}%`)) === 0, "deletions drained", runCron);
+    assert.deepEqual(await leftovers(org, KEPT.workspace), {}, "a workspace delete");
+    assert.deepEqual(await leftovers(deck.draftId), {}, "its artifacts");
+
+    // A workspace deleted in WorkOS directly.
+    let olivia = await signInTokens(stack, "olivia@other.test", "Other");
+    const elsewhere = await callApi(stack, olivia.accessToken, "POST", "/api/workspaces", { name: "Purge Elsewhere" });
+    const org2 = elsewhere.body.workspace.id;
+    olivia = await refreshInto(stack, olivia, org2);
+    assert.equal((await upload(olivia.accessToken, { html: page("Short lived") })).status, 201);
+    assert.equal((await callApi(stack, olivia.accessToken, "POST", "/api/workspaces/invites", {})).status, 201);
+    await workosApi(stack.emulator, "DELETE", `/organizations/${org2}`);
+    await eventually(async () => Object.keys(await leftovers(org2, KEPT.workspace)).length === 0, `organization.deleted leaves nothing: ${JSON.stringify(await leftovers(org2, KEPT.workspace))}`);
+
+    // user.deleted: nothing personal stays; their ID only where KEPT says.
+    const bob = await accessToken(stack, "bob@acme.test", "Acme");
+    const bobUser = await findUser(stack.emulator, "bob@acme.test");
+    assert.equal((await upload(bob, { html: page("Bob's page") })).status, 201);
+    assert.ok((await mentions("bob@acme.test")).accounts, "the profile is cached");
+    const response = await sendWebhook(stack, { id: "event_purge_user_deleted", event: "user.deleted", data: { object: "user", id: bobUser.id, email: "bob@acme.test" } });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await mentions("bob@acme.test"), {}, "their email");
+    assert.deepEqual(await leftovers(bobUser.id, KEPT.user), {}, "user.deleted");
   });
 });
