@@ -104,7 +104,7 @@ gitHead` is the commit the latest version was built from).
    ```sh
    git fetch origin && git switch --detach origin/main
    bun run release -- --dry-run   # the gate, then npm publish --dry-run: lists the tarball
-   bun run release                # the gate (skipped if it passed on this commit), npm publish, tag vX.Y.Z on origin
+   bun run release                # the gate (skipped if it passed on this commit, here or in Buildkite), npm publish, tag vX.Y.Z on origin
    ```
 
    npm asks for your 2FA code. `release` refuses a version npm already has; if
