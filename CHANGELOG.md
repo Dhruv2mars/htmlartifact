@@ -7,6 +7,8 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-28
+
 ### Added
 
 - `upload` sends pages gzip-compressed, and the server stores them that way:
@@ -301,6 +303,7 @@ First release.
   sized to them.
 
 [Unreleased]: https://entire.com/et/dhruv2mars/htmlartifact/commits
+[0.3.0]: https://www.npmjs.com/package/htmlartifact/v/0.3.0
 [0.2.2]: https://www.npmjs.com/package/htmlartifact/v/0.2.2
 [0.2.1]: https://www.npmjs.com/package/htmlartifact/v/0.2.1
 [0.2.0]: https://www.npmjs.com/package/htmlartifact/v/0.2.0
