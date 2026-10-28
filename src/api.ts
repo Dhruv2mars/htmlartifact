@@ -1,7 +1,7 @@
 import type { Context, Hono, MiddlewareHandler, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomToken, sha256 } from "./crypto.ts";
-import { FLAGS, bumpMembershipEpoch, databaseUsage, findWorkspace, findWorkspaceByHandle, forgetDeparture, isRevoked, now, recordDeparture, revokeAllInvites, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
+import { FLAGS, allowBackRemoved, bumpMembershipEpoch, databaseUsage, findWorkspace, findWorkspaceByHandle, forgetDeparture, isRemoved, isRevoked, listRemovals, now, recordDeparture, recordRemoval, revokeAllInvites, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 // The Worker validates with the native HTMLRewriter (Workers Free CPU limits);
 // parse5 (src/html-policy.ts) stays in the CLI.
@@ -430,6 +430,16 @@ export function registerApi(app: Hono<AppEnv>): void {
     });
   });
 
+  // People removed from the workspace, and letting one back (admins only).
+  app.get("/api/workspaces/removed", requireMember, requireAdmin, perUser("removed", 60), async (c) => {
+    const { status, body } = await listRemoved(c);
+    return c.json(body, status);
+  });
+  app.delete("/api/workspaces/removed/:userId", requireMember, requireAdmin, perUser("allow-back", 30), async (c) => {
+    const { status, body } = await allowBack(c, c.req.param("userId") || "");
+    return c.json(body, status);
+  });
+
   // Makes a member an admin, or an admin a member (admins only). A workspace
   // always keeps at least one admin.
   app.patch("/api/workspaces/members/:userId", requireMember, requireAdmin, perUser("member-role", 30), writeBudget(MEMBER_CHANGE_ROWS), async (c) => {
@@ -659,7 +669,10 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
     c.header("Retry-After", String(secondsUntilUtcMidnight()));
     return { status: 429, body: { ok: false, error: `${over} Try again after 00:00 UTC.` } };
   }
-  const reserved = code
+  // Removed by an admin: no team link lets them back in until an admin allows
+  // them back. Answered as an invalid code, and no use is taken.
+  const removed = target ? await isRemoved(db, viewer.account_id, target.organization_id) : false;
+  const reserved = code && !removed
     ? await db
         .prepare(
           `UPDATE invites SET uses = uses + 1
@@ -734,9 +747,10 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
           .run();
         // A removal revokes codes before it deletes the membership, so a code
         // revoked while this join ran means someone was removed meanwhile (maybe
-        // this person): undo the join rather than race it.
+        // this person): undo the join rather than race it. So does a removal of
+        // this person recorded meanwhile (src/webhooks.ts checks the other way).
         const revoked = await db.prepare("SELECT revoked_at FROM invites WHERE code = ?").bind(code).first<{ revoked_at: number | null }>();
-        if (revoked?.revoked_at) {
+        if (revoked?.revoked_at || (await isRemoved(db, viewer.account_id, organizationId))) {
           await undoJoin(c.env, membershipId);
           return { status: 404, body: { ok: false, error: "That invite code is invalid, expired, or used up." } };
         }
@@ -765,6 +779,47 @@ export async function joinWithCode<E extends AppEnv>(c: Context<E>, viewer: View
       workspace: { id: organizationId, name: workspace?.name, handle: workspace?.handle }
     }
   };
+}
+
+// The status and JSON body of a workspace action.
+export type Outcome<T extends object = object> = { status: ContentfulStatusCode; body: ({ ok: true } & T) | { ok: false; error: string } };
+
+export interface RemovedInfo {
+  id: string;
+  name: string | null;
+  email: string | null;
+  removedAt: string;
+}
+
+/**
+ * People removed from the caller's workspace whom no team link lets back in,
+ * newest first (admins only). Leaving never puts anyone here. Exported for
+ * the web's People page (same-origin form routes), as is allowBack.
+ * @public
+ */
+export async function listRemoved(c: Context<MemberEnv>): Promise<Outcome<{ removed: RemovedInfo[] }>> {
+  const viewer = c.get("viewer");
+  if (viewer.role !== "admin") return { status: 403, body: { ok: false, error: "Only workspace admins can do that." } };
+  const rows = await listRemovals(c.env.DB, viewer.organization_id);
+  return {
+    status: 200,
+    body: { ok: true, removed: rows.map((r) => ({ id: r.user_id, name: r.name, email: r.email, removedAt: new Date(r.removed_ms).toISOString() })) }
+  };
+}
+
+/**
+ * Lets someone removed from the caller's workspace rejoin with a team link
+ * (admins only, asked live: it outlives the request). It admits no one by
+ * itself: they still need a live code.
+ * @public
+ */
+export async function allowBack(c: Context<MemberEnv>, userId: string): Promise<Outcome> {
+  const viewer = c.get("viewer");
+  if (viewer.role !== "admin" || !(await stillAdmin(c, viewer))) return { status: 403, body: { ok: false, error: "Only workspace admins can do that." } };
+  if (!userId || !(await allowBackRemoved(c.env.DB, userId, viewer.organization_id))) {
+    return { status: 404, body: { ok: false, error: "That person is not on this workspace's removed list." } };
+  }
+  return { status: 200, body: { ok: true } };
 }
 
 // requireUser and requireMember set `viewer`; their context types tell the
@@ -963,7 +1018,8 @@ async function withAdminLock<E extends AppEnv>(
 
 // Ends a membership (a removal, or leaving). Access ends on the next request.
 // A removal revokes every invite code the workspace issued until now: whoever
-// is removed may hold one. Leaving is the member's own choice, so the
+// is removed may hold one. It is also recorded, so the next team link doesn't
+// let them back in either, until an admin allows them back (allowBack). Leaving is the member's own choice, so the
 // workspace's codes keep working (one contributor leaving must not break an
 // open project's pinned invite link); an admin who leaves loses the codes they
 // issued, as on demotion (returns how many of theirs were live). `hold` is
@@ -990,7 +1046,9 @@ async function endMembership<E extends AppEnv>(
   await hold();
   try {
     // Right before the delete, so a leave that fails earlier leaves no marker.
+    // A removal is recorded before it too: no team link lets them back in.
     if (leaving) await recordDeparture(db, membershipId, organizationId);
+    else await recordRemoval(db, userId, organizationId, Date.now());
     await workos(c.get("config")).client.userManagement.deleteOrganizationMembership(membershipId);
   } catch (error) {
     if (leaving) {

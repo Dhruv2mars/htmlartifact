@@ -155,6 +155,16 @@ CREATE TABLE IF NOT EXISTS deleted_workspaces (
 );
 `;
 
+// Someone an admin removed (not someone who left), per workspace. Times are
+// milliseconds, so a removal right after an Allow back still counts.
+export const REMOVALS_SCHEMA = `CREATE TABLE IF NOT EXISTS removals (
+  user_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL,
+  removed_ms INTEGER NOT NULL,
+  allowed_ms INTEGER,
+  PRIMARY KEY (user_id, organization_id)
+)`;
+
 const ready = new WeakMap<D1Database, Promise<D1Result[]>>();
 
 // Runs the idempotent schema once per isolate and D1 binding.
@@ -164,7 +174,7 @@ export function ensureSchema(db: D1Database): Promise<D1Result[]> {
     const statements = SCHEMA.split(";")
       .map((statement) => statement.trim())
       .filter(Boolean)
-      .concat(PENDING_DELETIONS_SCHEMA, BLOBS_SCHEMA, DAILY_BUDGET_SCHEMA)
+      .concat(PENDING_DELETIONS_SCHEMA, BLOBS_SCHEMA, DAILY_BUDGET_SCHEMA, REMOVALS_SCHEMA)
       .map((statement) => db.prepare(statement));
     promise = db.batch(statements).catch((error: unknown) => {
       ready.delete(db);
@@ -442,6 +452,53 @@ export async function isDeparture(db: D1Database, membershipId: string, at: numb
     .bind(membershipId, at, DEPARTURE_SECONDS)
     .first();
   return Boolean(row);
+}
+
+// Removed by an admin (in our app or outside it), someone can't come back
+// through a team link until an admin allows them back (joinWithCode,
+// allowBack in src/api.ts). Both times only grow and the later one wins, so
+// late, repeated or out-of-order removal events can't undo an Allow back made
+// after them, and a removal after an Allow back blocks again. Leaving records
+// nothing.
+const STILL_REMOVED = "(allowed_ms IS NULL OR removed_ms > allowed_ms)";
+
+export async function recordRemoval(db: D1Database, userId: string, organizationId: string, atMs: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO removals (user_id, organization_id, removed_ms) VALUES (?, ?, ?)
+       ON CONFLICT (user_id, organization_id) DO UPDATE SET removed_ms = MAX(removed_ms, excluded.removed_ms)`
+    )
+    .bind(userId, organizationId, atMs)
+    .run();
+}
+
+export async function isRemoved(db: D1Database, userId: string, organizationId: string): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT 1 FROM removals WHERE user_id = ? AND organization_id = ? AND ${STILL_REMOVED}`)
+    .bind(userId, organizationId)
+    .first();
+  return Boolean(row);
+}
+
+// Who is removed from organizationId, newest first.
+export async function listRemovals(db: D1Database, organizationId: string): Promise<{ user_id: string; removed_ms: number; name: string | null; email: string | null }[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT r.user_id, r.removed_ms, a.name, a.email FROM removals r LEFT JOIN accounts a ON a.id = r.user_id
+       WHERE r.organization_id = ? AND ${STILL_REMOVED} ORDER BY r.removed_ms DESC LIMIT 100`
+    )
+    .bind(organizationId)
+    .all<{ user_id: string; removed_ms: number; name: string | null; email: string | null }>();
+  return results;
+}
+
+// Lets them back (team links work for them again). False if they weren't removed.
+export async function allowBackRemoved(db: D1Database, userId: string, organizationId: string): Promise<boolean> {
+  const result = await db
+    .prepare(`UPDATE removals SET allowed_ms = MAX(?, removed_ms) WHERE user_id = ? AND organization_id = ? AND ${STILL_REMOVED}`)
+    .bind(Date.now(), userId, organizationId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 // The live invite codes createdBy issued in organizationId (on demotion, or when an admin leaves).

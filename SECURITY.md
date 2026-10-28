@@ -30,6 +30,7 @@ stack.
 | Upload request metadata: `source_ip`, `user_agent` | Cloudflare D1 (`draft_versions`) | **Erased after 30 days** by a scheduled job. |
 | Workspace name and handle; invite codes (expiring, use-limited) | Cloudflare D1 | |
 | Cached profile (name, email) and membership cache (5 minutes) | Cloudflare D1 | Scrubbed when WorkOS reports the user deleted. |
+| Removals: who an admin removed from a workspace, and when (and when they were allowed back) | Cloudflare D1 (`removals`) | User and organization IDs only. Erased with the workspace, and when WorkOS reports the user deleted. |
 | Accounts, passwords, MFA factors, sessions, SSO and SCIM connections, organizations, memberships | WorkOS | htmlartifact never sees passwords or IdP credentials. |
 
 We do not use analytics, ads, or third-party trackers. Logs (Cloudflare Workers
@@ -163,7 +164,12 @@ Artifact HTML lives in D1, so a restore brings back HTML and index together.
   revoked via `POST /portal/revoke_link`), and cannot rejoin through an old
   invite: invite codes are bearer credentials, so removing anyone (by an
   admin, the directory, or WorkOS) revokes every code the workspace issued up
-  to that moment; admins issue a fresh one for the team. Leaving is not a
+  to that moment; admins issue a fresh one for the team. The removal is also
+  recorded, so no code issued later lets that person back in either (they get
+  the same answer as an invalid code, and no use is taken) until an admin
+  allows them back (`workspace allow-back <email>`). Both the removal and the
+  Allow back are dated, and the later one wins, so a late or repeated WorkOS
+  event can't undo an Allow back. Leaving is not a
   removal: someone who leaves on their own (`workspace leave`) revokes only
   the codes they issued as an admin, so a project's shared invite link keeps
   working, and they may rejoin with it. An inactive membership is never

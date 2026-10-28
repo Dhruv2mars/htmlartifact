@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, test } from "node:test";
 import { getPlatformProxy } from "wrangler";
 import { reconcileStatements } from "../scripts/restore-reconcile.ts";
-import { STORAGE, accessToken, callApi, page, refreshInto, retryLocked, signInTokens, startStack, testConfigPath } from "./helpers.js";
+import { STORAGE, accessToken, callApi, findUser, page, refreshInto, retryLocked, signInTokens, startStack, testConfigPath } from "./helpers.js";
 
 // A D1 Time Travel restore (SECURITY.md: Backups and restore) brings back the
 // database as it was at the bookmark: keys and invites revoked since are live
@@ -96,6 +96,9 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     assert.equal((await callApi(stack, alice, "DELETE", `/api/drafts/${reverted.draftId}/versions?keepLatest=1`)).body.deleted, 1);
     const sam = await accessToken(stack, "sam@new.test");
     assert.equal((await callApi(stack, sam, "POST", "/api/workspaces/join", { code: single.code })).status, 200);
+    // Sam removed (which revokes the used-up code too): no later code lets him back in.
+    const samId = (await findUser(stack.emulator, "sam@new.test")).id;
+    assert.equal((await callApi(stack, alice, "DELETE", `/api/workspaces/members/${samId}`)).status, 200);
     await batch([proxy.env.DB.prepare("INSERT INTO pending_deletions (kind, target) VALUES ('workos_membership', 'om_restored_undo')")]);
     assert.equal((await callApi(stack, alice, "POST", "/api/uploads", { html: page("After the bookmark") })).status, 201);
     const exported = await snapshot();
@@ -109,7 +112,7 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     const { sql, summary } = reconcileStatements(exported.query, (await snapshot()).query);
     assert.deepEqual(
       { ...summary, revocations: 0, epochs: 0, queuedDeletions: 0, budgets: 0 },
-      { workspaces: 1, artifacts: 2, versions: 1, ciKeys: 1, invites: 1, revocations: 0, epochs: 0, undoneJoins: 0, queuedDeletions: 0, budgets: 0, scrubbedUsers: 0 }
+      { workspaces: 1, artifacts: 2, versions: 1, ciKeys: 1, invites: 2, revocations: 0, epochs: 0, undoneJoins: 0, queuedDeletions: 0, budgets: 0, removals: 1, scrubbedUsers: 0 }
     );
     await batch(sql.map((statement) => proxy.env.DB.prepare(statement)));
 
@@ -117,6 +120,8 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
     const nora = await accessToken(stack, "nora@new.test");
     assert.notEqual((await callApi(stack, nora, "POST", "/api/workspaces/join", { code: invite.code })).status, 200, "the invite is revoked again");
     assert.notEqual((await callApi(stack, nora, "POST", "/api/workspaces/join", { code: single.code })).status, 200, "the used-up invite stays used up");
+    const later = (await callApi(stack, alice, "POST", "/api/workspaces/invites", {})).body.code;
+    assert.equal((await callApi(stack, sam, "POST", "/api/workspaces/join", { code: later })).status, 404, "Sam's removal stands");
     const versions = await all(`SELECT id FROM draft_versions WHERE draft_id = '${kept.draftId}'`);
     assert.equal(versions.length, 1, "the pruned version is gone again");
     assert.ok((await all("SELECT target FROM pending_deletions WHERE kind = 'r2_prefix'")).map((r) => r.target).some((t) => t.includes(`/drafts/${kept.draftId}/versions/`)), "its HTML is queued again");

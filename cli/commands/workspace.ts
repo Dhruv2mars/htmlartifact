@@ -175,12 +175,45 @@ const remove = Command.make(
     yield* Console.log(`Removed ${email}.`);
     yield* Console.log("Every invite code issued until now was revoked (they may have held one).");
     yield* Console.log(`Create a new one with: ${CMD} workspace invite`);
+    yield* Console.log(`New codes don't let ${email} back in; to allow that: ${CMD} workspace allow-back ${email}`);
   })
 ).pipe(
   Command.withDescription(
     "Remove someone from your current workspace (admins). Their access ends immediately, and every earlier invite code is revoked."
   )
 );
+
+const removed = Command.make(
+  "removed",
+  { json: jsonFlag() },
+  Effect.fn(function* ({ json }) {
+    const { apiUrl, apiKey } = yield* getAuth();
+    const { removed } = (yield* api(apiUrl, "/api/workspaces/removed", { apiKey })) as { removed: Json[] };
+    if (json) return yield* printJson(removed);
+    if (!removed.length) return yield* Console.log("Nobody removed from this workspace is kept out.");
+    for (const r of removed) yield* Console.log(`${r.name ?? "(unknown)"} <${r.email ?? "?"}>  removed ${r.removedAt}`);
+    yield* Console.log(`Let someone back with: ${CMD} workspace allow-back <email>`);
+  })
+).pipe(
+  Command.withDescription("List people removed from your current workspace (admins). Invite codes don't let them back in until you allow it.")
+);
+
+const allowBack = Command.make(
+  "allow-back",
+  { email: Argument.String("email").pipe(Argument.withDescription("Someone removed from your current workspace")), json: jsonFlag() },
+  Effect.fn(function* ({ email, json }) {
+    const { apiUrl, apiKey } = yield* getAuth();
+    const { removed } = (yield* api(apiUrl, "/api/workspaces/removed", { apiKey })) as { removed: Json[] };
+    const person = removed.find((r) => r.email?.toLowerCase() === email.toLowerCase());
+    if (!person) {
+      return yield* new CliError({ kind: "notFound", message: `${email} is not on this workspace's removed list. See: ${CMD} workspace removed` });
+    }
+    const result = yield* api(apiUrl, `/api/workspaces/removed/${encodeURIComponent(person.id)}`, { apiKey, method: "DELETE" });
+    if (json) return yield* printJson(result);
+    yield* Console.log(`${email} can rejoin with an invite code again.`);
+    yield* Console.log(`Create one with: ${CMD} workspace invite`);
+  })
+).pipe(Command.withDescription("Let someone you removed rejoin your current workspace with an invite code (admins)."));
 
 const setRole = (name: "promote" | "demote", role: "admin" | "member", description: string) =>
   Command.make(
@@ -417,6 +450,8 @@ export const workspace = Command.make("workspace").pipe(
     switchCommand,
     members,
     remove,
+    removed,
+    allowBack,
     promote,
     demote,
     leave,

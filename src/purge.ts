@@ -255,6 +255,7 @@ export function deleteWorkspaceStatements(db: D1Database, organizationId: string
     org("DELETE FROM revocations WHERE organization_id = ?"),
     org("DELETE FROM joins WHERE organization_id = ?"),
     org("DELETE FROM departures WHERE organization_id = ?"),
+    org("DELETE FROM removals WHERE organization_id = ?"),
     org("DELETE FROM invite_joins WHERE organization_id = ?"),
     org("DELETE FROM workspace_usage WHERE organization_id = ?"),
     org("DELETE FROM workspaces WHERE organization_id = ?")
@@ -273,7 +274,7 @@ export async function isWorkspaceDeleted(db: D1Database, organizationId: string)
   return Boolean(row);
 }
 
-/** A deleted WorkOS user: drop their cached PII. Their artifacts stay with the workspace. */
+/** A deleted WorkOS user: drop their cached PII and removal records. Their artifacts stay with the workspace. */
 export function scrubUserStatements(db: D1Database, userId: string): D1PreparedStatement[] {
   return [
     db
@@ -281,7 +282,8 @@ export function scrubUserStatements(db: D1Database, userId: string): D1PreparedS
         "UPDATE accounts SET name = 'Deleted user', email = NULL, picture_url = NULL, updated_at = unixepoch() WHERE id = ?"
       )
       .bind(userId),
-    db.prepare("UPDATE draft_versions SET source_ip = NULL, user_agent = NULL WHERE created_by = ?").bind(userId)
+    db.prepare("UPDATE draft_versions SET source_ip = NULL, user_agent = NULL WHERE created_by = ?").bind(userId),
+    db.prepare("DELETE FROM removals WHERE user_id = ?").bind(userId)
   ];
 }
 

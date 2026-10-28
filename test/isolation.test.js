@@ -7,6 +7,7 @@ import {
   Browser,
   COOKIE_PASSWORD,
   OTHER_CI_KEY,
+  PASSWORD,
   accessToken,
   callApi,
   findOrganization,
@@ -14,7 +15,8 @@ import {
   page,
   refreshInto,
   signInTokens,
-  startStack
+  startStack,
+  workosApi
 } from "./helpers.js";
 
 // Tenant isolation, swept over every route the Worker registers. Workspace A
@@ -562,6 +564,35 @@ const ROUTES = {
       }
     }
   },
+  "GET /api/workspaces/removed": {
+    kind: "list",
+    why: "lists the caller's workspace's removed people only (admins)",
+    async run(key) {
+      for (const actor of apiActors()) {
+        const res = await call(actor, "GET", "/api/workspaces/removed");
+        const label = `${key} as ${actor.name}`;
+        if (actor.token === B.nora) {
+          assert.equal(res.status, 200, res.text);
+          assertClean(label, res.text);
+        } else {
+          assertDenied(label, res);
+        }
+      }
+    }
+  },
+  "DELETE /api/workspaces/removed/:userId": {
+    kind: "resource",
+    why: "takes a user ID; someone A removed is not the caller's to let back",
+    async run(key) {
+      for (const actor of apiActors()) {
+        const missing = await call(actor, "DELETE", "/api/workspaces/removed/user_01ZZZZZZZZZZZZZZZZZZZZZZZZ");
+        const res = await call(actor, "DELETE", `/api/workspaces/removed/${A.rita.id}`);
+        assertDenied(`${key} as ${actor.name}`, res, { missing });
+      }
+      const removed = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/removed");
+      assert.ok(removed.body.removed.some((r) => r.id === A.rita.id), "A's removal stands");
+    }
+  },
   "PATCH /api/workspaces/members/:userId": {
     kind: "resource",
     why: "takes a user ID; A's members' roles are not the caller's to change",
@@ -1063,6 +1094,15 @@ before(async () => {
   A.workspace = v3.workspace;
   A.handle = v3.workspace.handle;
 
+  // Someone A's admin removed (before A's codes below, which that revokes):
+  // only A's admins may see them, or let them back.
+  await workosApi(stack.emulator, "POST", "/user_management/users", { email: "rita@acme.test", first_name: "Rita", password: PASSWORD, email_verified: true });
+  const ritaCode = (await callApi(stack, A.aliceToken, "POST", "/api/workspaces/invites", {})).body.code;
+  const rita = await signInTokens(stack, "rita@acme.test");
+  assert.equal((await callApi(stack, rita.accessToken, "POST", "/api/workspaces/join", { code: ritaCode })).status, 200);
+  A.rita = await findUser(stack.emulator, "rita@acme.test");
+  assert.equal((await callApi(stack, A.aliceToken, "DELETE", `/api/workspaces/members/${A.rita.id}`)).status, 200);
+
   // A used-up invite of A's: sam joins with it.
   const invite = await callApi(stack, A.aliceToken, "POST", "/api/workspaces/invites", { maxUses: 1 });
   assert.equal(invite.status, 201);
@@ -1121,7 +1161,9 @@ before(async () => {
     A.alice.id,
     A.bob.id,
     A.sam.id,
+    A.rita.id,
     "alice@acme.test",
+    "rita@acme.test",
     "bob@acme.test",
     "sam@new.test",
     A.usedCode,
@@ -1142,9 +1184,12 @@ after(async () => {
 async function stateOfA() {
   const drafts = await callApi(stack, A.aliceToken, "GET", "/api/drafts?scope=workspace");
   const members = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/members");
+  const removed = await callApi(stack, A.aliceToken, "GET", "/api/workspaces/removed");
   assert.equal(drafts.status, 200);
   assert.equal(members.status, 200);
+  assert.equal(removed.status, 200);
   return {
+    removed: removed.body.removed.map((r) => r.id),
     drafts: drafts.body.drafts
       .map((d) => ({ id: d.draftId, slug: d.slug, title: d.title, latest: d.latestVersionNumber, count: d.versionCount }))
       .sort((x, y) => x.id.localeCompare(y.id)),

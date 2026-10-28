@@ -9,13 +9,14 @@
 //     restored current version was pruned is deleted: its newer one is lost);
 //   - CI keys and invite codes revoked (or gone) before the restore are revoked,
 //     and invite uses are never handed back;
-//   - session revocations, membership epochs, undone joins, queued deletions
-//     and today's D1 budgets are carried over;
+//   - session revocations, membership epochs, undone joins, queued deletions,
+//     removals (and Allow backs) and today's D1 budgets are carried over;
 //   - deleted users' cached names and emails are scrubbed again;
 //   - the 5-minute membership cache is dropped, so access is re-checked live.
 // It only removes access and data; review it, then apply it with
 // `wrangler d1 execute <database> --remote --file=reconcile.sql`.
 import { DAILY_BUDGET_SCHEMA } from "../src/budget.ts";
+import { REMOVALS_SCHEMA } from "../src/db.ts";
 import { PENDING_DELETIONS_SCHEMA, deleteDraftStatements, deleteVersionStatements, deleteWorkspaceStatements, scrubUserStatements } from "../src/purge.ts";
 
 type Row = Record<string, unknown>;
@@ -49,7 +50,7 @@ const ids = (query: Query, sql: string, column = "id") => new Set(query(sql).map
 
 export function reconcileStatements(before: Query, restored: Query): { sql: string[]; summary: Record<string, number> } {
   // Tables made on first use may postdate the bookmark.
-  const statements: Recorded[] = [PENDING_DELETIONS_SCHEMA, DAILY_BUDGET_SCHEMA].map((sql) => ({ sql, args: [] }));
+  const statements: Recorded[] = [PENDING_DELETIONS_SCHEMA, DAILY_BUDGET_SCHEMA, REMOVALS_SCHEMA].map((sql) => ({ sql, args: [] }));
   const add = (built: unknown[]) => statements.push(...(built as Recorded[]));
 
   // Workspaces: tombstoned before, not now.
@@ -135,7 +136,21 @@ export function reconcileStatements(before: Query, restored: Query): { sql: stri
     });
   }
 
-  // Users deleted before the restore.
+  // Removals and Allow backs (both times only grow; the later one wins).
+  const removals = (hasTable("removals") ? before("SELECT user_id, organization_id, removed_ms, allowed_ms FROM removals") : []).filter(
+    (row) => !gone.has(String(row.organization_id))
+  );
+  for (const row of removals) {
+    statements.push({
+      sql: `INSERT INTO removals (user_id, organization_id, removed_ms, allowed_ms) VALUES (?, ?, ?, ?)
+            ON CONFLICT (user_id, organization_id) DO UPDATE SET removed_ms = MAX(removed_ms, excluded.removed_ms),
+              allowed_ms = CASE WHEN allowed_ms IS NULL THEN excluded.allowed_ms WHEN excluded.allowed_ms IS NULL THEN allowed_ms
+                ELSE MAX(allowed_ms, excluded.allowed_ms) END`,
+      args: [row.user_id, row.organization_id, row.removed_ms, row.allowed_ms]
+    });
+  }
+
+  // Users deleted before the restore (after the removals: theirs are erased).
   const scrubbed = before("SELECT id FROM accounts WHERE name = 'Deleted user' AND email IS NULL");
   for (const row of scrubbed) add(scrubUserStatements(recorder, String(row.id)));
 
@@ -153,6 +168,7 @@ export function reconcileStatements(before: Query, restored: Query): { sql: stri
       undoneJoins: undone.length,
       queuedDeletions: queued.length,
       budgets: budgets.length,
+      removals: removals.length,
       scrubbedUsers: scrubbed.length
     }
   };

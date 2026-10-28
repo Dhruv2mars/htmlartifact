@@ -696,7 +696,7 @@ describe("review round 8", () => {
       data: { object: "organization_membership", id: membership.id, user_id: membership.user_id, organization_id: membership.organization_id }
     }).then((r) => assert.equal(r.status, 200));
 
-  test("removing someone revokes the invite codes issued up to then; codes issued later still work", async () => {
+  test("removing someone revokes the invite codes issued up to then; later codes don't let them back in until an admin allows them back", async () => {
     const nora = await signInTokens(stack, "nora@new.test");
     const created = await callApi(stack, nora.accessToken, "POST", "/api/workspaces", { name: "Rejoin Labs" });
     assert.equal(created.status, 201, JSON.stringify(created.body));
@@ -710,9 +710,28 @@ describe("review round 8", () => {
     const rejoin = await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code });
     assert.equal(rejoin.status, 404, "the old code is revoked");
 
-    // The WorkOS webhook for that removal arriving late (or again) only revokes codes issued up to the removal.
+    // The next team link the admin posts: Sam gets exactly an invalid code's answer, and no use is taken.
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    const fresh = await callApi(stack, noraAdmin, "POST", "/api/workspaces/invites", {});
+    const fresh = (await callApi(stack, noraAdmin, "POST", "/api/workspaces/invites", {})).body.code;
+    const invalid = await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: "HA-ZZZZ-ZZZZ-ZZZZ" });
+    const refused = await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: fresh });
+    assert.equal(refused.status, 404);
+    assert.deepEqual(refused.body, invalid.body);
+    assert.equal((await rows("SELECT uses FROM invites WHERE code = ?", fresh))[0].uses, 0, "no use taken");
+
+    // Admins see who is kept out, and let them back.
+    const listed = await callApi(stack, noraAdmin, "GET", "/api/workspaces/removed");
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    assert.deepEqual(
+      listed.body.removed.map((r) => [r.id, r.email]),
+      [[samUser.id, "sam@new.test"]]
+    );
+    assert.equal((await callApi(stack, noraAdmin, "DELETE", `/api/workspaces/removed/${samUser.id}`)).status, 200);
+    assert.equal((await callApi(stack, noraAdmin, "DELETE", `/api/workspaces/removed/${samUser.id}`)).status, 404, "no longer on the list");
+    assert.deepEqual((await callApi(stack, noraAdmin, "GET", "/api/workspaces/removed")).body.removed, []);
+
+    // The WorkOS webhook for that removal arriving late (or again) revokes only codes issued up to the
+    // removal, and doesn't undo the Allow back that came after it.
     const org = await findOrganization(stack.emulator, "Rejoin Labs");
     const late = await sendWebhook(stack, {
       id: "event_late_removal",
@@ -721,7 +740,39 @@ describe("review round 8", () => {
       data: { object: "organization_membership", id: "om_gone", user_id: samUser.id, organization_id: org.id }
     });
     assert.equal(late.status, 200);
-    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: fresh.body.code })).status, 200);
+    assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: fresh })).status, 200);
+  });
+
+  test("removed outside our app: the late webhook keeps them out of later team links, and undoes a rejoin made with one", async () => {
+    const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    await workosApi(stack.emulator, "POST", "/user_management/users", { email: "tom@new.test", first_name: "Tom", password: PASSWORD, email_verified: true });
+    const tomUser = await findUser(stack.emulator, "tom@new.test");
+    const tom = await signInTokens(stack, "tom@new.test");
+    // Tom was removed in the WorkOS dashboard (membership om_dashboard_tom). Before that removal's
+    // webhook arrives, he walks back in with the next team link, issued after the removal.
+    const removedAt = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const fresh = (await callApi(stack, nora, "POST", "/api/workspaces/invites", { maxUses: 5 })).body.code;
+    assert.equal((await callApi(stack, tom.accessToken, "POST", "/api/workspaces/join", { code: fresh })).status, 200);
+    const late = await sendWebhook(stack, {
+      id: "event_dashboard_removal_tom",
+      event: "organization_membership.deleted",
+      created_at: new Date(removedAt).toISOString(),
+      data: { object: "organization_membership", id: "om_dashboard_tom", user_id: tomUser.id, organization_id: org.id, status: "active" }
+    });
+    assert.equal(late.status, 200);
+    assert.equal(await count("SELECT COUNT(*) FROM joins WHERE user_id = ? AND undone = 0", tomUser.id), 0, "his rejoin is undone");
+    assert.ok((await rows("SELECT revoked_at FROM invites WHERE code = ?", fresh))[0].revoked_at === null, "the team's later link still works");
+
+    const again = await callApi(stack, tom.accessToken, "POST", "/api/workspaces/join", { code: fresh });
+    assert.equal(again.status, 404, JSON.stringify(again.body));
+    assert.equal((await rows("SELECT uses FROM invites WHERE code = ?", fresh))[0].uses, 1, "no use taken");
+    assert.ok((await callApi(stack, nora, "GET", "/api/workspaces/removed")).body.removed.some((r) => r.id === tomUser.id));
+
+    assert.equal((await callApi(stack, nora, "DELETE", `/api/workspaces/removed/${tomUser.id}`)).status, 200);
+    const back = await callApi(stack, tom.accessToken, "POST", "/api/workspaces/join", { code: fresh });
+    assert.equal(back.status, 200, JSON.stringify(back.body));
   });
 
   test("a membership deleted in WorkOS (e.g. directory deprovisioning) revokes old codes; an update to a live one does not", async () => {
@@ -836,6 +887,7 @@ describe("review round 10", () => {
     const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
     const code = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
     const sam = await findUser(stack.emulator, "sam@new.test");
+    assert.equal(await count("SELECT COUNT(*) FROM removals WHERE user_id = ?", sam.id), 1, "Sam's removal (and Allow back) is recorded");
     const r = await sendWebhook(stack, {
       id: "event_sam_deleted",
       event: "user.deleted",
@@ -844,6 +896,16 @@ describe("review round 10", () => {
     });
     assert.equal(r.status, 200);
     assert.ok(!(await liveCodes(nora)).includes(code));
+    assert.equal(await count("SELECT COUNT(*) FROM removals WHERE user_id = ?", sam.id), 0, "erased with the user");
+    // A membership.deleted of theirs arriving after records nothing again.
+    const org = await findOrganization(stack.emulator, "Rejoin Labs");
+    const after = await sendWebhook(stack, {
+      id: "event_sam_membership_after",
+      event: "organization_membership.deleted",
+      data: { object: "organization_membership", id: "om_sam_after", user_id: sam.id, organization_id: org.id }
+    });
+    assert.equal(after.status, 200);
+    assert.equal(await count("SELECT COUNT(*) FROM removals WHERE user_id = ?", sam.id), 0);
   });
 });
 
@@ -956,6 +1018,8 @@ describe("review round 12", () => {
     const nora = (await signInTokens(stack, "nora@new.test", "Rejoin Labs")).accessToken;
     const org = await findOrganization(stack.emulator, "Rejoin Labs");
     const bobUser = await findUser(stack.emulator, "bob@acme.test");
+    // Removed in the dashboard (the last test): let him back first.
+    assert.equal((await callApi(stack, nora, "DELETE", `/api/workspaces/removed/${bobUser.id}`)).status, 200);
     const old = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
     const bob = await signInTokens(stack, "bob@acme.test", "Acme");
     assert.equal((await callApi(stack, bob.accessToken, "POST", "/api/workspaces/join", { code: old })).status, 200);
@@ -975,6 +1039,7 @@ describe("review round 12", () => {
 
       // The admin lets Bob back in with a fresh code while WorkOS is still failing deletes.
       await new Promise((resolve) => setTimeout(resolve, 2100));
+      assert.equal((await callApi(stack, nora, "DELETE", `/api/workspaces/removed/${bobUser.id}`)).status, 200);
       const fresh = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
       const join = await callApi(stack, bob.accessToken, "POST", "/api/workspaces/join", { code: fresh });
       assert.equal(join.status, 200, JSON.stringify(join.body));
@@ -1057,6 +1122,11 @@ describe("leaving a workspace", () => {
     });
     assert.equal(replay.status, 200);
     assert.ok(await codeLive(pinned), "a replayed leave webhook revoked the pinned link");
+    // Leaving is not a removal: nothing keeps them out.
+    const removedList = await callApi(stack, admin, "GET", "/api/workspaces/removed");
+    assert.equal(removedList.status, 200, JSON.stringify(removedList.body));
+    assert.deepEqual(removedList.body.removed, [], "leaving put them on the removed list");
+    assert.equal(await count("SELECT COUNT(*) FROM removals WHERE user_id = ?", arjunUser.id), 0);
     const maya = await signInTokens(stack, "maya@oss.test");
     assert.equal((await callApi(stack, maya.accessToken, "POST", "/api/workspaces/join", { code: pinned })).status, 200, "the next person joins");
 
@@ -1084,6 +1154,9 @@ describe("leaving a workspace", () => {
     // Codes issued after the last removal (event times are whole seconds).
     await new Promise((resolve) => setTimeout(resolve, 1100));
     const joinAndLeave = async (code, { breakDelete = false } = {}) => {
+      // Arjun was removed (the last test, or a removal below): let him back first.
+      const arjunId = (await findUser(stack.emulator, "arjun@oss.test")).id;
+      assert.equal((await callApi(stack, admin, "DELETE", `/api/workspaces/removed/${arjunId}`)).status, 200);
       const arjun = await signInTokens(stack, "arjun@oss.test", "Openpipe OSS");
       assert.equal((await callApi(stack, arjun.accessToken, "POST", "/api/workspaces/join", { code })).status, 200);
       const arjunIn = await refreshInto(stack, arjun, org.id);
@@ -1122,6 +1195,28 @@ describe("leaving a workspace", () => {
     assert.ok(await codeLive(second));
     await deletedAt("event_arjun_removed_later", left.user, left.membership, Date.now() + 3600_000);
     assert.ok(!(await codeLive(second)), "a deletion an hour after the leave is a removal");
+  });
+
+  test("removal records are erased with the workspace", async () => {
+    const lee = await signInTokens(stack, "lee@oss.test");
+    assert.equal((await callApi(stack, lee.accessToken, "POST", "/api/workspaces", { name: "Short Lived" })).status, 201);
+    const org = await findOrganization(stack.emulator, "Short Lived");
+    const admin = (await refreshInto(stack, lee, org.id)).accessToken;
+    const code = (await callApi(stack, admin, "POST", "/api/workspaces/invites", {})).body.code;
+    const maya = await signInTokens(stack, "maya@oss.test");
+    assert.equal((await callApi(stack, maya.accessToken, "POST", "/api/workspaces/join", { code })).status, 200);
+    const mayaUser = await findUser(stack.emulator, "maya@oss.test");
+    assert.equal((await callApi(stack, admin, "DELETE", `/api/workspaces/members/${mayaUser.id}`)).status, 200);
+    assert.equal(await count("SELECT COUNT(*) FROM removals WHERE organization_id = ?", org.id), 1);
+    assert.equal((await callApi(stack, admin, "DELETE", "/api/workspaces/current", { confirm: "Short Lived" })).status, 200);
+    assert.equal(await count("SELECT COUNT(*) FROM removals WHERE organization_id = ?", org.id), 0);
+    // That removal's webhook, arriving after, records nothing again.
+    await sendWebhook(stack, {
+      id: "event_short_lived_removal",
+      event: "organization_membership.deleted",
+      data: { object: "organization_membership", id: "om_short_lived", user_id: mayaUser.id, organization_id: org.id }
+    }).then((r) => assert.equal(r.status, 200));
+    assert.equal(await count("SELECT COUNT(*) FROM removals WHERE organization_id = ?", org.id), 0);
   });
 });
 

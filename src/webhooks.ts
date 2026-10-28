@@ -1,6 +1,6 @@
 import type { Event } from "@workos-inc/node";
 import type { Context, Hono } from "hono";
-import { bumpMembershipEpoch, isDeparture, now, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
+import { bumpMembershipEpoch, isDeparture, isRemoved, isRevoked, recordRemoval, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, setRevoked, setRevokedAtEpoch } from "./db.ts";
 import { deleteWorkspaceStatements, isWorkspaceDeleted, membershipBeingUndone, runWorkspaceDeletions, scrubUserStatements, undoJoin } from "./purge.ts";
 import type { AppEnv } from "./types.ts";
 import { revokePortalLinks, workos } from "./workos.ts";
@@ -74,14 +74,26 @@ async function applyEvent(
           // code the workspace still has.
           if (!(removedId && (await isDeparture(db, removedId, at)))) {
             await revokeInvitesUpTo(db, organizationId, at);
+            // A removal (ours again, or one outside our app: the WorkOS
+            // dashboard, the directory): no team link lets them back in until
+            // an admin allows them back. Dated by the event, so a late one
+            // can't undo an Allow back made after it. Not a deleted pending
+            // membership (they were never in), nor a deleted user's
+            // (user.deleted erases their records; this may come after it).
+            let blocked = false;
+            if (field(data, "status") !== "pending" && !(await isRevoked(db, [userId], "*"))) {
+              await recordRemoval(db, userId, organizationId, eventMs(createdAt));
+              blocked = await isRemoved(db, userId, organizationId);
+            }
             // Removed outside our app and back in before this event arrived,
-            // through a code that was due for revocation at the removal: undo it.
+            // through a code that was due for revocation at the removal, or
+            // through any code while the removal stands: undo it.
             const { results } = await db
               .prepare(
                 `SELECT membership_id FROM joins WHERE user_id = ? AND organization_id = ? AND membership_id != ?
-                   AND undone = 0 AND code_created_at <= ?`
+                   AND undone = 0 AND (code_created_at <= ? OR ?)`
               )
-              .bind(userId, organizationId, removedId ?? "", at)
+              .bind(userId, organizationId, removedId ?? "", at, blocked ? 1 : 0)
               .all<{ membership_id: string }>();
             for (const { membership_id } of results) await undoJoin(c.env, membership_id);
           }
@@ -175,6 +187,11 @@ function field(data: object, key: string): string | undefined {
 
 // An event's time in unix seconds (now, if the payload has none).
 function eventTime(createdAt: string | undefined): number {
-  const at = createdAt ? Math.floor(Date.parse(createdAt) / 1000) : NaN;
-  return Number.isFinite(at) ? at : now();
+  return Math.floor(eventMs(createdAt) / 1000);
+}
+
+// The same in milliseconds.
+function eventMs(createdAt: string | undefined): number {
+  const at = createdAt ? Date.parse(createdAt) : NaN;
+  return Number.isFinite(at) ? at : Date.now();
 }

@@ -9,6 +9,10 @@ with the same version as the npm package (see CONTRIBUTING.md → Releasing).
 
 ### Added
 
+- Removing someone keeps them out: invite codes issued after the removal
+  don't let them back in either, until an admin runs
+  `workspace allow-back <email>` (`workspace removed` lists them). Leaving a
+  workspace never does this.
 - `upload` receipts list `changedFields` ("title", "description", "slug"):
   what an upload changed besides publishing a version.
 - `delete --yes`: an admin deleting an artifact someone else published must
