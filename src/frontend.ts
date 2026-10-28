@@ -80,7 +80,7 @@ export function toArtifacts(drafts: DraftSummary[]): ArtifactSummary[] {
     description: d.description,
     author: d.author && d.authorFormer ? `${d.author} (former member)` : d.author,
     url: d.publicUrl,
-    repo: d.repoOrg && d.repoName ? `${d.repoOrg}/${d.repoName}` : d.repoName,
+    repo: repoName(d),
     version: d.latestVersionNumber,
     versionCount: d.versionCount,
     updatedAt: d.updatedAt
@@ -99,3 +99,7 @@ export function toVersions({ draft, versions }: DraftWithVersions): ArtifactVers
     createdAt: v.created_at
   }));
 }
+
+// "org/name" for a draft's repository, or just its name, or null.
+export const repoName = (d: Pick<DraftSummary, "repoOrg" | "repoName">): string | null =>
+  d.repoOrg && d.repoName ? `${d.repoOrg}/${d.repoName}` : d.repoName;

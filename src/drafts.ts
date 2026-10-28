@@ -37,6 +37,8 @@ export interface DraftWithVersions {
     title: string;
     description: string | null;
     author: string | null;
+    repoOrg: string | null;
+    repoName: string | null;
     mine: boolean;
     publicUrl: string;
     versionBaseUrl: string;
@@ -171,6 +173,8 @@ export async function getDraftWithVersions(
       title: draft.title,
       description: draft.description,
       author: draft.author_name,
+      repoOrg: draft.repo_org,
+      repoName: draft.repo_name,
       mine: draft.account_id === accountId,
       publicUrl: draftUrl(origin, draft, handle),
       // Version links use the draft ID, which never moves to another draft.

@@ -87,8 +87,8 @@ export function Story() {
                   {HOST}/d/<span className="text-foreground">{STORY_ID}</span>
                 </span>
               </div>
-              <div key={`t${run}`} className="s-in sm:mr-20" style={at(1900)}>
-                <div role="tablist" aria-label="Open the link as" className="flex shrink-0 rounded-[7px] border border-line bg-surface p-0.5">
+              <div className="s-in basis-full sm:mr-20 sm:basis-auto" style={at(1900)}>
+                <div role="tablist" aria-label="Open the link as" className="inline-flex min-w-0 max-w-full flex-wrap rounded-[7px] border border-line bg-surface p-0.5">
                   {PEOPLE.map((p, i) => (
                     <button
                       key={p.key}
@@ -104,7 +104,9 @@ export function Story() {
                       onKeyDown={(e) => onKey(e, i)}
                       className={cx(
                         "h-7 whitespace-nowrap rounded-[5px] px-2.5 text-[12.5px] transition-[background-color,color,box-shadow] duration-150",
-                        active === p.key ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border)]" : "text-muted hover:text-foreground"
+                        active === p.key
+                          ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border)] forced-colors:outline-2 forced-colors:outline-solid forced-colors:-outline-offset-2 forced-colors:outline-[Highlight]"
+                          : "text-muted hover:text-foreground"
                       )}
                     >
                       {p.label}

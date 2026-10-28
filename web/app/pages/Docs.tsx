@@ -288,7 +288,7 @@ export function Docs({ session }: { session: Session | null }) {
           <code>--help</code> to any command to see all of its flags.
         </p>
         {COMMAND_GROUPS.map((group) => (
-          <div key={group.id} id={group.id} className="mt-10 scroll-mt-[8.5rem] lg:scroll-mt-24">
+          <div key={group.id} id={group.id} className="mt-10">
             <h3 className={H3}>{group.title}</h3>
             {group.note && <p className="mt-1 text-[14px] text-muted">{group.note}</p>}
             <dl className="mt-4 divide-y divide-line border-y border-line">
@@ -312,7 +312,7 @@ export function Docs({ session }: { session: Session | null }) {
             </dl>
           </div>
         ))}
-        <div id="output" className="mt-10 scroll-mt-[8.5rem] lg:scroll-mt-24">
+        <div id="output" className="mt-10">
           <h3 className={H3}>Output and exit codes</h3>
           <p>
             Every command takes <code>--json</code>. Standard output is then one JSON object, errors included, and anything else goes
@@ -437,7 +437,7 @@ export function Docs({ session }: { session: Session | null }) {
 
 function Step({ id, title, who, children }: { id: string; title: string; who: string; children: ReactNode }) {
   return (
-    <li id={id} className="scroll-mt-[8.5rem] lg:scroll-mt-24">
+    <li id={id}>
       <h3 className={cx(H3, "flex flex-wrap items-center gap-x-2.5 gap-y-1")}>
         {title}
         <span className="rounded-chip border border-border px-1.5 py-px font-sans text-[12px] font-medium tracking-normal text-muted font-stretch-normal">
@@ -463,8 +463,8 @@ function Code(
   const pre = useRef<HTMLPreElement>(null);
   return (
     <figure aria-label={props.name} className="mt-5 overflow-hidden rounded-card border border-line bg-card">
-      <div className="flex h-10 items-center justify-between gap-3 border-b border-line pl-4 pr-1">
-        <span className="min-w-0 truncate font-mono text-[12px] text-muted">{props.label}</span>
+      <div className="flex min-h-10 items-center justify-between gap-3 border-b border-line pl-4 pr-1">
+        <span className="min-w-0 py-2 font-mono text-[12px] leading-snug text-muted [overflow-wrap:anywhere]">{props.label}</span>
         <CopyText text={text} what={props.commands ? (props.commands.length > 1 ? "Commands" : "Command") : "File"} target={pre} />
       </div>
       {props.commands ? (

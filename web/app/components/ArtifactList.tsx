@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import type { ArtifactSummary } from "../page";
 import { SearchIcon } from "./icons";
 import { Seal } from "./Seal";
@@ -37,6 +37,7 @@ export function ArtifactList({
     ? artifacts.filter((a) => [a.title, a.description, a.author, a.repo, a.id].some((v) => v?.toLowerCase().includes(q)))
     : artifacts;
   const rows = hydrated ? shown : shown.slice(0, SERVER_ROWS);
+  const field = useRef<HTMLInputElement>(null);
 
   return (
     <>
@@ -46,6 +47,7 @@ export function ArtifactList({
             <SearchIcon className="size-4 shrink-0" />
             <span className="sr-only">Filter artifacts by title, author or repository</span>
             <input
+              ref={field}
               type="search"
               value={query}
               onChange={(e) => onQueryChange(e.target.value)}
@@ -77,7 +79,13 @@ export function ArtifactList({
           {shown.length === 0 && (
             <li className="px-5 py-14 text-center text-[14px] text-muted">
               Nothing {paged ? "on this page " : ""}matches “{query.trim()}”.{" "}
-              <button type="button" onClick={() => onQueryChange("")} className="text-foreground underline decoration-control underline-offset-4 hover:decoration-foreground">
+              <button
+                type="button"
+                onClick={() => {
+                  onQueryChange("");
+                  field.current?.focus();
+                }}
+                className="text-foreground underline decoration-control underline-offset-4 hover:decoration-foreground">
                 Clear the filter
               </button>
             </li>
@@ -109,14 +117,28 @@ function Row({ artifact: a, mine }: { artifact: ArtifactSummary; mine: boolean }
         {a.description && <p className="mt-0.5 line-clamp-2 text-[13.5px] leading-snug text-muted md:line-clamp-1">{a.description}</p>}
         <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[12px] text-muted md:hidden">
           {!mine && a.author && <span className="max-w-full truncate font-sans text-[13px] text-foreground/80">{a.author}</span>}
-          {a.repo && <span className="max-w-full truncate">{a.repo}</span>}
+          {a.repo && (
+            <span className="max-w-full truncate" title={a.repo}>
+              {a.repo}
+            </span>
+          )}
           <Time iso={a.updatedAt} />
           <VersionsLink artifact={a} count={versions} title={title} />
         </div>
       </div>
       <div className="hidden min-w-0 px-4 py-3.5 md:block">
-        {who ? <p className={mine ? "truncate font-mono text-[12.5px] text-muted" : "truncate text-[13.5px] text-foreground/85"}>{who}</p> : <p className="text-faint">None</p>}
-        {!mine && a.repo && <p className="mt-0.5 truncate font-mono text-[12px] text-muted">{a.repo}</p>}
+        {who ? (
+          <p title={who} className={mine ? "truncate font-mono text-[12.5px] text-muted" : "truncate text-[13.5px] text-foreground/85"}>
+            {who}
+          </p>
+        ) : (
+          <p className="text-faint">None</p>
+        )}
+        {!mine && a.repo && (
+          <p title={a.repo} className="mt-0.5 truncate font-mono text-[12px] text-muted">
+            {a.repo}
+          </p>
+        )}
       </div>
       <div className="hidden px-4 py-3.5 md:block">
         <VersionsLink artifact={a} count={versions} title={title} />
@@ -131,7 +153,7 @@ function VersionsLink({ artifact, count, title }: { artifact: ArtifactSummary; c
   return (
     <a
       href={`/history/${artifact.id}`}
-      className="relative z-[1] font-mono text-[12.5px] text-foreground underline decoration-control underline-offset-4 transition-colors duration-150 hover:decoration-foreground"
+      className="relative z-[1] -my-1 inline-flex min-h-7 items-center whitespace-nowrap font-mono text-[12.5px] text-foreground underline decoration-control underline-offset-4 transition-colors duration-150 hover:decoration-foreground"
     >
       {count === 1 ? "1 version" : `${count} versions`}
       <span className="sr-only"> of {title}</span>

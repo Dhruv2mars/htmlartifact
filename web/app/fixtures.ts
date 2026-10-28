@@ -91,8 +91,8 @@ export function fixturePage(url: URL): Page {
         kind: "artifact",
         session: s,
         artifact: worst
-          ? { id: "aaaaaaaaaaaa", title: LONG, description: "y".repeat(300), url: worstArtifacts[0]!.url, author: worstSession.name, mine: false }
-          : { id: "k3j9x0a1b2c4", title: "Billing migration plan", description: "Six weeks from legacy invoices to the new ledger, with dual writes.", url: "https://htmlartifact.pages.dev/d/k3j9x0a1b2c4", author: "Marcus Lee", mine: !url.searchParams.has("teammate") },
+          ? { id: "aaaaaaaaaaaa", title: LONG, description: "y".repeat(300), url: worstArtifacts[0]!.url, author: worstSession.name, repo: worstArtifacts[0]!.repo, mine: false }
+          : { id: "k3j9x0a1b2c4", title: "Billing migration plan", description: "Six weeks from legacy invoices to the new ledger, with dual writes.", url: "https://htmlartifact.pages.dev/d/k3j9x0a1b2c4", author: "Marcus Lee", repo: "northwind/billing", mine: !url.searchParams.has("teammate") },
         versions: versions(worst ? 60 : 3, worst)
       };
     case "workspaces": {

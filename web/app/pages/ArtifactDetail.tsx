@@ -38,7 +38,18 @@ export function ArtifactDetail({ session, artifact, versions }: { session: Sessi
           >
             {artifact.title}
           </h1>
-          {!artifact.mine && artifact.author && <p className="mt-2 text-[14px] text-muted [overflow-wrap:anywhere]">By {artifact.author}</p>}
+          {((!artifact.mine && artifact.author) || artifact.repo) && (
+            <p className="mt-2 flex flex-wrap gap-x-2 text-[14px] text-muted [overflow-wrap:anywhere]">
+              {!artifact.mine && artifact.author && <span>By {artifact.author}</span>}
+              {!artifact.mine && artifact.author && artifact.repo && <span aria-hidden>·</span>}
+              {artifact.repo && (
+                <span>
+                  <span className="sr-only">Repository: </span>
+                  <span className="font-mono text-[13px]">{artifact.repo}</span>
+                </span>
+              )}
+            </p>
+          )}
           {artifact.description && <Description text={artifact.description} />}
           <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:items-start">
             <ButtonLink href={artifact.url} className="shrink-0">

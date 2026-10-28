@@ -38,6 +38,8 @@ export interface ArtifactHead {
   description: string | null;
   url: string;
   author: string | null;
+  // "org/name", from the published file's git remote.
+  repo: string | null;
   mine: boolean;
 }
 

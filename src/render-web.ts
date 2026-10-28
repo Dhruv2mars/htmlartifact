@@ -41,6 +41,7 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
 <style>${FRAME_CSS}</style>
 </head>
 <body>
+<a class="skip" href="#artifact">Read the artifact</a>
 <header class="bar${frame.latest ? "" : " is-old"}">
 <div class="where">
 <span class="seal">${sealSvg(frame.id, 20, "currentColor")}</span>
@@ -54,13 +55,13 @@ export function renderArtifactFrame(frame: ArtifactFrame): string {
 <div class="tools">
 <p class="access">${icon(LOCK)}<span>Only <span class="name">${workspace ?? "workspace"}</span> members can see this</span></p>
 <a class="tool" href="${escapeHtml(frame.historyUrl)}" aria-label="History of ${title}">${icon(HISTORY)}<span class="label">History</span></a>
-<label class="tool square hide" for="hide-bar" title="Hide bar">${icon(CHEVRON_UP)}</label>
+<label class="tool square hide" for="hide-bar" title="Hide bar">${icon(CHEVRON_UP)}<span class="sr">Hide bar</span></label>
 </div>
 </header>
 <main>
-<input class="toggle" type="checkbox" id="hide-bar" aria-label="Hide the artifact bar">
+<input class="toggle" type="checkbox" id="hide-bar">
 <label class="show" for="hide-bar">${icon(CHEVRON_DOWN)}Show bar</label>
-<iframe class="artifact" title="${title}" src="${escapeHtml(frame.src)}" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
+<iframe class="artifact" id="artifact" title="${title}" src="${escapeHtml(frame.src)}" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
 </main>
 </body>
 </html>`;
@@ -170,6 +171,17 @@ a { color: inherit; text-decoration: none; touch-action: manipulation; }
   .latest:hover { background: var(--wash); }
 }
 body:has(.toggle:focus-visible) .hide, .toggle:focus-visible + .show { outline: 2px solid var(--intaglio); outline-offset: 2px; }
+/* Over the artifact the page colour is unknown: draw the ring on the tab itself. */
+.toggle:focus-visible + .show { outline-offset: -3px; }
+/* The frame only takes keyboard focus through a link to it: a cross-origin
+   frame with nothing focusable inside is skipped by Tab, so its content could
+   not be scrolled from the keyboard. Hidden until focused. */
+.skip {
+  position: absolute; z-index: 2; top: 6px; left: 8px; padding: 6px 10px; border-radius: 8px;
+  background: var(--paper); color: var(--ink); border: 1px solid var(--rule-2); box-shadow: var(--lift);
+  font-size: 13px; font-weight: 500; translate: 0 calc(-100% - 12px); opacity: 0;
+}
+.skip:focus { translate: 0 0; opacity: 1; }
 body:has(.toggle:checked) .bar { display: none; }
 .toggle:checked + .show { display: flex; }
 main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -194,8 +206,8 @@ iframe.artifact { flex: 1 1 auto; display: block; width: 100%; min-height: 0; bo
   /* An older version gets a second row of its own: which version, and the
      way to the latest, never squeezed against the title. */
   .is-old { height: auto; min-height: 44px; padding-top: 6px; padding-bottom: 4px; align-items: flex-start; }
-  .is-old .where { flex-wrap: wrap; row-gap: 2px; }
-  .is-old .version { flex-basis: 100%; margin-left: 30px; gap: 6px; }
+  .is-old .where { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; row-gap: 2px; }
+  .is-old .version { grid-column: 2; margin-left: 0; gap: 6px; }
   .is-old .tools { margin-top: 2px; }
   .tool { width: 36px; height: 36px; padding: 0; }
   .tool .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

@@ -9,7 +9,7 @@ import { normalizeInviteCode, workspaceHandle } from "./ids.ts";
 import { safeNext } from "./public-url.ts";
 import { clientIp, rateLimit } from "./rate-limit.ts";
 import type { JoinFailure, Page, WorkspaceChoice } from "../web/app/page.ts";
-import { renderPage, toArtifacts, toSession, toVersions } from "./frontend.ts";
+import { renderPage, repoName, toArtifacts, toSession, toVersions } from "./frontend.ts";
 import { isMember, type AppEnv, type MemberEnv, type UserEnv, type Viewer } from "./types.ts";
 import {
   authStateCookie,
@@ -101,7 +101,15 @@ export function registerWeb(app: Hono<AppEnv>): void {
     return renderPage(c, {
       kind: "artifact",
       session: toSession(viewer)!,
-      artifact: { id: draft.draftId, title: draft.title, description: draft.description, url: draft.publicUrl, author: draft.author, mine: draft.mine },
+      artifact: {
+        id: draft.draftId,
+        title: draft.title,
+        description: draft.description,
+        url: draft.publicUrl,
+        author: draft.author,
+        repo: repoName(draft),
+        mine: draft.mine
+      },
       versions: toVersions(result)
     });
   });
