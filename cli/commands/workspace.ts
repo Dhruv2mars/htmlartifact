@@ -1,25 +1,30 @@
 import { Console, Effect, Option } from "effect";
 import { Argument, Command } from "effect/cli";
 
-import { getAuth, leaveWorkspaceSession, switchSession } from "../auth.ts";
-import { CMD } from "../env.ts";
+import { getAuth, leaveWorkspaceSession, switchSession, tokenOrganization } from "../auth.ts";
+import { CMD, envToken } from "../env.ts";
 import { CliError, reason } from "../errors.ts";
 import { jsonFlag, numberFlag, stringFlag, switchFlag } from "../flags.ts";
 import { printJson, shellQuote } from "../format.ts";
 import { api } from "../http.ts";
+import { ask, isInteractive } from "../prompt.ts";
 import type { Json } from "../state.ts";
+
+const listWorkspaces = (apiUrl: string, apiKey: string) =>
+  api(apiUrl, "/api/workspaces", { apiKey }).pipe(Effect.map((body) => body.workspaces as Json[]));
+
+// One of `workspaces`, by name, handle or ID.
+const pickWorkspace = (workspaces: Json[], name: string) => {
+  const wanted = name.toLowerCase();
+  const match = workspaces.find((w) => w.id === name || w.handle === wanted || w.name?.toLowerCase() === wanted);
+  return match
+    ? Effect.succeed(match)
+    : Effect.fail(new CliError({ kind: "notFound", message: `You are not in a workspace named "${name}". See: htmlartifact workspace list` }));
+};
 
 // One of the caller's workspaces, by name, handle or ID.
 export const resolveWorkspace = (apiUrl: string, apiKey: string, name: string) =>
-  Effect.gen(function* () {
-    const { workspaces } = (yield* api(apiUrl, "/api/workspaces", { apiKey })) as { workspaces: Json[] };
-    const wanted = name.toLowerCase();
-    const match = workspaces.find((w) => w.id === name || w.handle === wanted || w.name?.toLowerCase() === wanted);
-    if (!match) {
-      return yield* new CliError({ kind: "notFound", message: `You are not in a workspace named "${name}". See: htmlartifact workspace list` });
-    }
-    return match;
-  });
+  listWorkspaces(apiUrl, apiKey).pipe(Effect.flatMap((workspaces) => pickWorkspace(workspaces, name)));
 
 // A member of the current workspace, by email.
 const findMember = (apiUrl: string, apiKey: string, email: string) =>
@@ -195,24 +200,90 @@ const demote = setRole("demote", "member", "Make an admin of your current worksp
 
 const leave = Command.make(
   "leave",
-  { json: jsonFlag() },
-  Effect.fn(function* ({ json }) {
+  {
+    workspace: stringFlag("workspace", "name", "Leave this workspace instead of the current one"),
+    yes: switchFlag("yes", "Leave without asking (needed when not at a terminal)"),
+    json: jsonFlag()
+  },
+  Effect.fn(function* (options) {
+    if (envToken()) {
+      return yield* new CliError({
+        kind: "auth",
+        message: "Leaving needs your own sign-in, not HTMLARTIFACT_TOKEN: unset it, then run htmlartifact workspace leave."
+      });
+    }
     const { apiUrl, apiKey } = yield* getAuth();
-    const result = yield* api(apiUrl, "/api/workspaces/leave", { apiKey, method: "POST", body: {} });
-    // The saved sign-in still points into the workspace just left: refresh out of it.
-    const refreshed = yield* leaveWorkspaceSession().pipe(
+    const workspaces = yield* listWorkspaces(apiUrl, apiKey);
+    const current = workspaces.find((w) => w.current);
+    const named = Option.getOrUndefined(options.workspace);
+    const target = named ? yield* pickWorkspace(workspaces, named) : current;
+    if (!target) {
+      return yield* new CliError({
+        kind: "usage",
+        message: "You have no current workspace. Name the one to leave: htmlartifact workspace leave --workspace <name>"
+      });
+    }
+    // Leaving ends access to every artifact there; coming back takes an invite code.
+    if (!options.yes) {
+      const again = `htmlartifact workspace leave${named ? ` --workspace ${shellQuote(target.name)}` : ""} --yes`;
+      if (options.json || !isInteractive()) {
+        return yield* new CliError({
+          kind: "usage",
+          message: `Leaving "${target.name}" ends your access to its artifacts. To confirm, run: ${again}`
+        });
+      }
+      const answer = yield* ask(`Leave "${target.name}"? You lose access to its artifacts. [y/N] `);
+      if (!/^y(es)?$/i.test(answer ?? "")) return yield* new CliError({ message: `Not left: you are still in "${target.name}".` });
+    }
+
+    // The server leaves the sign-in's current workspace: move into another first, and back after.
+    const away = current && current.id !== target.id ? current : undefined;
+    let leaveKey = apiKey;
+    const goBack = away ? switchSession(away.id) : Effect.void;
+    if (!target.current) {
+      yield* switchSession(target.id);
+      leaveKey = (yield* getAuth()).apiKey;
+      // Another CLI run may have moved the shared sign-in meanwhile: never leave the wrong one.
+      if (tokenOrganization(leaveKey) !== target.id) {
+        yield* goBack.pipe(Effect.ignore);
+        return yield* new CliError({ message: `Could not move your sign-in into "${target.name}"; nothing was left. Try again.` });
+      }
+    }
+    const result = yield* api(apiUrl, "/api/workspaces/leave", { apiKey: leaveKey, method: "POST", body: {} }).pipe(
+      Effect.tapError(() => goBack.pipe(Effect.ignore))
+    );
+
+    // Then the sign-in still points into the workspace just left: back to where
+    // it was, or into the only workspace left (as login does), or none.
+    const others = workspaces.filter((w) => w.id !== target.id);
+    const next = away ?? (others.length === 1 ? others[0] : undefined);
+    const problem = yield* (next ? switchSession(next.id) : leaveWorkspaceSession()).pipe(
       Effect.as(null),
       Effect.catch((error) => Effect.succeed(error.message || reason(error)))
     );
-    if (json) {
-      yield* printJson(result);
+    const now = problem ? null : (next ?? null);
+    if (options.json) {
+      yield* printJson({ ...result, current: now ? { id: now.id, name: now.name, handle: now.handle, role: now.role } : null });
     } else {
       yield* Console.log(`Left "${result.workspace.name}".`);
-      yield* Console.log(`See your other workspaces with: ${CMD} workspace list`);
+      if (result.yourInvitesRevoked) {
+        yield* Console.log(`The ${result.yourInvitesRevoked === 1 ? "invite code" : `${result.yourInvitesRevoked} invite codes`} you created there ${result.yourInvitesRevoked === 1 ? "was" : "were"} revoked; its other codes still work.`);
+      }
+      if (now) {
+        yield* Console.log(`${away ? "Still in" : "Now in"} "${now.name}".`);
+      } else if (!problem && others.length) {
+        yield* Console.log(`Pick your next workspace with: ${CMD} workspace switch <name> (you are in ${others.map((w) => w.name).join(", ")})`);
+      } else if (!problem) {
+        yield* Console.log(`You are not in any workspace now: ${CMD} workspace create <name> | workspace join <code>`);
+      }
     }
-    if (refreshed) yield* Console.error(`Warning: left, but could not refresh your sign-in: ${refreshed}`);
+    if (problem) yield* Console.error(`Warning: left, but could not refresh your sign-in: ${problem}`);
   })
-).pipe(Command.withDescription("Leave your current workspace. Its last admin must promote someone else first."));
+).pipe(
+  Command.withDescription(
+    "Leave your current workspace, or another with --workspace (asks first; --yes to skip). Its last admin must promote someone else first."
+  )
+);
 
 const deleteWorkspace = Command.make(
   "delete",

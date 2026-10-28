@@ -13,13 +13,13 @@
   ],
   "homepage": "https://htmlartifact.pages.dev",
   "bugs": {
-    "url": "https://github.com/Dhruv2mars/htmlartifact/issues"
+    "email": "Dhruv2mars@gmail.com"
   },
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Dhruv2mars/htmlartifact.git"
+    "url": "https://entire.com/et/dhruv2mars/htmlartifact"
   },
   "files": [
     "dist/",
@@ -37,6 +37,7 @@
     "pretest": "bun run build && bun run build:web",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "knip",
+    "check": "bun scripts/check.ts",
     "test": "bun run test:d1 && bun run test:r2",
     "test:d1": "HTMLARTIFACT_TEST_STORAGE=d1 node --test --test-concurrency=1 --test-timeout=120000 test/*.test.js",
     "test:r2": "HTMLARTIFACT_TEST_STORAGE=r2 node --test --test-concurrency=1 --test-timeout=120000 test/*.test.js",
@@ -44,6 +45,8 @@
     "dev:local": "node scripts/dev-local.mjs",
     "build:pages": "bun scripts/build-pages.ts",
     "deploy:all": "bun scripts/deploy.ts",
+    "ship": "bun scripts/ship.ts",
+    "release": "bun scripts/release.ts",
     "smoke": "bun scripts/smoke.ts",
     "migrate:r2": "bun scripts/migrate-blobs-to-r2.ts",
     "build:web": "react-router typegen web && react-router build web && node web/prerender.mjs",

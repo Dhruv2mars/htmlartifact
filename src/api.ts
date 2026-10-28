@@ -1,7 +1,7 @@
 import type { Context, Hono, MiddlewareHandler, Next } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { randomToken, sha256 } from "./crypto.ts";
-import { FLAGS, bumpMembershipEpoch, databaseUsage, findWorkspace, findWorkspaceByHandle, isRevoked, now, revokeAllInvites, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
+import { FLAGS, bumpMembershipEpoch, databaseUsage, findWorkspace, findWorkspaceByHandle, forgetDeparture, isRevoked, now, recordDeparture, revokeAllInvites, revokeCiKeysBy, revokeInvitesBy, revokeInvitesUpTo, saveWorkspace, setRevoked, setRevokedAtEpoch, workspaceStoredBytes } from "./db.ts";
 import { listMyDrafts, listWorkspaceDrafts } from "./drafts.ts";
 // The Worker validates with the native HTMLRewriter (Workers Free CPU limits);
 // parse5 (src/html-policy.ts) stays in the CLI.
@@ -483,8 +483,8 @@ export function registerApi(app: Hono<AppEnv>): void {
           422
         );
       }
-      await endMembership(c, viewer.account_id, viewer.organization_id, membership.id, hold);
-      return c.json({ ok: true, workspace: workspaceJson(viewer.workspace) });
+      const yourInvitesRevoked = await endMembership(c, viewer.account_id, viewer.organization_id, membership.id, hold, { leaving: true });
+      return c.json({ ok: true, workspace: workspaceJson(viewer.workspace), yourInvitesRevoked });
     });
   });
 
@@ -954,27 +954,50 @@ async function withAdminLock<E extends AppEnv>(
   }
 }
 
-// Ends a membership (a removal, or leaving). Access ends on the next request,
-// and every invite code the workspace issued until now is revoked: whoever
-// leaves may hold one. `hold` is withAdminLock's.
+// Ends a membership (a removal, or leaving). Access ends on the next request.
+// A removal revokes every invite code the workspace issued until now: whoever
+// is removed may hold one. Leaving is the member's own choice, so the
+// workspace's codes keep working (one contributor leaving must not break an
+// open project's pinned invite link); an admin who leaves loses the codes they
+// issued, as on demotion (returns how many of theirs were live). `hold` is
+// withAdminLock's.
 async function endMembership<E extends AppEnv>(
   c: Context<E>,
   userId: string,
   organizationId: string,
   membershipId: string,
-  hold: () => Promise<void>
-): Promise<void> {
+  hold: () => Promise<void>,
+  { leaving = false }: { leaving?: boolean } = {}
+): Promise<number> {
   const db = c.env.DB;
+  let theirs = 0;
+  const revokeCodes = async () => {
+    if (leaving) theirs += await revokeInvitesBy(db, userId, organizationId);
+    else await revokeInvitesUpTo(db, organizationId, now());
+  };
   // Portal sessions outlive AuthKit sessions: end them first (a failure
   // here changes nothing, so the request can simply be retried).
   await revokePortalLinks(c.get("config"), organizationId, userId);
-  await revokeInvitesUpTo(db, organizationId, now());
+  await revokeCodes();
   const epoch = await bumpMembershipEpoch(db, userId, organizationId);
   await hold();
-  await workos(c.get("config")).client.userManagement.deleteOrganizationMembership(membershipId);
+  try {
+    // Right before the delete, so a leave that fails earlier leaves no marker.
+    if (leaving) await recordDeparture(db, membershipId, organizationId);
+    await workos(c.get("config")).client.userManagement.deleteOrganizationMembership(membershipId);
+  } catch (error) {
+    if (leaving) {
+      // Still a member: a later deletion of this membership is a removal.
+      await forgetDeparture(db, membershipId).catch(() => undefined);
+      // Already gone: someone removed them meanwhile (say, in the WorkOS dashboard).
+      if (Reflect.get(Object(error), "status") === 404) await revokeInvitesUpTo(db, organizationId, now());
+    }
+    throw error;
+  }
   await setRevokedAtEpoch(db, userId, organizationId, true, epoch);
   // Again, for a code an in-flight request of theirs created meanwhile.
-  await revokeInvitesUpTo(db, organizationId, now());
+  await revokeCodes();
+  return theirs;
 }
 
 // Who may publish a new version of an artifact: its author, a workspace
