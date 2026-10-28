@@ -307,8 +307,8 @@ export const upload = Command.make(
 
 // The workspace an upload goes to, for its path's binding: the saved
 // sign-in's, or the one HTMLARTIFACT_TOKEN's key belongs to (remembered from
-// an earlier answer, else asked once). Null when it can't be told: the path
-// then counts as not published in this workspace.
+// an earlier answer, else asked once). If asking fails, so does the upload:
+// guessing "not published here" would publish a duplicate.
 const uploadWorkspace = (apiUrl: string, apiKey: string, organizationId: string | null) =>
   organizationId
     ? Effect.succeed(organizationId)
@@ -317,9 +317,10 @@ const uploadWorkspace = (apiUrl: string, apiKey: string, organizationId: string 
         if (known) return known;
         const me = yield* api(apiUrl, "/api/me", { apiKey });
         const id: string | null = me.workspace?.id || null;
-        if (id) yield* saveApiKeyWorkspace(apiUrl, apiKey, id);
+        // Only a cache: failing to write it changes nothing for this upload.
+        if (id) yield* saveApiKeyWorkspace(apiUrl, apiKey, id).pipe(Effect.ignore);
         return id;
-      }).pipe(Effect.orElseSucceed(() => null));
+      });
 
 // What to do when the artifact a path was published to is not in the current
 // workspace. A mapping saved by this CLI is per workspace, so it was deleted;

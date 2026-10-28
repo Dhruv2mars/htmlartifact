@@ -595,14 +595,16 @@ async function laterTitle(html: string, restore: (text: string) => string): Prom
 }
 
 // The text of an element's content (an <h1>'s), as parse5 reads it: text
-// outside inert <template>s, references decoded. HTMLRewriter reads the
-// markup, so a ">" in a quoted attribute stays in its tag.
+// outside inert HTML <template>s (an SVG one is ordinary), references
+// decoded. HTMLRewriter reads the markup, so a ">" in a quoted attribute
+// stays in its tag.
 async function contentText(html: string): Promise<string> {
   let text = "";
   let templates = 0;
   await new HTMLRewriter()
     .on("template", {
       element(element) {
+        if (element.namespaceURI !== HTML_NS) return;
         templates++;
         try {
           element.onEndTag(() => {

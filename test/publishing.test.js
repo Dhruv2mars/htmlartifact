@@ -227,6 +227,32 @@ test("a path's artifact is found by workspace, whichever credential publishes th
   assert.equal(third.draftId, first.draftId, "so does the saved sign-in, in the same workspace");
 });
 
+test("an API key whose workspace can't be looked up fails the upload rather than publish a duplicate", async () => {
+  // A stand-in for the API: /api/me fails, as during an outage.
+  const paths = [];
+  const server = http.createServer((req, res) => {
+    paths.push(req.url);
+    req.resume();
+    res.writeHead(503, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "Service unavailable." }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const apiUrl = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const keyHome = path.join(stack.tmp, "outage-home");
+    const file = writeHtml(stack.tmp, "outage.html", page("Outage"));
+    // The path was published here before (with another key): it has a binding.
+    const dir = path.join(keyHome, "drafts", createHash("sha256").update(`${apiUrl}\n${file}`).digest("hex"));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${createHash("sha256").update("org_x").digest("hex")}.json`), JSON.stringify({ draftId: "abcdefghijkl" }));
+    const failed = await fails(["upload", file], { HTMLARTIFACT_HOME: keyHome, HTMLARTIFACT_TOKEN: "rotated-key", HTMLARTIFACT_API_URL: apiUrl });
+    assert.notEqual(failed.exit, 0);
+    assert.deepEqual(paths, ["/api/me"], "nothing was uploaded");
+  } finally {
+    server.close();
+  }
+});
+
 test("a deleted artifact: the path's upload says it was deleted and that --new publishes it again", async () => {
   const file = writeHtml(stack.tmp, "gone.html", page("Gone soon"));
   const first = await json(["upload", file, "--new"]);

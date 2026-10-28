@@ -228,6 +228,7 @@ describe("an <h1> names a page with no <title>", () => {
     ["a comment inside", "<h1><!-- draft -->Commented</h1>", "Commented"],
     ["a > in a quoted attribute inside", '<h1>A<span title="x>y">B</span>C</h1>', "ABC"],
     ["a <template> inside is not text", "<h1>Report<template>Hidden</template></h1>", "Report"],
+    ["an SVG <template> inside is ordinary text", "<h1>A<svg><template>hidden</template><text>B</text></svg>C</h1>", "AhiddenBC"],
     ["an empty <h1> first", "<h1> </h1><h1>Second heading</h1>", "Second heading"],
     ["not one in a <template>", "<template><h1>Hidden</h1></template><h1>Shown</h1>", "Shown"],
     ["inside <noscript> (no-JavaScript readers see it)", "<noscript><h1>No JS</h1></noscript><p>x</p>", "No JS"],
