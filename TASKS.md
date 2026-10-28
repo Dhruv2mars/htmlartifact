@@ -7,8 +7,9 @@ Done = a removed person (admin removal, or a non-departure membership.deleted we
 - [x] joinWithCode: a recorded user gets the invalid-code answer before any use is reserved; a removal recorded mid-join undoes the join; the webhook undoes any rejoin made while the removal stands
 - [x] `listRemoved(c)` / `allowBack(c, userId)` exported (Outcome shape, @public for knip); `GET /api/workspaces/removed`, `DELETE /api/workspaces/removed/:userId`; CLI `workspace removed`, `workspace allow-back <email>`; isolation ROUTES
 - [x] Purge: deleteWorkspaceStatements, scrubUserStatements, restore-reconcile (carried with MAX); SECURITY.md "What we store" and offboarding; README; CHANGELOG
-- [ ] Tests: focused suites green; new tests fail on fbacdf8
-- [ ] Trail, Sol, Buildkite, merge (after merging origin/main with design/overhaul)
+- [x] Tests: new tests fail on main's code (Buildkite #58, this branch's tests on 263c336: removed Sam's fresh-link join 200 not 404, Tom's rejoin not undone, no /removed route, nothing purged/carried) and pass here (Buildkite #59 all 8 jobs, D1 + R2). Local deletion suite can't start on this Mac (harness setup), so Buildkite is the proof. Purge harness caught a real race (organization.deleted vs a member's membership.deleted), fixed by checking the tombstone in the insert
+- [x] Trail https://entire.com/et/dhruv2mars/-/trails/37; sol-loop GPT-6.1 Sol (high): r1 CHANGES (S1 blocker cached undo predicate vs Allow back; S2 refused mid-join kept the use; S3 user.deleted race; S4 LIMIT 100 hid removals from allow-back), all fixed; r2 APPROVE
+- [ ] Buildkite green on the final head, merged
 - [ ] Follow-up (web, not this branch): People page "Removed" list with "Allow back", on listRemoved/allowBack
 
 ## Design overhaul (2026-10-26, branch design/overhaul, one PR, full send)
