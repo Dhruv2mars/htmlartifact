@@ -144,6 +144,13 @@ describe("app origin", () => {
   });
 });
 
+test("the wrapper's bar says who published the version and when, without script", async () => {
+  const { wrapper } = await frameOf(single.publicUrl);
+  assert.match(wrapper.text_, /<span class="meta"><span class="by"><span class="sr">Published by <\/span>Alice<\/span>/);
+  assert.match(wrapper.text_, /<time datetime="\d{4}-\d\d-\d\dT[^"]+" title="[^"]+ UTC">(just now|\d+ minutes? ago)<\/time>/);
+  assert.doesNotMatch(wrapper.text_, /<script/i, "the wrapper stays script-free");
+});
+
 describe("sandbox origin", () => {
   test("the capability URL serves the HTML, sandboxed, frameable only by the app", async () => {
     const { src } = await frameOf(single.publicUrl);
@@ -343,11 +350,4 @@ describe("web app assets", () => {
     assert.match(signIn.headers.get("content-type") || "", /text\/html/);
     assert.match(await signIn.text(), /Sign in to htmlartifact/);
   });
-});
-
-test("the wrapper's bar says who published the version and when, without script", async () => {
-  const { wrapper } = await frameOf(single.publicUrl);
-  assert.match(wrapper.text_, /<span class="meta"><span class="by"><span class="sr">Published by <\/span>Alice<\/span>/);
-  assert.match(wrapper.text_, /<time datetime="\d{4}-\d\d-\d\dT[^"]+" title="[^"]+ UTC">(just now|\d+ minutes? ago)<\/time>/);
-  assert.doesNotMatch(wrapper.text_, /<script/i, "the wrapper stays script-free");
 });
