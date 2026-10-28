@@ -25,14 +25,16 @@ PR merged with before/after screenshots.
 - [x] Sol round 6: APPROVE (S8-S10 resolved, no new findings; sandbox tests 14/14)
 - [x] Critic round 6: 8.5 (typography, color, consistency, interaction 9; identity, layout, responsive, ux, copy, a11y 8.5); D3/D5/D12-D16 resolved; D17-D19 new
 - [x] Round-7 fixes f0e9c89: share link shows its destination, phone filter row, phone seal, demo copy, undefined --wash focus halo; D1 250/250
-- [ ] Accessibility pass (AX tree, keyboard, zoom, text spacing, forced colors), every finding reproduced by a skeptic, then fixed (running)
-- [ ] Dhruv (2026-10-27): "used it as a user, so many things I need I can't do; think about what users want, not cosmetics; make it good enough to launch for daily use". This thread owns the web product; non-frontend work goes to separate threads
-  - [ ] Product discovery from real use (3 personas on the local stack, capability inventory, market, past decisions) -> prioritized plan (running)
-  - [ ] Build the P0 web capabilities (first known: invite/members/revoke from the web; today CLI-only)
-  - [ ] Website GitHub links -> new canonical source URL (ops thread settles it)
-- [ ] Spawned: "Ship without GitHub: checks, deploy, release on Entire" (full send)
-- [ ] Repeat until every category >= 9
-- [ ] Trail with before/after screenshots, trail runners clean, merged
+- [x] Accessibility pass e3f5502 + e009757 (AX tree, keyboard, zoom, text spacing, forced colors). Sol round 7: APPROVE, no findings
+- [x] Dhruv (2026-10-27): "used it as a user, so many things I need I can't do; make it good enough to launch for daily use"
+  - [x] Product discovery from real use -> PLAN.md (product plan v2, milestones M0-M4)
+  - [x] Team from the web (75f5214, 75aa645): People, invite links, roles, remove, leave, delete
+  - [x] Feed and viewer (98607eb): who published and when in the viewer bar, nearly-full storage warning, day groups, row menu
+  - [x] Source links point at Entire
+- [x] Spawned: "Ship without GitHub: checks, deploy, release on Entire" (merged)
+- [x] Dhruv (2026-10-28): "no more rounds, ship what's done". Stopped at critic 8.5 (4 categories at 9, 6 at 8.5); open critic notes D17-D19 and the PLAN.md M1+ web items are follow-ups
+- [ ] Trail #2 checks green on Buildkite, merged
+- Local full-suite runs hit macOS ephemeral-port exhaustion when several threads' suites run at once (EADDRNOTAVAIL, 30k+ TIME_WAIT); Buildkite is the gate
 Out-of-scope issues found (spawned as separate full-send threads):
 
 ## Membership and login bugs from simulated users (2026-10-27, branch fix/membership-login)
