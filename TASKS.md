@@ -25,7 +25,7 @@ PR merged with before/after screenshots.
 - [x] Sol round 6: APPROVE (S8-S10 resolved, no new findings; sandbox tests 14/14)
 - [x] Critic round 6: 8.5 (typography, color, consistency, interaction 9; identity, layout, responsive, ux, copy, a11y 8.5); D3/D5/D12-D16 resolved; D17-D19 new
 - [x] Round-7 fixes f0e9c89: share link shows its destination, phone filter row, phone seal, demo copy, undefined --wash focus halo; D1 250/250
-- [x] Accessibility pass e3f5502 + e009757 (AX tree, keyboard, zoom, text spacing, forced colors). Sol round 7: APPROVE, no findings
+- [x] Accessibility pass (AX tree, keyboard, zoom, text spacing, forced colors): 24 findings each reproduced by a skeptic, fixed in e3f5502 + e009757; re-measured by checkers (viewer C12-C14, forms C15, lists C16-C18 fixed; C19 partly, so the history page now shows the repo); regressions they found (skip-link shadow, its ring over a hidden bar, version links wrapping) fixed and re-measured (0 px at rest). Sol round 7: APPROVE, no findings
 - [x] Dhruv (2026-10-27): "used it as a user, so many things I need I can't do; make it good enough to launch for daily use"
   - [x] Product discovery from real use -> PLAN.md (product plan v2, milestones M0-M4)
   - [x] Team from the web (75f5214, 75aa645): People, invite links, roles, remove, leave, delete
