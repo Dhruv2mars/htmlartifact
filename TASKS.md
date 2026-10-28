@@ -1,5 +1,16 @@
 # htmlartifact — GA checklist
 
+## M0 capacity: backend and CLI (2026-10-28, branch feat/m0-capacity)
+Source: product plan v2 (/tmp/ha-design/product/plan-v2.md; PLAN.md on web/team): §2 Loop H, §3 G0a/G0b/G0c/G45 and the "every new table" rule, §5 M0. Based on fix/cli-publishing (Trail #26, open), rebased onto main once it lands.
+Done = each item has its proof named next to it (a test that fails without the change, or command output); typecheck, lint and `bun run test` (D1 + R2) green locally and on Buildkite; Trail reviewed by Sol (sol-loop) and merged; shipped, with the CPU and rows figures measured in production recorded here. No edits to web/app/**, src/web.ts, src/render-web.ts, src/render.ts, or the workspace-admin handlers in src/api.ts (web/team moves them): web changes go in the Trail.
+- [ ] G0a gzip storage: the CLI sends each page gzip-compressed; the server inflates inside validation (1 MiB inflated cap; trailing data and multi-member streams refused), stores the received bytes (`.gz` key, BLOB in D1), serves them with `Content-Encoding: gzip` (inflating for clients that don't accept gzip); the quota counts stored bytes; old raw versions keep serving
+- [ ] G0a CPU: inflate + validate of a dense 1 MiB page measured (locally, then in production) against Workers Free's 10 ms
+- [ ] G0b measured budgets: D1 `meta.rows_written` measured per action replaces the doubled estimates; scopes `upload`, `engage`, `ops`; sign-ins, webhooks, deletes never refused; rows-per-upload figure recorded
+- [ ] G0c workspace-creation cap (beta gate) for the API, exported for src/web.ts (`creationOpen(c)`)
+- [ ] G45 CLI version floor: `htmlartifact/<v>` User-Agent, `cli_outdated` notice, uploads below the floor refused with a typed code; exit codes and `--json` documented
+- [ ] Purge-list harness: test/deletion.test.js asserts zero leftover rows in every table for each kind of deletion and for `user.deleted`; an unclassified new table fails it
+- [ ] Release CLI 0.3.0 (`bun run release`) if possible; `npm whoami` is 401 on this machine (2026-10-28)
+
 ## Membership and login bugs from simulated users (2026-10-27, branch fix/membership-login)
 Source: /tmp/ha-design/product/bugs-membership.md (agents simulating real users on the local stack).
 Done = each bug below is either fixed with a test that fails on main and passes here (test named next to it) or rejected with the reason; typecheck, lint and `bun run test` green locally and on Buildkite; Trail reviewed by Sol (sol-loop) and merged. No edits to web/app/**, src/render-web.ts, src/render.ts, src/web.ts (frontend thread owns them): web changes are described in the Trail instead.
