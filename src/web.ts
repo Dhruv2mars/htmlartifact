@@ -225,7 +225,8 @@ export function registerWeb(app: Hono<AppEnv>): void {
   // will happen), POST does it and redirects with a one-time notice.
   app.get("/people", signedIn, inWorkspace, workosReads, async (c) => {
     const viewer = c.get("viewer");
-    const [members, invites] = await Promise.all([listMembers(c), viewer.role === "admin" ? listInvites(c) : null]);
+    const admin = viewer.role === "admin";
+    const [members, invites] = await Promise.all([listMembers(c), admin ? listInvites(c) : null]);
     if (!members.body.ok) return renderPage(c, message("Couldn't load people", members.body.error, "/people"), members.status);
     const origin = c.get("origin");
     const { invites: limits } = c.get("config");
@@ -247,7 +248,9 @@ export function registerWeb(app: Hono<AppEnv>): void {
               })
             )
           : null,
-      invite: { days: inviteDays(limits.ttlDays), defaultDays: limits.ttlDays, maxUses: limits.maxUses }
+      // A team link defaults to 10 seats on the web: enough for a team, few
+      // enough that a leaked link can't fill the workspace.
+      invite: { days: inviteDays(limits.ttlDays), defaultDays: limits.ttlDays, defaultUses: Math.min(10, limits.maxUses), maxUses: limits.maxUses }
     });
   });
 

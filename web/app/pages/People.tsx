@@ -22,7 +22,7 @@ export function People({
   session: Session;
   people: Person[];
   invites: InviteLink[] | null;
-  invite: { days: number[]; defaultDays: number; maxUses: number };
+  invite: Invite;
 }) {
   const workspace = session.workspace?.name ?? "this workspace";
   const admin = session.role === "admin";
@@ -143,10 +143,10 @@ function InviteLinks({
 }: {
   workspace: string;
   invites: InviteLink[];
-  invite: { days: number[]; defaultDays: number; maxUses: number };
+  invite: Invite;
   fresh: string | null;
 }) {
-  const uses = [...new Set([1, 5, 10, 25, invite.maxUses])].filter((n) => n <= invite.maxUses).sort((a, b) => a - b);
+  const uses = [...new Set([1, 5, 10, 25, invite.defaultUses, invite.maxUses])].filter((n) => n <= invite.maxUses).sort((a, b) => a - b);
   return (
     <section id="links" aria-labelledby="links-title" className="scroll-mt-28">
       <Rule width="app" inner="flex items-center justify-between gap-4 px-4 py-2 sm:px-5">
@@ -165,12 +165,12 @@ function InviteLinks({
       <Rule width="app" inner="px-4 py-4 sm:px-5">
         <form method="post" action="/people/invites" className="flex flex-wrap items-end gap-x-3 gap-y-3">
           <Choice label="Works for" name="days" options={invite.days.map((d) => [d, d === 1 ? "1 day" : `${d} days`])} value={invite.defaultDays} />
-          <Choice label="Up to" name="uses" options={uses.map((n) => [n, n === 1 ? "1 person" : `${n} people`])} value={invite.maxUses} />
+          <Choice label="Up to" name="uses" options={uses.map((n) => [n, n === 1 ? "1 person" : `${n} people`])} value={invite.defaultUses} />
           <Submit pending="Creating link…" className="w-full sm:w-auto">
             Create invite link
           </Submit>
           <p className="basis-full text-[13px] leading-relaxed text-muted">
-            Anyone with the link who signs in joins {workspace} as a member. Revoke it here any time.
+            Anyone with the link can join {workspace} and read everything in it until it expires or is used up. Revoke it here any time.
           </p>
         </form>
       </Rule>
@@ -182,7 +182,9 @@ function InviteLinks({
             ))}
           </ul>
         ) : (
-          <p className="px-4 py-4 text-[14px] text-muted sm:px-5">No live invite links. Create one, then send it to your team.</p>
+          <p className="px-4 py-4 text-[14px] leading-relaxed text-muted sm:px-5">
+            No live invite links. Removing someone stops every team link; you can make a new one right after.
+          </p>
         )}
       </Rule>
     </section>
@@ -253,6 +255,8 @@ function Choice({ label, name, options, value }: { label: string; name: string; 
     </div>
   );
 }
+
+type Invite = { days: number[]; defaultDays: number; defaultUses: number; maxUses: number };
 
 const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 

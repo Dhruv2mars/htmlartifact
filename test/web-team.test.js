@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { Browser, accessToken, callApi, startStack } from "./helpers.js";
+import { Browser, CI_KEY, accessToken, callApi, startStack } from "./helpers.js";
 
 // Running a workspace from the browser (People and Settings): the same
 // changes the CLI makes through the API, on the same code path, so each test
@@ -116,6 +116,14 @@ test("removing someone says what ends first, revokes the links they may hold, an
   assert.match(text(next), /You no longer have access to Acme, so you're now in Other\./);
 });
 
+test("people pages are never cached, and CI keys can't list members", async () => {
+  const alice = await signedIn("alice@acme.test", "Acme");
+  assert.equal((await alice.get("/people")).headers.get("cache-control"), "no-store");
+  const listed = await callApi(stack, CI_KEY, "GET", "/api/workspaces/members");
+  assert.equal(listed.status, 403);
+  assert.equal(listed.body.error, "API keys cannot list members.");
+});
+
 test("leaving from the web: the only admin is stopped; a member leaves and is told", async () => {
   const alice = await signedIn("alice@acme.test", "Acme");
   assert.match(text(await alice.get("/settings/leave")), /You're the only admin of Acme\./);
@@ -124,13 +132,14 @@ test("leaving from the web: the only admin is stopped; a member leaves and is to
   assert.match(text(refused), /You are the last admin of "Acme"\. Make someone else an admin first, or delete the workspace\./);
 
   await alice.post("/people/invites", {});
+  const before = (await liveInvites()).map((i) => i.code).sort();
   const bob = await signedIn("bob@acme.test", "Acme");
   assert.match(text(await bob.get("/settings/leave")), /Leave Acme\?/);
   const left = await bob.post("/settings/leave");
   assert.equal(new URL(left.finalUrl).pathname, "/workspaces", "no workspace left");
   assert.match(text(left), /You left Acme\./);
   assert.equal(await idOf("bob@acme.test"), undefined);
-  assert.equal((await liveInvites()).length, 1, "a member leaving keeps the team's links");
+  assert.deepEqual((await liveInvites()).map((i) => i.code).sort(), before, "a member leaving keeps the team's links");
 });
 
 test("deleting a workspace from the web needs its exact name", async () => {

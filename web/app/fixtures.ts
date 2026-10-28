@@ -143,7 +143,7 @@ export function fixturePage(url: URL): Page {
         session: s,
         people: (worst ? worstPeople : people).map((p) => ({ ...p, role: p.you ? role : p.role })),
         invites: role === "admin" ? (empty ? [] : worst ? worstInvites : invites) : null,
-        invite: { days: [1, 7, 30], defaultDays: 7, maxUses: 50 }
+        invite: { days: [1, 7, 30], defaultDays: 7, defaultUses: 10, maxUses: 50 }
       };
     case "settings":
       return {

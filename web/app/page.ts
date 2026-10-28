@@ -128,7 +128,7 @@ export type Page =
       session: Session;
       people: Person[];
       invites: InviteLink[] | null;
-      invite: { days: number[]; defaultDays: number; maxUses: number };
+      invite: { days: number[]; defaultDays: number; defaultUses: number; maxUses: number };
     }
   // admins: their names, for members who need one.
   | { kind: "settings"; session: Session; usage: { storedBytes: number; limitBytes: number }; admins: string[] }

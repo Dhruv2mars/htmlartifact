@@ -717,9 +717,11 @@ export interface MemberInfo {
 }
 
 // Everyone in the caller's workspace, live from WorkOS. Any member may list
-// them (they share every artifact anyway).
+// them (they share every artifact anyway); API keys may not.
 export async function listMembers(c: Context<MemberEnv>): Promise<Outcome<{ members: MemberInfo[] }>> {
   const viewer = c.get("viewer");
+  // A CI key publishes; it has no business harvesting everyone's email.
+  if (viewer.is_api_key) return refusal(403, "API keys cannot list members.");
   const { client } = workos(c.get("config"));
   const organizationId = viewer.organization_id;
   const [users, memberships] = await Promise.all([
@@ -849,6 +851,8 @@ export async function deleteWorkspace(
         : `To delete this workspace and every artifact in it, send {"confirm": ${JSON.stringify(workspace.name)}} (its exact name). This cannot be undone.`
     );
   }
+  // The role above may be up to a few minutes old: ask WorkOS before erasing everything.
+  if (!(await stillAdmin(c, viewer))) return refusal(403, ADMINS_ONLY);
   await c.env.DB.batch(deleteWorkspaceStatements(c.env.DB, viewer.organization_id));
   await runWorkspaceDeletions(c.env, viewer.organization_id);
   return { status: 200, body: { ok: true, workspace: workspaceJson(workspace) } };
