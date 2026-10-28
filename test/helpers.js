@@ -2,6 +2,7 @@ import { createEmulator } from "@workos/emulate";
 import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -90,6 +91,37 @@ export function testConfigPath() {
     );
   }
   return generatedConfig;
+}
+
+// The Worker's D1 database (and R2 bucket, on R2 runs) opened from outside the
+// Worker, on a stack's local state (`<stack.tmp>/state/v3`): what wrangler's
+// getPlatformProxy does, minus its bug. getPlatformProxy's placeholder Worker
+// passes every request it gets on to the request's own URL, so the stray
+// request each one receives as it starts loops through it forever: thousands
+// of new connections a second, until the machine runs out of ports and every
+// suite on it fails with EADDRNOTAVAIL. Here the placeholder answers 404.
+// Uses the Miniflare wrangler bundles, so the storage format is the app's.
+export async function localBindings(persistPath) {
+  const { Miniflare, convertV4MiniflareOptions } = createRequire(import.meta.resolve("wrangler"))("miniflare");
+  const config = fs.readFileSync(testConfigPath(), "utf8");
+  const bucket = config.match(/^bucket_name = "([^"]+)"/m)?.[1];
+  const mf = new Miniflare(
+    convertV4MiniflareOptions({
+      workers: [
+        {
+          name: "htmlartifact-test-bindings",
+          modules: true,
+          script: "export default { fetch: () => new Response(null, { status: 404 }) };",
+          compatibilityDate: config.match(/^compatibility_date = "([^"]+)"/m)[1],
+          d1Databases: { DB: config.match(/^database_id = "([^"]+)"/m)[1] },
+          ...(bucket ? { r2Buckets: { ARTIFACTS: bucket } } : {})
+        }
+      ],
+      resourcePersistencePath: persistPath
+    })
+  );
+  const env = { DB: await mf.getD1Database("DB"), ...(bucket ? { ARTIFACTS: await mf.getR2Bucket("ARTIFACTS") } : {}) };
+  return { env, dispose: () => mf.dispose() };
 }
 
 export async function startStack({ sandbox = false, directoryProvisioning = false, enterpriseConnections = directoryProvisioning, vars = {} } = {}) {
@@ -353,7 +385,7 @@ export function writeHtml(dir, name, html) {
 export const page = (title, body = "<p>hello</p>") =>
   `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><h1>${title}</h1>${body}</body></html>`;
 
-// The app and a test's getPlatformProxy share one local SQLite file; a read
+// The app and a test's localBindings share one local SQLite file; a read
 // racing a writer occasionally loses the lock. Retries only that transient error.
 export async function retryLocked(run) {
   for (let attempt = 0; ; attempt += 1) {

@@ -5,15 +5,14 @@ import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
-import { getPlatformProxy } from "wrangler";
 import pkg from "../package.json" with { type: "json" };
-import { Browser, STORAGE, accessToken, callApi, page, retryLocked, startStack, testConfigPath, writeHtml } from "./helpers.js";
+import { Browser, STORAGE, accessToken, callApi, localBindings, page, retryLocked, startStack, writeHtml } from "./helpers.js";
 
 // Capacity on the free tier (product plan v2, milestone M0): pages stored
 // gzip-compressed (G0a), D1 write budgets counted as D1 measures them, in
 // separate scopes (G0b), the beta gate on new workspaces (G0c), and the CLI
 // version floor (G45). Checked against the stores themselves through
-// wrangler's getPlatformProxy on the Worker's local state.
+// localBindings (test/helpers.js) on the Worker's local state.
 
 const run = promisify(execFile);
 const CLI = new URL("../dist/htmlartifact.js", import.meta.url).pathname;
@@ -57,7 +56,7 @@ async function uploadAs(stack, token, userAgent, body) {
 }
 
 async function openProxy(stack) {
-  return getPlatformProxy({ configPath: testConfigPath(), persist: { path: path.join(stack.tmp, "state", "v3") } });
+  return localBindings(path.join(stack.tmp, "state", "v3"));
 }
 const rowsOf = (proxy, sql, ...binds) => retryLocked(async () => (await proxy.env.DB.prepare(sql).bind(...binds).all()).results);
 const today = () => new Date().toISOString().slice(0, 10);

@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
-import { getPlatformProxy } from "wrangler";
-import { accessToken, callApi, findUser, page, retryLocked, startStack, testConfigPath, workosApi } from "./helpers.js";
+import { accessToken, callApi, findUser, localBindings, page, retryLocked, startStack, workosApi } from "./helpers.js";
 
 // Admin changes racing each other, and the D1 writes they may spend.
 
@@ -72,7 +71,7 @@ describe("D1 write budget on admin routes", () => {
   let proxy;
   before(async () => {
     stack = await startStack({ vars: { HTMLARTIFACT_OPS_ROWS_PER_WORKSPACE_DAY: "40" } });
-    proxy = await getPlatformProxy({ configPath: testConfigPath(), persist: { path: path.join(stack.tmp, "state", "v3") } });
+    proxy = await localBindings(path.join(stack.tmp, "state", "v3"));
   });
   after(async () => {
     await proxy?.dispose();

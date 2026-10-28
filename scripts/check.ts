@@ -1,6 +1,10 @@
 // The merge gate: everything CI on GitHub Actions used to run, in one command.
-// Buildkite runs it on every push (.buildkite/pipeline.yml).
-//   bun run check
+//   bun run check                 -> every step, in order
+//   bun run check -- --part static -> everything but the suites
+//   bun run check -- --part d1     -> the suite on D1 (or r2), one shard of it
+//                                     when BUILDKITE_PARALLEL_JOB(_COUNT) is set
+// Buildkite runs the parts side by side on every push (.buildkite/pipeline.yml):
+// together they are exactly the whole gate.
 // Stops at the first failure. Then the built CLI runs on this machine's Node and
 // on the oldest Node package.json supports (engines), downloaded once from
 // nodejs.org and checked against its SHASUMS256.txt. On a clean tree it records
@@ -16,6 +20,8 @@ const cache = `${root}node_modules/.cache/htmlartifact`;
 const pkg = await Bun.file(`${root}package.json`).json();
 const oldest = pkg.engines.node.replace(/^>=\s*/, "").split(".").concat("0", "0").slice(0, 3).join(".");
 const current = (await $`node --version`.quiet().text()).trim().replace(/^v/, "");
+
+type Step = [string, () => Promise<void>];
 
 async function run(...cmd: string[]) {
   const code = await Bun.spawn(cmd, { cwd: root, stdio: ["inherit", "inherit", "inherit"] }).exited;
@@ -63,19 +69,37 @@ async function oldestNode() {
   return node;
 }
 
-const steps: [string, () => Promise<void>][] = [
-  ["install", () => run("bun", "install", "--frozen-lockfile")],
-  ["typecheck", () => run("bun", "run", "typecheck")],
-  ["typecheck:cli", () => run("bun", "run", "typecheck:cli")],
-  ["typecheck:web", () => run("bun", "run", "typecheck:web")],
-  // knip under Node runs out of memory in Buildkite's container (oxc-parser), not under Bun.
-  ["lint", () => run("bun", "--bun", "run", "lint")],
-  ["changelog", () => run("bun", "scripts/changelog.ts", "check")],
-  // pretest builds the CLI and the web app; the suite runs on D1, then on R2 (local only).
-  ["test", () => run("bun", "run", "test")],
-  [`cli on node ${current}`, () => cli("node")],
-  [`cli on node ${oldest}`, async () => cli(await oldestNode())],
-];
+// One suite (D1 or R2 storage), or the shard of it this Buildkite job runs.
+function suite(storage: "d1" | "r2") {
+  const job = process.env.BUILDKITE_PARALLEL_JOB;
+  const count = process.env.BUILDKITE_PARALLEL_JOB_COUNT;
+  const shard = job && count ? [`--test-shard=${Number(job) + 1}/${count}`] : [];
+  return () =>
+    run("env", `HTMLARTIFACT_TEST_STORAGE=${storage}`, "node", "--test", "--test-concurrency=1", "--test-timeout=120000", ...shard, "test/*.test.js");
+}
+
+const install: Step = ["install", () => run("bun", "install", "--frozen-lockfile")];
+const build: Step = ["build", () => run("bun", "run", "pretest")];
+const parts: Record<string, Step[]> = {
+  static: [
+    install,
+    ["typecheck", () => run("bun", "run", "typecheck")],
+    ["typecheck:cli", () => run("bun", "run", "typecheck:cli")],
+    ["typecheck:web", () => run("bun", "run", "typecheck:web")],
+    // knip under Node runs out of memory in Buildkite's container (oxc-parser), not under Bun.
+    ["lint", () => run("bun", "--bun", "run", "lint")],
+    ["changelog", () => run("bun", "scripts/changelog.ts", "check")],
+    build,
+    [`cli on node ${current}`, () => cli("node")],
+    [`cli on node ${oldest}`, async () => cli(await oldestNode())]
+  ],
+  d1: [install, build, ["test on D1", suite("d1")]],
+  r2: [install, build, ["test on R2", suite("r2")]]
+};
+const part = process.argv.includes("--part") ? process.argv[process.argv.indexOf("--part") + 1] : null;
+if (part !== null && !(part in parts)) throw new Error(`--part ${part}: want one of ${Object.keys(parts).join(", ")}`);
+// The whole gate: the static steps, then the suite on D1, then on R2.
+const steps = part ? parts[part] : [...parts.static, ["test on D1", suite("d1")] as Step, ["test on R2", suite("r2")] as Step];
 
 // A CI container may have no usable git checkout; then there is nothing to record.
 const sha = await head().catch(() => "");
@@ -93,8 +117,8 @@ for (const [name, step] of steps) {
   }
   console.log(`✓ ${name} (${seconds(t)})`);
 }
-const recorded = wasClean && (await clean()) && (await head()) === sha;
+const recorded = !part && wasClean && (await clean()) && (await head()) === sha;
 if (recorded) await recordPass(sha);
 console.log(
-  `\n✓ check passed: ${steps.length} steps in ${seconds(started)} on ${sha.slice(0, 7) || "this tree"}${recorded || !sha ? "" : " plus uncommitted changes"}`
+  `\n✓ check${part ? ` --part ${part}` : ""} passed: ${steps.length} steps in ${seconds(started)} on ${sha.slice(0, 7) || "this tree"}${recorded || !sha ? "" : " plus uncommitted changes"}`
 );
