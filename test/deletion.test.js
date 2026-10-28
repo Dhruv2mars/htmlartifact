@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { gzipSync as zlibGzip } from "node:zlib";
 import { after, before, describe, test } from "node:test";
-import { getPlatformProxy, unstable_dev } from "wrangler";
+import { unstable_dev } from "wrangler";
 import {
   Browser,
   CI_KEY,
@@ -14,6 +14,7 @@ import {
   callApi,
   findOrganization,
   findUser,
+  localBindings,
   page,
   refreshInto,
   retryLocked,
@@ -26,12 +27,12 @@ import {
 
 // Real deletion, retention and offboarding, checked against the stores
 // themselves: the local R2 bucket and D1 database the Worker uses (opened
-// here through wrangler's getPlatformProxy on the same persisted state), and
+// here through localBindings on the same persisted state), and
 // the WorkOS emulator. The ops Worker (src/ops.ts) runs too, on the same
 // state, and its cron is triggered for real.
 
 let stack;
-let proxy; // getPlatformProxy: env.ARTIFACTS / env.DB on the Worker's local state
+let proxy; // localBindings: env.ARTIFACTS / env.DB on the Worker's local state
 let ops; // the ops Worker (deploy/ops/wrangler.toml), with test-triggerable cron
 
 before(async () => {
@@ -41,10 +42,7 @@ before(async () => {
   // fatal), and every request to it then hangs: open it in turn, app first.
   assert.equal((await fetch(`${stack.baseUrl}/healthz`)).status, 200);
   const state = path.join(stack.tmp, "state");
-  proxy = await getPlatformProxy({
-    configPath: testConfigPath(),
-    persist: { path: path.join(state, "v3") }
-  });
+  proxy = await localBindings(path.join(state, "v3"));
   await rows("SELECT 1 FROM drafts LIMIT 1");
   // The deploy config names the production D1 database; local state is keyed
   // by database id, so point the ops Worker at the app's (root config) id.

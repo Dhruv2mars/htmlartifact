@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, test } from "node:test";
-import { getPlatformProxy } from "wrangler";
 import { reconcileStatements } from "../scripts/restore-reconcile.ts";
-import { STORAGE, accessToken, callApi, page, refreshInto, retryLocked, signInTokens, startStack, testConfigPath } from "./helpers.js";
+import { STORAGE, accessToken, callApi, localBindings, page, refreshInto, retryLocked, signInTokens, startStack } from "./helpers.js";
 
 // A D1 Time Travel restore (SECURITY.md: Backups and restore) brings back the
 // database as it was at the bookmark: keys and invites revoked since are live
@@ -18,7 +17,7 @@ describe("restore reconciliation", { skip: STORAGE !== "d1" && "D1 storage only"
   before(async () => {
     stack = await startStack();
     assert.equal((await fetch(`${stack.baseUrl}/healthz`)).status, 200);
-    proxy = await getPlatformProxy({ configPath: testConfigPath(), persist: { path: path.join(stack.tmp, "state", "v3") } });
+    proxy = await localBindings(path.join(stack.tmp, "state", "v3"));
     await all("SELECT 1 FROM drafts LIMIT 1");
   });
   after(async () => {
