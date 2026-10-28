@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { isHttpError, registerApi } from "./api.ts";
+import { creationGate } from "./capacity.ts";
 import { getConfig } from "./config.ts";
 import { ensureSchema } from "./db.ts";
 import { isSandboxRequest, registerSandbox } from "./sandbox.ts";
@@ -68,6 +69,9 @@ const app = baseApp();
 registerWebhooks(app);
 registerApi(app);
 registerServing(app);
+// The beta gate (src/capacity.ts) on the web's create form too; it runs
+// before the form's own handler (src/web.ts), which renders the closed state.
+app.post("/workspaces", creationGate);
 registerWeb(app);
 registerAssets(app);
 // Unknown app paths get the web app's page; artifact and API misses keep

@@ -5,7 +5,8 @@ import { findWorkspaceByHandle } from "./db.ts";
 import { draftUrl } from "./public-url.ts";
 import { renderNotFound } from "./render.ts";
 import { renderArtifactFrame } from "./render-web.ts";
-import { getHtmlObject } from "./storage.ts";
+import { getObject } from "./storage.ts";
+import type { StoredBody } from "./gzip.ts";
 import type { AppEnv, DraftRow, PageRow, VersionRow } from "./types.ts";
 
 // An artifact by its draft ID, or by workspace handle + custom URL.
@@ -166,28 +167,59 @@ export async function sendPage(
   page: VersionRow | PageRow,
   frameAncestors?: string
 ): Promise<Response> {
-  const html = await getHtmlObject(c.env, page.object_key);
+  const body = await getObject(c.env, page.object_key);
   c.header("Content-Security-Policy", contentSecurityPolicy(Boolean(page.has_inline_script), frameAncestors));
   c.header("X-Htmlartifact-Draft-Id", draft.id);
   c.header("X-Htmlartifact-Draft-Version", String(version.version_number));
   // Artifacts are private: never let a shared cache keep one.
   c.header("Cache-Control", "private, no-store");
-  return c.html(html);
+  return sendBody(c, body, "text/html; charset=utf-8");
 }
 
 // "Raw HTML" opened in a browser: the page's source, as stored. As text/plain
 // with nosniff it never runs on the app origin, and the sandbox CSP holds
 // even if a browser rendered it anyway. (Bearer requests get the HTML.)
 async function sendSource(c: Context<AppEnv>, draft: DraftRow, version: VersionRow, page: VersionRow | PageRow): Promise<Response> {
-  const html = await getHtmlObject(c.env, page.object_key);
-  c.header("Content-Type", "text/plain; charset=utf-8");
+  const body = await getObject(c.env, page.object_key);
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Content-Security-Policy", "default-src 'none'; sandbox");
   c.header("Referrer-Policy", "no-referrer");
   c.header("X-Htmlartifact-Draft-Id", draft.id);
   c.header("X-Htmlartifact-Draft-Version", String(version.version_number));
   c.header("Cache-Control", "private, no-store");
-  return c.body(html);
+  return sendBody(c, body, "text/plain; charset=utf-8");
+}
+
+// A stored page: text as is; gzip bytes (src/gzip.ts) as received, with
+// Content-Encoding: gzip, so the bytes the client inflates are the ones
+// validated. A client that doesn't accept gzip gets them inflated (natively,
+// streamed: no CPU per byte in JavaScript).
+function sendBody(c: Context<AppEnv>, body: StoredBody, contentType: string): Response {
+  c.header("Content-Type", contentType);
+  if (typeof body === "string") return c.body(body);
+  c.header("Vary", "Accept-Encoding");
+  if (!acceptsGzip(c.req.header("accept-encoding"))) {
+    return c.body(new Blob([body]).stream().pipeThrough(new DecompressionStream("gzip")));
+  }
+  c.header("Content-Encoding", "gzip");
+  const response = c.body(body as Uint8Array<ArrayBuffer>);
+  // "manual": the body is already encoded; the runtime must not encode it again.
+  return new Response(response.body, { status: response.status, headers: response.headers, encodeBody: "manual" });
+}
+
+// Whether an Accept-Encoding header allows gzip: named (or "*") with q > 0,
+// and not refused by name.
+function acceptsGzip(header: string | undefined): boolean {
+  let gzip: boolean | null = null;
+  let any = false;
+  for (const part of (header || "").toLowerCase().split(",")) {
+    const [name = "", ...params] = part.split(";").map((piece) => piece.trim());
+    const q = params.find((param) => param.startsWith("q="));
+    const allowed = q === undefined || Number(q.slice(2)) > 0;
+    if (name === "gzip" || name === "x-gzip") gzip = allowed;
+    else if (name === "*") any = allowed;
+  }
+  return gzip ?? any;
 }
 
 // A member asked for a version that isn't there, so the 404 that suggests

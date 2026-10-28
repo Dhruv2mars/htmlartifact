@@ -124,7 +124,9 @@ export const rejectedEnvToken = () =>
 export function httpError(result: JsonResult, prefix = ""): CliError {
   if (result.status === 401 && envToken()) return rejectedEnvToken();
   const retry = result.status === 429 && result.retryAfter ? ` Try again in ${result.retryAfter}s.` : "";
-  return new CliError({ message: `${prefix}${serverErrorMessage(result.body)}${retry}`, kind: kindForStatus(result.status) });
+  // A refusal's stable code (README) goes into the --json error too.
+  const details = typeof result.body.code === "string" ? { code: result.body.code } : undefined;
+  return new CliError({ message: `${prefix}${serverErrorMessage(result.body)}${retry}`, kind: kindForStatus(result.status), details });
 }
 
 // Calls the API and returns the JSON body, or fails with the server's error.

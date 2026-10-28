@@ -1,6 +1,8 @@
 // Shared types: the Worker's bindings, per-request variables, the viewer,
 // and the D1 rows the server reads.
 
+import type { BudgetScope, ScopeBudget } from "./budget.ts";
+
 // Bindings from wrangler.toml (DB, ARTIFACTS, vars) and `wrangler secret put`.
 // Every var is optional: getConfig applies defaults and reports what is
 // missing.
@@ -38,6 +40,13 @@ export interface Env {
   HTMLARTIFACT_MAINTENANCE?: string;
   HTMLARTIFACT_UPLOAD_ROWS_PER_DAY?: string;
   HTMLARTIFACT_UPLOAD_ROWS_PER_WORKSPACE_DAY?: string;
+  HTMLARTIFACT_ENGAGE_ROWS_PER_DAY?: string;
+  HTMLARTIFACT_ENGAGE_ROWS_PER_WORKSPACE_DAY?: string;
+  HTMLARTIFACT_OPS_ROWS_PER_DAY?: string;
+  HTMLARTIFACT_OPS_ROWS_PER_WORKSPACE_DAY?: string;
+  // The oldest CLI that may upload, and the newest on npm (src/cli-version.ts).
+  HTMLARTIFACT_MIN_CLI_VERSION?: string;
+  HTMLARTIFACT_LATEST_CLI_VERSION?: string;
   // Service binding to the ops Worker's `Ops` entrypoint (src/ops.ts). When
   // absent (local dev, tests), rate limits fall back to an in-memory window.
   OPS?: OpsService;
@@ -68,9 +77,11 @@ export interface Config {
     maxPages: number;
     workspaceBytes: number;
     databaseBytes: number;
-    rowsPerDay: number;
-    workspaceRowsPerDay: number;
+    // Daily D1 rows-written budgets per scope (src/budget.ts).
+    budgets: Record<BudgetScope, ScopeBudget>;
   };
+  minCliVersion: string;
+  latestCliVersion: string;
   workos: {
     apiKey: string;
     clientId: string;

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Context, Hono, Next } from "hono";
 import {
   createInvite,
+  inOpsBudget,
   deleteWorkspace,
   GRANT_ROWS,
   joinWithCode,
@@ -9,7 +10,6 @@ import {
   listInvites,
   listMembers,
   MEMBER_CHANGE_ROWS,
-  overDailyBudget,
   removeMember,
   revokeInvite,
   setMemberRole,
@@ -269,12 +269,13 @@ export function registerWeb(app: Hono<AppEnv>): void {
   app.post("/people/invites", sameOrigin, signedIn, inWorkspace, adminOnly, async (c) => {
     const viewer = c.get("viewer");
     if (await overLimit(c, "invite", 30)) return back(c, "/people", TOO_FAST);
-    const over = await overDailyBudget(c, viewer.organization_id, GRANT_ROWS, "invite");
-    if (over) return back(c, "/people", problem(`${over} Try again after 00:00 UTC.`));
     const form = await c.req.parseBody();
-    const made = await createInvite(c, { ttlDays: field(form.days) || undefined, maxUses: field(form.uses) || undefined });
-    if (!made.body.ok) return back(c, "/people", problem(made.body.error));
-    return back(c, "/people#links", { tone: "done", text: "New invite link ready. Copy it and send it to your team.", fresh: made.body.code });
+    const result = await inOpsBudget(c, GRANT_ROWS, "invite", async () => {
+      const made = await createInvite(c, { ttlDays: field(form.days) || undefined, maxUses: field(form.uses) || undefined });
+      if (!made.body.ok) return back(c, "/people", problem(made.body.error));
+      return back(c, "/people#links", { tone: "done", text: "New invite link ready. Copy it and send it to your team.", fresh: made.body.code });
+    });
+    return typeof result === "string" ? back(c, "/people", problem(result)) : result;
   });
 
   app.post("/people/invites/revoke", sameOrigin, signedIn, inWorkspace, adminOnly, async (c) => {
@@ -313,13 +314,14 @@ export function registerWeb(app: Hono<AppEnv>): void {
       );
     }
     if (await overLimit(c, "member-role", 30)) return back(c, "/people", TOO_FAST);
-    const over = await overDailyBudget(c, viewer.organization_id, MEMBER_CHANGE_ROWS, "member change");
-    if (over) return back(c, "/people", problem(`${over} Try again after 00:00 UTC.`));
     const role = change === "make-admin" ? "admin" : "member";
-    const changed = await setMemberRole(c, userId, role);
-    if (!changed.body.ok) return back(c, "/people", problem(changed.body.error));
-    const now = role === "admin" ? "an admin" : "a member";
-    return back(c, you && role === "member" ? "/" : "/people", done(`${name} ${you ? "are" : "is"} now ${now} of ${viewer.workspace.name}.`));
+    const result = await inOpsBudget(c, MEMBER_CHANGE_ROWS, "member change", async () => {
+      const changed = await setMemberRole(c, userId, role);
+      if (!changed.body.ok) return back(c, "/people", problem(changed.body.error));
+      const now = role === "admin" ? "an admin" : "a member";
+      return back(c, you && role === "member" ? "/" : "/people", done(`${name} ${you ? "are" : "is"} now ${now} of ${viewer.workspace.name}.`));
+    });
+    return typeof result === "string" ? back(c, "/people", problem(result)) : result;
   });
 
   app.get("/settings", signedIn, inWorkspace, workosReads, async (c) => {
