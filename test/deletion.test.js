@@ -715,6 +715,7 @@ describe("review round 8", () => {
     const sam = await signInTokens(stack, "sam@new.test");
     assert.equal((await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 200);
     const samUser = await findUser(stack.emulator, "sam@new.test");
+    const removedAt = Date.now();
     assert.equal((await callApi(stack, noraAdmin, "DELETE", `/api/workspaces/members/${samUser.id}`)).status, 200);
 
     const rejoin = await callApi(stack, sam.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code });
@@ -746,7 +747,7 @@ describe("review round 8", () => {
     const late = await sendWebhook(stack, {
       id: "event_late_removal",
       event: "organization_membership.deleted",
-      created_at: new Date(Date.now() - 1100).toISOString(),
+      created_at: new Date(removedAt).toISOString(),
       data: { object: "organization_membership", id: "om_gone", user_id: samUser.id, organization_id: org.id }
     });
     assert.equal(late.status, 200);
@@ -898,7 +899,6 @@ describe("review round 10", () => {
     const code = (await callApi(stack, nora, "POST", "/api/workspaces/invites", {})).body.code;
     const sam = await findUser(stack.emulator, "sam@new.test");
     assert.equal(await count("SELECT COUNT(*) FROM removals WHERE user_id = ?", sam.id), 1, "Sam's removal (and Allow back) is recorded");
-    console.log("DIAG", JSON.stringify({ joins: await rows("SELECT * FROM joins WHERE user_id = ?", sam.id), memberships: await rows("SELECT * FROM memberships WHERE user_id = ?", sam.id), removals: await rows("SELECT * FROM removals WHERE user_id = ?", sam.id) }));
     const r = await sendWebhook(stack, {
       id: "event_sam_deleted",
       event: "user.deleted",

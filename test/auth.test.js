@@ -149,6 +149,9 @@ describe("workspaces, driven entirely through the API (as an agent would)", () =
     const browser = new Browser(stack);
     const landed = await browser.signIn("bob@acme.test", { next: link });
     assert.equal(landed.status, 404, "bob is in Acme, not Nora Labs");
+    // Sam was removed from Nora Labs (the last test): the admin lets him back first.
+    const samId = (await findUser(stack.emulator, "sam@new.test")).id;
+    assert.equal((await callApi(stack, nora.accessToken, "DELETE", `/api/workspaces/removed/${samId}`)).status, 200);
     const fresh = new Browser(stack);
     const page1 = await fresh.signIn("sam@new.test", { next: link });
     assert.match(page1.finalUrl, /\/workspaces\?next=/);
