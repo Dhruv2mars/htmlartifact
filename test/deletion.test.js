@@ -363,14 +363,25 @@ describe("ops Worker cron", () => {
     assert.ok(freshRow.user_agent);
   });
 
-  test("the cron drops daily upload budgets once their day is over", async () => {
+  test("the cron drops daily budgets once their day is over (the upload pool's after a week)", async () => {
     const alice = await accessToken(stack, "alice@acme.test", "Acme");
     await upload(alice, { html: page("Budget today") });
     const iso = (offset) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
-    await exec("INSERT OR REPLACE INTO daily_budget (day, scope, used) VALUES (?, 'd1:rows', 10), (?, 'd1:rows', 10)", iso(-2), iso(-1));
+    const scoped = (day, scope) => count("SELECT COUNT(*) FROM daily_budget WHERE day = ? AND scope = ?", day, scope);
+    await exec(
+      `INSERT OR REPLACE INTO daily_budget (day, scope, used) VALUES
+         (?1, 'd1:rows:org_old', 10), (?1, 'd1:ops', 10), (?2, 'd1:rows:org_old', 10), (?1, 'd1:rows', 10), (?3, 'd1:rows', 10)`,
+      iso(-2),
+      iso(-1),
+      iso(-8)
+    );
     await runCron();
-    await eventually(async () => (await count("SELECT COUNT(*) FROM daily_budget WHERE day = ?", iso(-2))) === 0, "old budget dropped", runCron);
-    assert.equal(await count("SELECT COUNT(*) FROM daily_budget WHERE day = ?", iso(-1)), 1, "yesterday's stays");
+    await eventually(async () => (await scoped(iso(-2), "d1:rows:org_old")) === 0, "old budget dropped", runCron);
+    assert.equal(await scoped(iso(-2), "d1:ops"), 0);
+    assert.equal(await scoped(iso(-1), "d1:rows:org_old"), 1, "yesterday's stays");
+    // The creation cap (src/capacity.ts) reads a week of the deployment's upload pool.
+    assert.equal(await scoped(iso(-2), "d1:rows"), 1, "the upload pool keeps a week");
+    assert.equal(await scoped(iso(-8), "d1:rows"), 0, "and no more");
     assert.ok((await count("SELECT COUNT(*) FROM daily_budget WHERE day = ?", iso(0))) >= 1, "today's stays");
   });
 });
@@ -1272,6 +1283,9 @@ const KEPT = {
     accounts: "the scrubbed author row",
     drafts: "authorship of the workspace's artifacts",
     draft_versions: "authorship",
+    workspaces: "created_by: a workspace outlives the person who created it",
+    invites: "created_by: who issued the workspace's code",
+    membership_epochs: "with revocations, keeps their old tokens out",
     revocations: "keeps their old tokens out"
   }
 };
@@ -1299,7 +1313,11 @@ describe("purge list", () => {
   });
 
   test("deleting an artifact, pruning, deleting a workspace (API and WorkOS) and user.deleted leave nothing behind", async () => {
-    let owner = await signInTokens(stack, "sam@new.test");
+    // Fresh people: earlier tests revoke or delete the seeded ones.
+    for (const [email, first_name] of [["pia@purge.test", "Pia"], ["quinn@purge.test", "Quinn"], ["rae@purge.test", "Rae"], ["uma@purge.test", "Uma"]]) {
+      await workosApi(stack.emulator, "POST", "/user_management/users", { email, first_name, password: PASSWORD, email_verified: true });
+    }
+    let owner = await signInTokens(stack, "pia@purge.test");
     const created = await callApi(stack, owner.accessToken, "POST", "/api/workspaces", { name: "Purge Co" });
     assert.equal(created.status, 201, JSON.stringify(created.body));
     const org = created.body.workspace.id;
@@ -1308,10 +1326,10 @@ describe("purge list", () => {
     // Something in every table a workspace has: artifacts with versions and
     // pages, an invite used by a joiner, a CI key, a role change.
     const invite = await callApi(stack, token, "POST", "/api/workspaces/invites", {});
-    let joiner = await signInTokens(stack, "nora@new.test");
+    let joiner = await signInTokens(stack, "quinn@purge.test");
     assert.equal((await callApi(stack, joiner.accessToken, "POST", "/api/workspaces/join", { code: invite.body.code })).status, 200);
     joiner = await refreshInto(stack, joiner, org);
-    const joinerUser = await findUser(stack.emulator, "nora@new.test");
+    const joinerUser = await findUser(stack.emulator, "quinn@purge.test");
     assert.equal((await callApi(stack, token, "PATCH", `/api/workspaces/members/${joinerUser.id}`, { role: "admin" })).status, 200);
     assert.equal((await callApi(stack, token, "POST", "/api/workspaces/api-keys", { name: "purge ci" })).status, 201);
     const deck = (await upload(token, multiPage("Purge deck"))).body;
@@ -1336,7 +1354,7 @@ describe("purge list", () => {
     assert.deepEqual(await leftovers(deck.draftId), {}, "its artifacts");
 
     // A workspace deleted in WorkOS directly.
-    let olivia = await signInTokens(stack, "olivia@other.test", "Other");
+    let olivia = await signInTokens(stack, "rae@purge.test");
     const elsewhere = await callApi(stack, olivia.accessToken, "POST", "/api/workspaces", { name: "Purge Elsewhere" });
     const org2 = elsewhere.body.workspace.id;
     olivia = await refreshInto(stack, olivia, org2);
@@ -1346,13 +1364,16 @@ describe("purge list", () => {
     await eventually(async () => Object.keys(await leftovers(org2, KEPT.workspace)).length === 0, `organization.deleted leaves nothing: ${JSON.stringify(await leftovers(org2, KEPT.workspace))}`);
 
     // user.deleted: nothing personal stays; their ID only where KEPT says.
-    const bob = await accessToken(stack, "bob@acme.test", "Acme");
-    const bobUser = await findUser(stack.emulator, "bob@acme.test");
-    assert.equal((await upload(bob, { html: page("Bob's page") })).status, 201);
-    assert.ok((await mentions("bob@acme.test")).accounts, "the profile is cached");
-    const response = await sendWebhook(stack, { id: "event_purge_user_deleted", event: "user.deleted", data: { object: "user", id: bobUser.id, email: "bob@acme.test" } });
+    let uma = await signInTokens(stack, "uma@purge.test");
+    const umas = await callApi(stack, uma.accessToken, "POST", "/api/workspaces", { name: "Purge Uma" });
+    uma = await refreshInto(stack, uma, umas.body.workspace.id);
+    const umaUser = await findUser(stack.emulator, "uma@purge.test");
+    assert.equal((await upload(uma.accessToken, { html: page("Uma's page") })).status, 201);
+    assert.equal((await callApi(stack, uma.accessToken, "POST", "/api/workspaces/invites", {})).status, 201);
+    assert.ok((await mentions("uma@purge.test")).accounts, "the profile is cached");
+    const response = await sendWebhook(stack, { id: "event_purge_user_deleted", event: "user.deleted", data: { object: "user", id: umaUser.id, email: "uma@purge.test" } });
     assert.equal(response.status, 200);
-    assert.deepEqual(await mentions("bob@acme.test"), {}, "their email");
-    assert.deepEqual(await leftovers(bobUser.id, KEPT.user), {}, "user.deleted");
+    assert.deepEqual(await mentions("uma@purge.test"), {}, "their email");
+    assert.deepEqual(await leftovers(umaUser.id, KEPT.user), {}, "user.deleted");
   });
 });

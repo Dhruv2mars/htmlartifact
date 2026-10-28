@@ -137,6 +137,7 @@ describe("gzip storage (G0a)", () => {
     const again = await callApi(stack, alice, "POST", "/api/uploads", { html, draftId: up.body.draftId });
     assert.equal(again.status, 200, JSON.stringify(again.body));
     assert.equal(again.body.unchanged, true);
+    assert.equal(again.body.storedBytes, gz.length, "the kept version's stored size");
   });
 
   test("versions stored before gzip keep serving next to gzip ones", async () => {
@@ -419,6 +420,20 @@ describe("measured D1 budgets (G0b)", () => {
     // it measures. A change to the upload's statements changes them: update both.
     const expected = STORAGE === "d1" ? { created: 19, version: 14, unchanged: 7, threePages: 27 } : { created: 17, version: 12, unchanged: 7, threePages: 21 };
     assert.deepEqual(figures, expected);
+  });
+
+  test("a refused upload writes no rows", async () => {
+    const alice = await accessToken(stack, "alice@acme.test", "Acme");
+    const org = (await callApi(stack, alice, "GET", "/api/me")).body.workspace.id;
+    // The deployment's pool spent; the workspace's share has room.
+    await retryLocked(() => proxy.env.DB.prepare("UPDATE daily_budget SET used = 40000 WHERE day = ? AND scope = 'd1:rows'").bind(today()).run());
+    const before = [await used(proxy, "d1:rows"), await used(proxy, `d1:rows:${org}`)];
+    for (let i = 0; i < 3; i += 1) {
+      const refused = await callApi(stack, alice, "POST", "/api/uploads", { html: page(`Refused ${i}`) });
+      assert.equal(refused.status, 429, JSON.stringify(refused.body));
+      assert.match(refused.body.error, /deployment has reached/);
+    }
+    assert.deepEqual([await used(proxy, "d1:rows"), await used(proxy, `d1:rows:${org}`)], before);
   });
 
   test("settling a budget writes one row per key", async () => {

@@ -107,35 +107,38 @@ export async function metered<E extends AppEnv>(
 export async function spendRows<E extends AppEnv>(c: Context<E>, rows: number, budget: ScopeBudget, what: string): Promise<string | null> {
   const meter = meters.get(c as unknown as Context);
   if (!meter) throw new Error("spendRows outside metered()");
-  const taken: string[] = [];
-  for (const key of meter.keys) {
-    const limit = key === SCOPE_KEYS[meter.scope] ? budget.perDay : budget.perWorkspaceDay;
-    const result = await reserveStatement(meter.db, meter.day, key, rows, limit).run();
-    meter.written += result.meta.rows_written ?? 0;
-    if (!result.meta.changes) {
-      // Give back what the workspace's share took for the refused request.
-      for (const back of taken) {
-        const refund = await meter.db.prepare("UPDATE daily_budget SET used = MAX(0, used - ?) WHERE day = ? AND scope = ?").bind(rows, meter.day, back).run();
-        meter.written += refund.meta.rows_written ?? 0;
-      }
-      return key === SCOPE_KEYS[meter.scope]
-        ? `This htmlartifact deployment has reached today's ${what} limit.`
-        : `This workspace has reached today's ${what} limit.`;
-    }
-    taken.push(key);
+  const limits = meter.keys.map((key) => ({ key, limit: key === SCOPE_KEYS[meter.scope] ? budget.perDay : budget.perWorkspaceDay }));
+  // Every share at once, or none: a refusal writes nothing, so requests
+  // refused all day cost no rows.
+  const result = await reserveStatement(meter.db, meter.day, rows, limits).run();
+  meter.written += result.meta.rows_written ?? 0;
+  if (result.meta.changes) {
+    meter.reserved += rows;
+    return null;
   }
-  meter.reserved += rows;
-  return null;
+  const { results } = await meter.db
+    .prepare(`SELECT scope, used FROM daily_budget WHERE day = ? AND scope IN (${limits.map(() => "?").join(", ")})`)
+    .bind(meter.day, ...meter.keys)
+    .all<{ scope: string; used: number }>();
+  const used = new Map(results.map((row) => [row.scope, row.used]));
+  const over = limits.find(({ key, limit }) => (used.get(key) ?? 0) + rows > limit) ?? limits.at(-1)!;
+  return over.key === SCOPE_KEYS[meter.scope]
+    ? `This htmlartifact deployment has reached today's ${what} limit.`
+    : `This workspace has reached today's ${what} limit.`;
 }
 
-// Takes `count` of `key`'s budget for `day` if it stays within `perDay`.
-function reserveStatement(db: D1Database, day: string, key: string, count: number, perDay: number): D1PreparedStatement {
+// Takes `count` of each key's budget for `day` if every one stays within its limit.
+function reserveStatement(db: D1Database, day: string, count: number, limits: { key: string; limit: number }[]): D1PreparedStatement {
+  const scopes = limits.map((_, i) => `SELECT ?${3 + 2 * i} AS scope`).join(" UNION ALL ");
+  const fits = limits
+    .map((_, i) => `COALESCE((SELECT used FROM daily_budget WHERE day = ?1 AND scope = ?${3 + 2 * i}), 0) + ?2 <= ?${4 + 2 * i}`)
+    .join(" AND ");
   return db
     .prepare(
-      `INSERT INTO daily_budget (day, scope, used) SELECT ?1, ?2, ?3 WHERE ?3 <= ?4
-       ON CONFLICT (day, scope) DO UPDATE SET used = used + excluded.used WHERE used + excluded.used <= ?4`
+      `INSERT INTO daily_budget (day, scope, used) SELECT ?1, k.scope, ?2 FROM (${scopes}) AS k WHERE ${fits}
+       ON CONFLICT (day, scope) DO UPDATE SET used = used + excluded.used`
     )
-    .bind(day, key, count, perDay);
+    .bind(day, count, ...limits.flatMap(({ key, limit }) => [key, limit]));
 }
 
 /** Today's use of the upload pool, and of the days before, newest first. */

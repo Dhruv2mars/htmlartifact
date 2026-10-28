@@ -1167,9 +1167,9 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
 
   const current = existing?.current_version_id
     ? await db
-        .prepare("SELECT id, version_number, content_hash FROM draft_versions WHERE id = ?")
+        .prepare("SELECT id, version_number, content_hash, file_size FROM draft_versions WHERE id = ?")
         .bind(existing.current_version_id)
-        .first<Pick<VersionRow, "id" | "version_number" | "content_hash">>()
+        .first<Pick<VersionRow, "id" | "version_number" | "content_hash" | "file_size">>()
     : null;
   // Re-sending identical content (a blind retry) keeps the current version,
   // gzip-compressed or not: the hash is of the HTML.
@@ -1447,8 +1447,9 @@ async function handleUpload(c: Context<MemberEnv>): Promise<Response> {
       title,
       contentHash: validation.contentHash,
       totalBytes: validation.totalBytes,
-      // What the quota counts: smaller than totalBytes for gzip uploads.
-      storedBytes,
+      // What the quota counts: smaller than totalBytes for gzip uploads. For
+      // unchanged content, the kept version's (it may be stored the other way).
+      storedBytes: unchanged && current ? current.file_size : storedBytes,
       account: { id: viewer.account_id, name: viewer.account_name },
       workspace: workspaceJson(viewer.workspace),
       publicUrl,
