@@ -1361,7 +1361,7 @@ describe("purge list", () => {
     assert.equal((await upload(olivia.accessToken, { html: page("Short lived") })).status, 201);
     assert.equal((await callApi(stack, olivia.accessToken, "POST", "/api/workspaces/invites", {})).status, 201);
     await workosApi(stack.emulator, "DELETE", `/organizations/${org2}`);
-    await eventually(async () => Object.keys(await leftovers(org2, KEPT.workspace)).length === 0, `organization.deleted leaves nothing: ${JSON.stringify(await leftovers(org2, KEPT.workspace))}`);
+    await eventually(async () => Object.keys(await leftovers(org2, KEPT.workspace)).length === 0, `organization.deleted leaves nothing: ${JSON.stringify(await leftovers(org2, KEPT.workspace))}`, runCron);
 
     // user.deleted: nothing personal stays; their ID only where KEPT says.
     let uma = await signInTokens(stack, "uma@purge.test");
