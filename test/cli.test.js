@@ -5,7 +5,19 @@ import http from "node:http";
 import path from "node:path";
 import { after, before, test } from "node:test";
 import { promisify } from "node:util";
-import { CI_KEY, callApi, page, refreshInto, signInTokens, startStack, writeHtml } from "./helpers.js";
+import {
+  CI_KEY,
+  atTerminal,
+  callApi,
+  findOrganization,
+  findUser,
+  page,
+  refreshInto,
+  signInTokens,
+  startStack,
+  workosApi,
+  writeHtml
+} from "./helpers.js";
 
 // The whole agent workflow through the built CLI (dist/htmlartifact.js), against a local
 // Worker and the WorkOS emulator. Every command is what an agent would run.
@@ -642,5 +654,67 @@ test("an expired sign-in link says to run login again", async () => {
     assert.match(expiredLink.stderr, /^The sign-in link expired\. Run: npx htmlartifact login$/m);
   } finally {
     await p.close();
+  }
+});
+
+test("login in several workspaces keeps the finished sign-in: pick at a terminal, or finish with --workspace (no browser)", async () => {
+  // Alice (whom the emulator signs in) joins Other too.
+  const alice = await findUser(stack.emulator, "alice@acme.test");
+  const other = await findOrganization(stack.emulator, "Other");
+  const membership = await workosApi(stack.emulator, "POST", "/user_management/organization_memberships", {
+    user_id: alice.id,
+    organization_id: other.id
+  });
+  const fails = (args, env) =>
+    cli(args, env).then(
+      (r) => assert.fail(`expected failure, got: ${r.stdout}`),
+      (error) => error
+    );
+  try {
+    // --json never asks: the error lists the workspaces.
+    const asJson = await fails(["login", "--json"], { HTMLARTIFACT_HOME: path.join(stack.tmp, "several-json") });
+    assert.equal(asJson.code, 2);
+    const result = JSON.parse(asJson.stdout);
+    assert.equal(result.ok, false);
+    assert.ok(result.workspaces.includes("Acme") && result.workspaces.includes("Other"), asJson.stdout);
+
+    // Not at a terminal: nothing is guessed, but the sign-in is kept...
+    const dir = path.join(stack.tmp, "several-home");
+    const env = { HTMLARTIFACT_HOME: dir };
+    // (Signed in with --api-url: the hints repeat it.)
+    const server = ["--api-url", stack.baseUrl];
+    const refused = await fails(["login", ...server], { ...env, HTMLARTIFACT_API_URL: "" });
+    assert.equal(refused.code, 2);
+    assert.match(refused.stderr, /You are in several workspaces\.\nYou are signed in: pick one to finish \(no need to open the link again\):/);
+    assert.match(refused.stderr, /^ {2}htmlartifact login --api-url '?http:\/\/127\.0\.0\.1:\d+'? --workspace '?Other'?$/m);
+    assert.equal(fs.statSync(path.join(dir, "pending-login.json")).mode & 0o777, 0o600);
+    // ...so naming a workspace finishes it here, without the browser.
+    const finished = await cli(["login", ...server, "--workspace", "other"], { ...env, HTMLARTIFACT_API_URL: "" });
+    assert.doesNotMatch(finished.stdout, /Open this link/);
+    assert.match(finished.stdout, /Signed in as alice@acme\.test\.\nWorkspace: Other\n/);
+    assert.equal(fs.existsSync(path.join(dir, "pending-login.json")), false, "spent");
+    assert.equal(JSON.parse((await cli(["whoami", "--json"], env)).stdout).workspace.name, "Other");
+    // A name that is not one of them keeps it too.
+    await cli(["logout"], env);
+    const wrong = await fails(["login", "--workspace", "Nope"], env);
+    assert.match(wrong.stderr, /You are not in a workspace named "Nope"\./);
+    assert.ok(fs.existsSync(path.join(dir, "pending-login.json")), "still kept");
+    const acme = await cli(["login", "--workspace", "Acme"], env);
+    assert.doesNotMatch(acme.stdout, /Open this link/);
+    assert.match(acme.stdout, /Workspace: Acme\n/);
+
+    // At a terminal: pick by number (after a wrong answer), as the same run.
+    const tty = await atTerminal(process.execPath, [CLI, "login"], {
+      env: { ...process.env, HTMLARTIFACT_HOME: path.join(stack.tmp, "several-tty"), HTMLARTIFACT_TOKEN: "", HTMLARTIFACT_API_URL: stack.baseUrl, CI: "", GITHUB_ACTIONS: "" },
+      answers: [
+        { when: /Workspace \[1-\d+\]: /, type: "99" },
+        { when: /Type a number from 1 to \d+, or a name\.[\s\S]*Workspace \[1-\d+\]: /, type: "other" }
+      ]
+    });
+    assert.equal(tty.code, 0, tty.output);
+    assert.match(tty.output, /You are in several workspaces:\n {2}\d\) (Acme|Other)\n/);
+    assert.match(tty.output, /Signed in as alice@acme\.test\.\nWorkspace: Other\n/);
+  } finally {
+    await workosApi(stack.emulator, "DELETE", `/user_management/organization_memberships/${membership.id}`);
   }
 });

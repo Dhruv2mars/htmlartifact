@@ -3,9 +3,11 @@
 //   bun run dev:local            → http://localhost:8787
 // Sign in as any seeded email below; the CLI works with
 //   HTMLARTIFACT_API_URL=http://localhost:8787 htmlartifact login
+// and its sign-in link asks which user to sign in as (scripts/dev-device-login.mjs).
 import { createEmulator } from "@workos/emulate";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { deviceLoginPicker } from "./dev-device-login.mjs";
 
 // The Worker serves web/build (assets and server-rendered pages); a clean
 // checkout has none yet. Run `bun run build:web` yourself after web changes.
@@ -32,8 +34,11 @@ const emulator = await createEmulator({
   }
 });
 
+// The Worker talks to the emulator through this, so each CLI sign-in picks its user.
+const picker = await deviceLoginPicker(emulator, { port: Number(process.env.DEVICE_LOGIN_PORT || 0) });
+
 const vars = {
-  WORKOS_API_URL: emulator.url,
+  WORKOS_API_URL: picker.url,
   WORKOS_API_KEY: emulator.apiKey || "sk_test_default",
   WORKOS_CLIENT_ID: "client_htmlartifact_local",
   WORKOS_WEBHOOK_SECRET: "whsec_local",
@@ -50,10 +55,11 @@ await fetch(`${emulator.url}/webhook_endpoints`, {
   headers: { Authorization: `Bearer ${vars.WORKOS_API_KEY}`, "Content-Type": "application/json" },
   body: JSON.stringify({ endpoint_url: `http://localhost:${PORT}/webhooks/workos`, secret: vars.WORKOS_WEBHOOK_SECRET, events: [] })
 });
-console.log(`\nWorkOS emulator: ${emulator.url}\nhtmlartifact:    http://localhost:${PORT}\n`);
+console.log(`\nWorkOS emulator: ${emulator.url}\nCLI sign-ins:    ${picker.url}/device (pick the user)\nhtmlartifact:    http://localhost:${PORT}\n`);
 
 const stop = async () => {
   worker.kill();
+  await picker.close();
   await emulator.close();
   process.exit(0);
 };

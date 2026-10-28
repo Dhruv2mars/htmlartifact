@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { after, before, describe, test } from "node:test";
 import { validateHtml, validateUpload } from "../src/html-policy.ts";
 import { STORAGE, accessToken, callApi, startStack } from "./helpers.js";
@@ -28,9 +29,7 @@ describe("validating large pages", () => {
   const page = densePage(4_000_000);
 
   test("a dense ~4 MB table page passes, in bounded memory", () => {
-    const heapBefore = process.memoryUsage().heapUsed;
     const result = validateHtml(page, { maxBytes: ACCOUNT_LIMIT });
-    const heapGrowth = process.memoryUsage().heapUsed - heapBefore;
 
     assert.equal(result.bytes, Buffer.byteLength(page));
     assert.ok(result.bytes > 3.8 * MiB && result.bytes <= ACCOUNT_LIMIT);
@@ -38,8 +37,25 @@ describe("validating large pages", () => {
     assert.deepEqual(result.issues, []);
     assert.equal(result.title, "Dense report");
     assert.equal(result.hasScripts, false);
-    // A full parse5 tree of this page holds ~230 MB until validation returns.
-    assert.ok(heapGrowth < 64 * MiB, `heap grew ${(heapGrowth / MiB).toFixed(1)} MB`);
+    // A full parse5 tree of this page holds ~230 MB until validation returns
+    // (it runs out of a 96 MB heap); streaming validation fits in 64 MB. A heap
+    // cap is exact where a heapUsed delta also counts uncollected garbage, which
+    // varies with the machine.
+    const policy = new URL("../src/html-policy.ts", import.meta.url).href;
+    const capped = spawnSync(
+      process.execPath,
+      [
+        "--max-old-space-size=64",
+        "--input-type=module",
+        "-e",
+        `import { validateHtml } from ${JSON.stringify(policy)};
+         const chunks = [];
+         for await (const chunk of process.stdin) chunks.push(chunk);
+         process.stdout.write(String(validateHtml(Buffer.concat(chunks).toString("utf8"), { maxBytes: ${ACCOUNT_LIMIT} }).ok));`
+      ],
+      { input: page, encoding: "utf8", timeout: 60_000 }
+    );
+    assert.equal(capped.stdout, "true", capped.error?.message ?? capped.stderr);
   });
 
   test("problems deep in a dense page fail it, with their source location", () => {
