@@ -39,10 +39,13 @@ the CLI and web app loops.
 Changes land on `main` through an Entire trail (a branch plus
 `entire trail create`). `bun run check` is the merge gate. It runs everything
 the old GitHub Actions CI ran, in order, and stops at the first failure.
-Buildkite runs the same gate on every push (`.buildkite/pipeline.yml`, the
-free hosted `linux-small` queue), split into parts that run side by side
-(`bun run check -- --part static|d1|r2`; each suite in 3 shards), and reports
-it on the trail as a gate:
+GitHub Actions runs the same gate on every push, on the read-only GitHub
+mirror (`.github/workflows/ci.yml`, named `CI`), split into parts that run
+side by side (`bun run check -- --part static|d1|r2`; each suite in 3 shards).
+`.github/workflows/report.yml` reports each run to the trail as the
+`github-actions` check, which the trail's merge gate requires. GitHub gets a
+push only through `git mirror` (or `git ship`, which pushes to Entire and then
+mirrors), so a trail's check arrives after its branch is mirrored:
 
 | Step | What |
 |---|---|
@@ -53,13 +56,12 @@ it on the trail as a gate:
 | test | `bun run test`: builds the CLI and web app, then the full suite on D1, then on R2 (local only) |
 | cli | the built CLI (`--version`, `--help`, `check` on a two-page site) on your Node and on Node 20.10, the `engines` minimum (downloaded once from nodejs.org and checked against its SHASUMS256.txt) |
 
-Buildkite covers Linux; run it locally for macOS. Windows is no longer
-tested. Buildkite's Free plan (no card) includes 2,000 Linux vCPU-minutes a
-month. A run takes about 5 minutes on 7 parallel 2-vCPU jobs and uses about 37
-vCPU-minutes, so about 50 pushes a month across all branches; push finished
-work, not every commit. A trail merges only when, on its latest commit, rebased on `main`:
+CI covers Linux; run it locally for macOS. Windows is no longer tested.
+CI uses only standard GitHub-hosted runners, which are free in public
+repositories. Push finished work, not every commit. (Buildkite ran the gate before; its pipeline
+is archived.) A trail merges only when, on its latest commit, rebased on `main`:
 
-- Buildkite's `bun run check` passed, so `entire trail merge --dry-run`
+- CI's `bun run check` passed, so `entire trail merge --dry-run`
   passes, and every finding from the trail's review agents is fixed or
   dismissed with a reason.
 - Bug fixes come with a test that fails without the fix.
