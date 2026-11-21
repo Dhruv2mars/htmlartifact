@@ -2,8 +2,7 @@ name: CI
 
 # GitHub is a one-way mirror of the Entire repo (git mirror); this runs on every mirrored push. report.yml reports
 # each run to the Entire trail, whose merge gate requires it.
-# The merge gate `bun run check` in 7 parallel jobs, as Buildkite ran it: the static steps, and each storage's suite
-# in 3 shards. check.ts reads a job's shard from Buildkite's variable names, set below.
+# The merge gate `bun run check` in 7 parallel jobs: the static steps, and each storage's suite in 3 shards.
 on:
   push:
     branches-ignore: ['archive/**']
@@ -24,18 +23,16 @@ jobs:
       matrix:
         include:
           - part: static
-          - { part: d1, job: 0, count: 3, shard: '1/3' }
-          - { part: d1, job: 1, count: 3, shard: '2/3' }
-          - { part: d1, job: 2, count: 3, shard: '3/3' }
-          - { part: r2, job: 0, count: 3, shard: '1/3' }
-          - { part: r2, job: 1, count: 3, shard: '2/3' }
-          - { part: r2, job: 2, count: 3, shard: '3/3' }
+          - { part: d1, shard: '1/3' }
+          - { part: d1, shard: '2/3' }
+          - { part: d1, shard: '3/3' }
+          - { part: r2, shard: '1/3' }
+          - { part: r2, shard: '2/3' }
+          - { part: r2, shard: '3/3' }
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       HTMLARTIFACT_HOME: ${{ github.workspace }}/../htmlartifact-home
-      BUILDKITE_PARALLEL_JOB: ${{ matrix.job }}
-      BUILDKITE_PARALLEL_JOB_COUNT: ${{ matrix.count }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,4 +43,4 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - run: bun run check -- --part ${{ matrix.part }}
+      - run: bun run check -- --part ${{ matrix.part }} ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }}

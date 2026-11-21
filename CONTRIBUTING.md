@@ -58,8 +58,7 @@ mirrors), so a trail's check arrives after its branch is mirrored:
 
 CI covers Linux; run it locally for macOS. Windows is no longer tested.
 CI uses only standard GitHub-hosted runners, which are free in public
-repositories. Push finished work, not every commit. (Buildkite ran the gate before; its pipeline
-is archived.) A trail merges only when, on its latest commit, rebased on `main`:
+repositories. Push finished work, not every commit. A trail merges only when, on its latest commit, rebased on `main`:
 
 - CI's `bun run check` passed, so `entire trail merge --dry-run`
   passes, and every finding from the trail's review agents is fixed or
@@ -109,7 +108,7 @@ gitHead` is the commit the latest version was built from).
    ```sh
    git fetch origin && git switch --detach origin/main
    bun run release -- --dry-run   # the gate, then npm publish --dry-run: lists the tarball
-   bun run release                # the gate (skipped if it passed on this commit, here or in Buildkite), npm publish, tag vX.Y.Z on origin
+   bun run release                # the gate (skipped if it passed on this commit, here or in CI), npm publish, tag vX.Y.Z on origin
    ```
 
    npm asks for your 2FA code. `release` refuses a version npm already has; if

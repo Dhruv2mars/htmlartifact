@@ -23,9 +23,6 @@
       "web/react-router.config.ts"
     ]
   },
-  "ignoreBinaries": [
-    "bk"
-  ],
   "ignoreDependencies": [
     "@fontsource/geist",
     "cloudflare"

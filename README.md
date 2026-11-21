@@ -270,8 +270,8 @@ bun run ship   # bun run check (skipped if it passed on this commit), deploy:all
 ```
 
 `bun run check` counts as passed if it passed in this checkout or, with the
-[`bk` CLI](https://buildkite.com/docs/platform/cli) logged in, in a Buildkite
-build of the same commit; otherwise `ship` runs it first.
+[`gh` CLI](https://cli.github.com) logged in, in a successful CI run of the same
+commit on the GitHub mirror; otherwise `ship` runs it first.
 
 `ship` refuses unless HEAD is exactly `origin/main` with a clean tree, and
 prints the commit of the last production deployment before it deploys (Pages

@@ -1,5 +1,5 @@
 // Shared by check, ship and release: the git state they act on, and whether
-// `bun run check` already passed on a commit, here or in Buildkite (so ship and
+// `bun run check` already passed on a commit, here or in CI on GitHub Actions (so ship and
 // release don't run the whole gate again for a commit that passed it).
 import { $ } from "bun";
 
@@ -27,29 +27,28 @@ export async function requireOriginTip(branch: string) {
 export const recordPass = (sha: string) => Bun.write(passed, `${sha}\n`);
 const lastPass = async () => (await Bun.file(passed).text().catch(() => "")).trim();
 
-// Buildkite runs the same gate on every push (.buildkite/pipeline.yml), in
-// parts side by side. With the bk CLI logged in, a build of this exact commit
-// counts if every job of its `check`, `check-d1` and `check-r2` steps ran
-// `bun run check` and passed outright (a soft failure does not count).
-const GATE_STEPS = ["check", "check-d1", "check-r2"];
-type Job = { step_key?: string; command?: string; state?: string; exit_status?: number; soft_failed?: boolean };
-async function buildkitePass(sha: string) {
-  const path = `/pipelines/htmlartifact/builds?commit=${sha}&state=passed`;
-  const res = await $`bk api --no-pager --no-input --org dhruv2mars ${path}`.cwd(root).quiet().nothrow();
+// GitHub Actions runs the same gate on every mirrored push (.github/workflows/ci.yml,
+// named CI), in parts side by side. With the gh CLI logged in, a CI run of this
+// exact commit counts if it succeeded and its jobs covered every part
+// (static, d1, r2) and all succeeded.
+const GITHUB_REPO = "Dhruv2mars/htmlartifact";
+const PARTS = ["static", "d1", "r2"];
+type Run = { databaseId: number; conclusion: string };
+type Job = { name: string; conclusion: string };
+async function ciPass(sha: string) {
+  const json = async (...args: string[]) => {
+    const res = await $`gh ${args}`.cwd(root).quiet().nothrow();
+    return res.exitCode === 0 ? JSON.parse(res.stdout.toString()) : null;
+  };
   try {
-    const out = res.stdout.toString();
-    const builds = res.exitCode === 0 ? (JSON.parse(out.slice(out.indexOf("["))) as { number: number; jobs: Job[] }[]) : [];
-    const outright = (j: Job) => j.command?.includes("bun run check") && j.state === "passed" && j.exit_status === 0 && !j.soft_failed;
-    const gated = builds.find((b) =>
-      GATE_STEPS.every((key) => {
-        const jobs = b.jobs.filter((j) => j.step_key === key);
-        return jobs.length > 0 && jobs.every(outright);
-      })
-    );
-    return gated?.number ?? null;
-  } catch {
-    return null;
-  }
+    const runs: Run[] = (await json("run", "list", "-R", GITHUB_REPO, "-w", "ci.yml", "-c", sha, "--json", "databaseId,conclusion")) ?? [];
+    for (const run of runs.filter((r) => r.conclusion === "success")) {
+      const jobs: Job[] = (await json("run", "view", String(run.databaseId), "-R", GITHUB_REPO, "--json", "jobs"))?.jobs ?? [];
+      const gated = PARTS.every((part) => jobs.some((j) => j.name.startsWith(`check (${part}`)));
+      if (gated && jobs.every((j) => j.conclusion === "success")) return run.databaseId;
+    }
+  } catch {}
+  return null;
 }
 
 // Runs the gate unless it already passed on this commit. check records a pass
@@ -57,8 +56,8 @@ async function buildkitePass(sha: string) {
 // checkout that changed while it ran is refused rather than shipped.
 export async function ensureChecked(sha: string) {
   if ((await lastPass()) === sha) return console.log(`bun run check already passed on ${sha.slice(0, 7)}`);
-  const build = await buildkitePass(sha);
-  if (build) return console.log(`bun run check passed on ${sha.slice(0, 7)} in Buildkite build #${build}`);
+  const run = await ciPass(sha);
+  if (run) return console.log(`bun run check passed on ${sha.slice(0, 7)} in CI run ${run} (GitHub Actions)`);
   await $`bun run check`.cwd(root);
   if ((await lastPass()) !== sha) throw new Error(`The checkout changed while bun run check ran on ${sha.slice(0, 7)}. Start again from a clean origin tip.`);
 }

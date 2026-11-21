@@ -1,9 +1,9 @@
 // The merge gate: everything CI on GitHub Actions used to run, in one command.
 //   bun run check                 -> every step, in order
 //   bun run check -- --part static -> everything but the suites
-//   bun run check -- --part d1     -> the suite on D1 (or r2), one shard of it
-//                                     when BUILDKITE_PARALLEL_JOB(_COUNT) is set
-// Buildkite runs the parts side by side on every push (.buildkite/pipeline.yml):
+//   bun run check -- --part d1     -> the suite on D1 (or r2)
+//   bun run check -- --part d1 --shard 2/3 -> one shard of it
+// CI runs the parts side by side on every mirrored push (.github/workflows/ci.yml):
 // together they are exactly the whole gate.
 // Stops at the first failure. Then the built CLI runs on this machine's Node and
 // on the oldest Node package.json supports (engines), downloaded once from
@@ -69,11 +69,13 @@ async function oldestNode() {
   return node;
 }
 
-// One suite (D1 or R2 storage), or the shard of it this Buildkite job runs.
+const arg = (name: string) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : null);
+const shardArg = arg("--shard");
+if (shardArg !== null && !/^[1-9]\d*\/[1-9]\d*$/.test(shardArg)) throw new Error(`--shard ${shardArg}: want N/M, e.g. 2/3`);
+
+// One suite (D1 or R2 storage), or one shard of it (--shard N/M).
 function suite(storage: "d1" | "r2") {
-  const job = process.env.BUILDKITE_PARALLEL_JOB;
-  const count = process.env.BUILDKITE_PARALLEL_JOB_COUNT;
-  const shard = job && count ? [`--test-shard=${Number(job) + 1}/${count}`] : [];
+  const shard = shardArg ? [`--test-shard=${shardArg}`] : [];
   return () =>
     run("env", `HTMLARTIFACT_TEST_STORAGE=${storage}`, "node", "--test", "--test-concurrency=1", "--test-timeout=120000", ...shard, "test/*.test.js");
 }
@@ -86,7 +88,7 @@ const parts: Record<string, Step[]> = {
     ["typecheck", () => run("bun", "run", "typecheck")],
     ["typecheck:cli", () => run("bun", "run", "typecheck:cli")],
     ["typecheck:web", () => run("bun", "run", "typecheck:web")],
-    // knip under Node runs out of memory in Buildkite's container (oxc-parser), not under Bun.
+    // knip under Node ran out of memory in a 4 GB CI container (oxc-parser), not under Bun.
     ["lint", () => run("bun", "--bun", "run", "lint")],
     ["changelog", () => run("bun", "scripts/changelog.ts", "check")],
     build,
@@ -96,7 +98,8 @@ const parts: Record<string, Step[]> = {
   d1: [install, build, ["test on D1", suite("d1")]],
   r2: [install, build, ["test on R2", suite("r2")]]
 };
-const part = process.argv.includes("--part") ? process.argv[process.argv.indexOf("--part") + 1] : null;
+const part = arg("--part");
+if (shardArg !== null && part !== "d1" && part !== "r2") throw new Error("--shard needs --part d1 or --part r2");
 if (part !== null && !(part in parts)) throw new Error(`--part ${part}: want one of ${Object.keys(parts).join(", ")}`);
 // The whole gate: the static steps, then the suite on D1, then on R2.
 const steps = part ? parts[part] : [...parts.static, ["test on D1", suite("d1")] as Step, ["test on R2", suite("r2")] as Step];
