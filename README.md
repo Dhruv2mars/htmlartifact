@@ -1,5 +1,7 @@
 # htmlartifact
 
+<sub>Developed on <a href="https://entire.com/et/dhruv2mars/htmlartifact">Entire</a>. The GitHub copy is a read-only mirror for CI; open issues and changes on Entire.</sub>
+
 Publish HTML artifacts from coding agents (plans, specs, reviews, reports,
 mocks) to your **workspace**. Everyone in the workspace can open them; nobody
 else can.
