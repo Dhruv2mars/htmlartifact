@@ -434,7 +434,14 @@ describe("workspace deletion", () => {
       assert.equal(await count(`SELECT COUNT(*) FROM ${table} WHERE organization_id = ?`, workspace.id), 0, table);
     }
     for (const a of artifacts) assert.deepEqual(await draftRows(a.draftId), { drafts: 0, versions: 0, pages: 0 });
-    assert.equal(await count("SELECT COUNT(*) FROM pending_deletions"), 0);
+    // Nothing left queued. Clearing a done job's row can lose the shared SQLite
+    // file's lock (see retryLocked; local only): the row then stays, its error
+    // recorded, for the cron, as after any D1 error in production. Only that
+    // error may be left, and the cron must clear it.
+    for (const row of await rows("SELECT kind, last_error FROM pending_deletions")) {
+      assert.match(String(row.last_error), /SQLITE_BUSY|session commit token/, JSON.stringify(row));
+    }
+    await eventually(async () => (await count("SELECT COUNT(*) FROM pending_deletions")) === 0, "nothing left queued", runCron);
     await assert.rejects(workosApi(stack.emulator, "GET", `/organizations/${workspace.id}`), /404/);
 
     // Still-valid tokens issued for the workspace get nothing.
@@ -1299,7 +1306,7 @@ describe("D1 Free quotas", () => {
       Math.floor(Date.now() / 1000) - 31 * day
     );
     // 100 queued deletions: what a burst of artifact deletions with storage down leaves.
-    for (let i = 0; i < 100; i += 1) await queueDeletion(proxy.env.DB, "r2_prefix", `orgs/org_backlog_${i}/`).run();
+    for (let i = 0; i < 100; i += 1) await retryLocked(() => queueDeletion(proxy.env.DB, "r2_prefix", `orgs/org_backlog_${i}/`).run());
     const backlog = () => count("SELECT COUNT(*) FROM pending_deletions WHERE target LIKE 'orgs/org_backlog_%'");
     try {
       const metered = meteredDb(proxy.env.DB);
