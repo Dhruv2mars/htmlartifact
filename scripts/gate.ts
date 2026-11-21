@@ -28,12 +28,11 @@ export const recordPass = (sha: string) => Bun.write(passed, `${sha}\n`);
 const lastPass = async () => (await Bun.file(passed).text().catch(() => "")).trim();
 
 // GitHub Actions runs the same gate on every mirrored push (.github/workflows/ci.yml,
-// named CI), in parts side by side. With the gh CLI logged in, a CI run of this
-// exact commit counts if it succeeded and its jobs covered every part
-// (static, d1, r2) and all succeeded.
-const GITHUB_REPO = "Dhruv2mars/htmlartifact";
-const PARTS = ["static", "d1", "r2"];
-type Run = { databaseId: number; conclusion: string };
+// named CI), in parts side by side. With the gh CLI logged in, a successful CI
+// run of this exact commit counts if it ran every one of the gate's 7 jobs
+// (ci.yml's matrix) and each of them succeeded.
+const GITHUB_REPO = "github.com/Dhruv2mars/htmlartifact";
+const GATE_JOBS = ["static", "d1 1/3", "d1 2/3", "d1 3/3", "r2 1/3", "r2 2/3", "r2 3/3"].map((part) => `check (${part})`);
 type Job = { name: string; conclusion: string };
 async function ciPass(sha: string) {
   const json = async (...args: string[]) => {
@@ -41,11 +40,12 @@ async function ciPass(sha: string) {
     return res.exitCode === 0 ? JSON.parse(res.stdout.toString()) : null;
   };
   try {
-    const runs: Run[] = (await json("run", "list", "-R", GITHUB_REPO, "-w", "ci.yml", "-c", sha, "--json", "databaseId,conclusion")) ?? [];
-    for (const run of runs.filter((r) => r.conclusion === "success")) {
+    const runs: { databaseId: number }[] =
+      (await json("run", "list", "-R", GITHUB_REPO, "-w", "ci.yml", "-c", sha, "-s", "success", "--json", "databaseId")) ?? [];
+    for (const run of runs) {
       const jobs: Job[] = (await json("run", "view", String(run.databaseId), "-R", GITHUB_REPO, "--json", "jobs"))?.jobs ?? [];
-      const gated = PARTS.every((part) => jobs.some((j) => j.name.startsWith(`check (${part}`)));
-      if (gated && jobs.every((j) => j.conclusion === "success")) return run.databaseId;
+      const passed = (name: string) => jobs.some((j) => j.name === name && j.conclusion === "success");
+      if (jobs.length === GATE_JOBS.length && GATE_JOBS.every(passed)) return run.databaseId;
     }
   } catch {}
   return null;
